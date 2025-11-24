@@ -1,7 +1,6 @@
 const API_BASE_URL = 'https://iot-system-kit.azurewebsites.net';
 // const API_BASE_URL = 'http://localhost:8080';
 
-
 // Helper function to get JWT token from localStorage
 const getAuthToken = () => {
   return localStorage.getItem('authToken');
@@ -46,18 +45,57 @@ const handleResponse = async (response) => {
   }
 };
 
+const extractArrayFromPayload = (payload) => {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
 
+  if (payload && typeof payload === 'object') {
+    const candidateKeys = ['data', 'content', 'records', 'items', 'result', 'list'];
+
+    for (const key of candidateKeys) {
+      if (Object.prototype.hasOwnProperty.call(payload, key)) {
+        const extracted = extractArrayFromPayload(payload[key]);
+        if (Array.isArray(extracted)) {
+          return extracted;
+        }
+      }
+    }
+  }
+
+  return Array.isArray(payload) ? payload : [];
+};
 
 // Helper function to make API requests
 const apiRequest = async (endpoint, options = {}) => {
   const url = `${API_BASE_URL}${endpoint}`;
-  const config = {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-    ...options,
+  const token = getAuthToken();
+
+  // Merge headers properly
+  const defaultHeaders = {
+    'Content-Type': 'application/json',
   };
+
+  if (token) {
+    defaultHeaders['Authorization'] = `Bearer ${token}`;
+  }
+
+  const mergedHeaders = {
+    ...defaultHeaders,
+    ...(options.headers || {})
+  };
+
+  const config = {
+    ...options,
+    headers: mergedHeaders
+  };
+
+  console.log('Making API request:', {
+    method: config.method || 'GET',
+    url: url,
+    headers: config.headers,
+    body: config.body
+  });
 
   try {
     const response = await fetch(url, config);
@@ -67,6 +105,10 @@ const apiRequest = async (endpoint, options = {}) => {
     throw error;
   }
 };
+
+
+
+
 
 // Authentication API
 export const authAPI = {
