@@ -66,6 +66,7 @@ const extractArrayFromPayload = (payload) => {
   return Array.isArray(payload) ? payload : [];
 };
 
+
 // Helper function to make API requests
 const apiRequest = async (endpoint, options = {}) => {
   const url = `${API_BASE_URL}${endpoint}`;
@@ -109,23 +110,88 @@ const apiRequest = async (endpoint, options = {}) => {
 
 
 
-
 // Authentication API
 export const authAPI = {
-  // login: async (email, password) => {
-  //   return apiRequest('/api/auth/login', {
-  //     method: 'POST',
-  //     body: JSON.stringify({ email, password }),
-  //   });
-  // },
-  //
-  // logout: async () => {
-  //   return apiRequest('/api/auth/logout', {
-  //     method: 'POST',
-  //   });
-  // },
-  //
-  // Use mockLogin from loginMock.js for development instead
+  login: async (username, password) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username, password }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Login failed');
+      }
+
+      const token = await response.text();
+      localStorage.setItem('authToken', token);
+      return token;
+    } catch (error) {
+      console.error('Login failed:', error);
+      // Provide more helpful error messages
+      if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
+        throw new Error(`Cannot connect to server at ${API_BASE_URL}. Please ensure the backend server is running on port 8080.`);
+      }
+      throw error;
+    }
+  },
+
+  logout: () => {
+    localStorage.removeItem('authToken');
+  },
+
+  getProfile: async () => {
+    return apiRequest('/api/me/profile');
+  },
+
+  updateUser: async (userId, userData) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/register/${userId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        },
+        body: JSON.stringify(userData),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Update user failed');
+      }
+
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error('Update user failed:', error);
+      throw error;
+    }
+  },
+
+  updateProfile: async (profileData) => {
+    return apiRequest('/api/me/profile', {
+      method: 'PUT',
+      body: JSON.stringify(profileData),
+    });
+  },
+
+  changePassword: async (oldPassword, newPassword) => {
+    return apiRequest('/api/me/change-password', {
+      method: 'POST',
+      body: JSON.stringify({
+        oldPassword,
+        newPassword
+      }),
+    });
+  },
+
+  isAuthenticated: () => {
+    return !!getAuthToken();
+  }
 };
 
 // User Management API
