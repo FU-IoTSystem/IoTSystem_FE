@@ -1,13 +1,52 @@
-const API_BASE_URL = 'http://localhost:8080';
+const API_BASE_URL = 'https://iot-system-kit.azurewebsites.net';
+// const API_BASE_URL = 'http://localhost:8080';
+
+
+// Helper function to get JWT token from localStorage
+const getAuthToken = () => {
+  return localStorage.getItem('authToken');
+};
 
 // Helper function to handle API responses
 const handleResponse = async (response) => {
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+    // Try to parse error response as JSON first
+    try {
+      const errorJson = await response.json();
+      // Extract error message from common response structures
+      const errorMessage = errorJson.message || errorJson.error || errorJson.details || JSON.stringify(errorJson);
+      throw new Error(errorMessage);
+    } catch (jsonError) {
+      // If JSON parsing fails, fall back to text
+      const errorText = await response.text().catch(() => 'Unknown error');
+      throw new Error(errorText || `HTTP error! status: ${response.status}`);
+    }
   }
-  return response.json();
+  // Try to parse JSON based on content-type; fallback to text if not JSON
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    try {
+      return await response.json();
+    } catch (e) {
+      // Fallback: read as text and try to parse, otherwise return raw text
+      const text = await response.text().catch(() => '');
+      try {
+        return JSON.parse(text);
+      } catch {
+        return { raw: text };
+      }
+    }
+  } else {
+    const text = await response.text().catch(() => '');
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { raw: text };
+    }
+  }
 };
+
+
 
 // Helper function to make API requests
 const apiRequest = async (endpoint, options = {}) => {
