@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom';
 import AdminPortal from './AdminPortal';
 import LeaderPortal from './LeaderPortal';
 import LecturerPortal from './LecturerPortal';
@@ -10,9 +10,7 @@ import AdminRentalApprovalPage from './AdminRentalApprovalPage';
 import AdminRefundApprovalPage from './AdminRefundApprovalPage';
 import TopUpPage from './TopUpPage';
 import PenaltyPaymentPage from './PenaltyPaymentPage';
-import { motion, AnimatePresence } from 'framer-motion';
-import AppBar from '@mui/material/AppBar';
-import Toolbar from '@mui/material/Toolbar';
+import { motion } from 'framer-motion';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
@@ -21,31 +19,10 @@ import CardActions from '@mui/material/CardActions';
 import Grid from '@mui/material/Grid';
 import Box from '@mui/material/Box';
 import Container from '@mui/material/Container';
-import TextField from '@mui/material/TextField';
+
 import Alert from '@mui/material/Alert';
-import Chip from '@mui/material/Chip';
-import Table from '@mui/material/Table';
-import TableBody from '@mui/material/TableBody';
-import TableCell from '@mui/material/TableCell';
-import TableContainer from '@mui/material/TableContainer';
-import TableHead from '@mui/material/TableHead';
-import TableRow from '@mui/material/TableRow';
-import Paper from '@mui/material/Paper';
-import Dialog from '@mui/material/Dialog';
-import DialogTitle from '@mui/material/DialogTitle';
-import DialogContent from '@mui/material/DialogContent';
-import DialogActions from '@mui/material/DialogActions';
-import Drawer from '@mui/material/Drawer';
-import List from '@mui/material/List';
-import ListItem from '@mui/material/ListItem';
-import ListItemButton from '@mui/material/ListItemButton';
-import ListItemIcon from '@mui/material/ListItemIcon';
-import ListItemText from '@mui/material/ListItemText';
-import InventoryIcon from '@mui/icons-material/Inventory';
-import MonetizationOnIcon from '@mui/icons-material/MonetizationOn';
-import ReplayIcon from '@mui/icons-material/Replay';
-import GroupIcon from '@mui/icons-material/Group';
-import { mockWallet, mockKits, mockGroups, mockLogin } from './mocks';
+import { authAPI, borrowingGroupAPI } from './api';
+
 
 function Home({ onLogin, user }) {
   const [error, setError] = useState('');
@@ -82,7 +59,7 @@ function Home({ onLogin, user }) {
       // Use mockLogin to validate credentials
       const authenticatedUser = await mockLogin(userObj.email, userObj.password);
       onLogin(authenticatedUser);
-      
+
       // Navigate to appropriate portal based on role
       switch (authenticatedUser.role.toLowerCase()) {
         case 'admin':
@@ -110,8 +87,8 @@ function Home({ onLogin, user }) {
   };
 
   return (
-    <Box sx={{ 
-      minHeight: '100vh', 
+    <Box sx={{
+      minHeight: '100vh',
       background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
       display: 'flex',
       alignItems: 'center',
@@ -124,8 +101,8 @@ function Home({ onLogin, user }) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8 }}
         >
-          <Card sx={{ 
-            borderRadius: 4, 
+          <Card sx={{
+            borderRadius: 4,
             boxShadow: '0 20px 40px rgba(0,0,0,0.1)',
             background: 'rgba(255, 255, 255, 0.95)',
             backdropFilter: 'blur(10px)',
@@ -133,7 +110,7 @@ function Home({ onLogin, user }) {
           }}>
             <CardContent sx={{ p: 4 }}>
               <Box sx={{ textAlign: 'center', mb: 4 }}>
-                <Typography variant="h3" component="h1" gutterBottom sx={{ 
+                <Typography variant="h3" component="h1" gutterBottom sx={{
                   fontWeight: 'bold',
                   background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                   backgroundClip: 'text',
@@ -155,9 +132,9 @@ function Home({ onLogin, user }) {
                   Click on any role below to login with demo credentials:
                 </Typography>
               </Box>
-              
+
               {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
-              
+
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 400, mx: 'auto' }}>
                 {[
                   { email: 'admin@fpt.edu.vn', password: 'admin', role: 'Admin', color: '#e74c3c' },
