@@ -1,44 +1,44 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Layout, 
-  Menu, 
-  Card, 
-  Table, 
-  Button, 
-  Input, 
-  Select, 
-  Modal, 
-  Form, 
-  message, 
-  Tag, 
-  Row, 
-  Col, 
-  Statistic, 
-  Typography, 
-  Space, 
-  Tooltip, 
-  Avatar, 
-  Badge, 
-  Divider, 
-  List, 
-  Timeline, 
-  Progress, 
-  Switch, 
-  DatePicker, 
-  Upload, 
-  Drawer, 
-  Tabs, 
-  Alert, 
-  Descriptions, 
-  Steps, 
-  Result, 
-  Empty, 
-  Skeleton, 
-  Spin, 
-  notification, 
-  Transfer, 
-  Popconfirm, 
-  Radio, 
+import {
+  Layout,
+  Menu,
+  Card,
+  Table,
+  Button,
+  Input,
+  Select,
+  Modal,
+  Form,
+  message,
+  Tag,
+  Row,
+  Col,
+  Statistic,
+  Typography,
+  Space,
+  Tooltip,
+  Avatar,
+  Badge,
+  Divider,
+  List,
+  Timeline,
+  Progress,
+  Switch,
+  DatePicker,
+  Upload,
+  Drawer,
+  Tabs,
+  Alert,
+  Descriptions,
+  Steps,
+  Result,
+  Empty,
+  Skeleton,
+  Spin,
+  notification,
+  Transfer,
+  Popconfirm,
+  Radio,
   Checkbox,
   InputNumber
 } from 'antd';
@@ -234,14 +234,14 @@ function AdminPortal({ onLogout }) {
   const [rentalRequests, setRentalRequests] = useState([]);
   const [refundRequests, setRefundRequests] = useState([]);
   const [systemStats, setSystemStats] = useState({});
-  
+
   // Modal states
   const [kitModalVisible, setKitModalVisible] = useState(false);
   const [userModalVisible, setUserModalVisible] = useState(false);
   const [groupModalVisible, setGroupModalVisible] = useState(false);
   const [detailDrawerVisible, setDetailDrawerVisible] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
-  
+
   // Import/Export states
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [importType, setImportType] = useState('students');
@@ -249,7 +249,7 @@ function AdminPortal({ onLogout }) {
   const [selectedStudents, setSelectedStudents] = useState([]);
   const [groupMembersModalVisible, setGroupMembersModalVisible] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState(null);
-  
+
   // Kit Inspection and Fine Management states
   const [kitInspectionModalVisible, setKitInspectionModalVisible] = useState(false);
   const [selectedKit, setSelectedKit] = useState(null);
@@ -261,7 +261,7 @@ function AdminPortal({ onLogout }) {
   const [transactions, setTransactions] = useState([]);
   const [logHistory, setLogHistory] = useState([]);
   const [cashFlowHistory, setCashFlowHistory] = useState([]);
-  
+
   // Form instances
   const [kitForm] = Form.useForm();
   const [userForm] = Form.useForm();
@@ -282,9 +282,9 @@ function AdminPortal({ onLogout }) {
 
   const cardVariants = {
     hidden: { opacity: 0, y: 20, scale: 0.95 },
-    visible: { 
-      opacity: 1, 
-      y: 0, 
+    visible: {
+      opacity: 1,
+      y: 0,
       scale: 1,
       transition: {
         duration: 0.5,
@@ -340,11 +340,11 @@ function AdminPortal({ onLogout }) {
       setSystemStats(mockSystemStats);
       setTransactions(mockTransactions);
       setFines(mockFines);
-      
+
       // Load available students for group management
       const studentUsers = mockUsers.filter(user => user.role === 'student');
       setAvailableStudents(studentUsers);
-      
+
       console.log('Mock data loaded successfully');
     } catch (error) {
       console.error('Error loading data:', error);
@@ -420,9 +420,9 @@ function AdminPortal({ onLogout }) {
         description: kit.Description || kit.description || '',
         components: []
       }));
-      
+
       setKits(prev => [...prev, ...newKits]);
-      
+
       notification.success({
         message: 'Import Successful',
         description: `${newKits.length} kits imported successfully`,
@@ -441,15 +441,15 @@ function AdminPortal({ onLogout }) {
   const generateRandomStudents = (groupId, count = 3) => {
     const group = groups.find(g => g.id === groupId);
     if (!group) return;
-    
+
     // Get students not already in this group or any other group
-    const availableStudentsForGroup = availableStudents.filter(student => 
-      !groups.some(g => 
-        g.members && 
+    const availableStudentsForGroup = availableStudents.filter(student =>
+      !groups.some(g =>
+        g.members &&
         g.members.includes(student.email)
       )
     );
-    
+
     if (availableStudentsForGroup.length === 0) {
       notification.warning({
         message: 'No Available Students',
@@ -458,17 +458,17 @@ function AdminPortal({ onLogout }) {
       });
       return;
     }
-    
+
     const shuffled = availableStudentsForGroup.sort(() => 0.5 - Math.random());
     const selected = shuffled.slice(0, Math.min(count, availableStudentsForGroup.length));
     const selectedEmails = selected.map(student => student.email);
-    
-    setGroups(prev => prev.map(g => 
-      g.id === groupId 
+
+    setGroups(prev => prev.map(g =>
+      g.id === groupId
         ? { ...g, members: [...(g.members || []), ...selectedEmails] }
         : g
     ));
-    
+
     notification.success({
       message: 'Additional Students Added',
       description: `${selectedEmails.length} additional students randomly assigned to the group`,
@@ -483,16 +483,16 @@ function AdminPortal({ onLogout }) {
   };
 
   const saveGroupMembers = () => {
-    setGroups(prev => prev.map(group => 
-      group.id === selectedGroup.id 
+    setGroups(prev => prev.map(group =>
+      group.id === selectedGroup.id
         ? { ...group, members: selectedStudents }
         : group
     ));
-    
+
     setGroupMembersModalVisible(false);
     setSelectedGroup(null);
     setSelectedStudents([]);
-    
+
     notification.success({
       message: 'Group Updated',
       description: 'Group members updated successfully',
@@ -512,7 +512,7 @@ function AdminPortal({ onLogout }) {
       });
       return;
     }
-    
+
     setSelectedRental(rental);
     setSelectedKit(kit);
     setDamageAssessment({});
@@ -531,7 +531,7 @@ function AdminPortal({ onLogout }) {
       });
       return;
     }
-    
+
     // Create a rental-like object for the refund request
     const rentalObject = {
       id: refundRequest.rentalId,
@@ -541,7 +541,7 @@ function AdminPortal({ onLogout }) {
       userName: refundRequest.userEmail.split('@')[0], // Extract name from email
       status: refundRequest.status
     };
-    
+
     setSelectedRental(rentalObject);
     setSelectedKit(kit);
     setDamageAssessment(refundRequest.damageAssessment || {});
@@ -573,20 +573,20 @@ function AdminPortal({ onLogout }) {
   const submitKitInspection = async () => {
     setKitInspectionLoading(true);
     const totalFine = calculateFineAmount();
-    
+
     // Check if this is a refund request or rental request
     const isRefundRequest = selectedRental && selectedRental.status === 'approved';
-    
+
     if (totalFine > 0) {
       // Find the group leader for this rental
-      const group = groups.find(g => 
+      const group = groups.find(g =>
         g.members && g.members.includes(selectedRental.userEmail)
       );
-      
+
       if (group) {
         const leaderEmail = group.leader;
         const leader = users.find(u => u.email === leaderEmail);
-        
+
         const newFine = {
           id: Date.now(),
           rentalId: selectedRental.id,
@@ -602,9 +602,9 @@ function AdminPortal({ onLogout }) {
           createdAt: new Date().toISOString(),
           dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days from now
         };
-        
+
         setFines(prev => [...prev, newFine]);
-        
+
         notification.success({
           message: 'Kit Inspection Completed',
           description: `Fine of ${totalFine.toLocaleString()} VND sent to group leader ${leader ? leader.name : leaderEmail}`,
@@ -617,7 +617,7 @@ function AdminPortal({ onLogout }) {
           description: 'Student is not part of any group. Fine will be sent directly to student.',
           placement: 'topRight',
         });
-        
+
         const newFine = {
           id: Date.now(),
           rentalId: selectedRental.id,
@@ -633,10 +633,10 @@ function AdminPortal({ onLogout }) {
           createdAt: new Date().toISOString(),
           dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
         };
-        
+
         setFines(prev => [...prev, newFine]);
       }
-      
+
       // For refund requests with damage, add to log history as REJECTED and remove from refund requests
       if (isRefundRequest) {
         const logEntry = {
@@ -662,9 +662,9 @@ function AdminPortal({ onLogout }) {
           adminUser: 'admin@fpt.edu.vn',
           adminTimestamp: new Date().toISOString()
         };
-        
+
         setLogHistory(prev => [logEntry, ...prev]);
-        
+
         // Remove from refund requests
         setRefundRequests(prev => prev.filter(req => req.id !== selectedRental.id));
       }
@@ -673,23 +673,23 @@ function AdminPortal({ onLogout }) {
       if (isRefundRequest) {
         // Calculate refund amount (assuming full refund for no damage)
         const refundAmount = selectedRental.totalCost || 0;
-        
+
         try {
           // Process refund to wallet
           const refundResult = await mockRefundToWallet(
-            selectedRental.userEmail, 
-            refundAmount, 
+            selectedRental.userEmail,
+            refundAmount,
             `Kit return refund - ${selectedKit.name}`
           );
-          
+
           if (refundResult.success) {
             // Update kit status to available
-            setKits(prev => prev.map(kit => 
-              kit.id === selectedKit.id 
+            setKits(prev => prev.map(kit =>
+              kit.id === selectedKit.id
                 ? { ...kit, status: 'AVAILABLE' }
                 : kit
             ));
-            
+
             // Add refund transaction to log history
             const logEntry = {
               id: Date.now(),
@@ -715,12 +715,12 @@ function AdminPortal({ onLogout }) {
               adminUser: 'admin@fpt.edu.vn',
               adminTimestamp: new Date().toISOString()
             };
-            
+
             setLogHistory(prev => [logEntry, ...prev]);
-            
+
             // Remove from refund requests
             setRefundRequests(prev => prev.filter(req => req.id !== selectedRental.id));
-            
+
             notification.success({
               message: 'Refund Processed Successfully',
               description: `Refund of ${refundAmount.toLocaleString()} VND has been sent to ${selectedRental.userName}'s wallet. Kit status changed to AVAILABLE.`,
@@ -747,27 +747,27 @@ function AdminPortal({ onLogout }) {
         }
       } else {
         // Update kit status to available for regular rental returns
-        setKits(prev => prev.map(kit => 
-          kit.id === selectedKit.id 
+        setKits(prev => prev.map(kit =>
+          kit.id === selectedKit.id
             ? { ...kit, status: 'AVAILABLE' }
             : kit
         ));
-        
+
         notification.success({
           message: 'Kit Inspection Completed',
           description: 'No damage detected. Kit returned successfully and status changed to AVAILABLE.',
           placement: 'topRight',
         });
-        
+
         // Update rental status to returned
-        setRentalRequests(prev => prev.map(rental => 
-          rental.id === selectedRental.id 
+        setRentalRequests(prev => prev.map(rental =>
+          rental.id === selectedRental.id
             ? { ...rental, status: 'RETURNED', returnDate: new Date().toISOString() }
             : rental
         ));
       }
     }
-    
+
     setKitInspectionModalVisible(false);
     setSelectedKit(null);
     setSelectedRental(null);
@@ -875,9 +875,9 @@ function AdminPortal({ onLogout }) {
   return (
     <Layout style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
       {/* Sidebar */}
-      <Sider 
-        trigger={null} 
-        collapsible 
+      <Sider
+        trigger={null}
+        collapsible
         collapsed={collapsed}
         theme="light"
         style={{
@@ -893,11 +893,11 @@ function AdminPortal({ onLogout }) {
         }}
       >
         {/* Logo Section */}
-        <motion.div 
-          style={{ 
-            height: 80, 
-            display: 'flex', 
-            alignItems: 'center', 
+        <motion.div
+          style={{
+            height: 80,
+            display: 'flex',
+            alignItems: 'center',
             justifyContent: 'center',
             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             margin: '16px',
@@ -912,14 +912,14 @@ function AdminPortal({ onLogout }) {
             {collapsed ? 'IoT' : 'IoT Kit Rental'}
           </Title>
         </motion.div>
-        
+
         {/* Navigation Menu */}
         <Menu
           mode="inline"
           selectedKeys={[selectedKey]}
           items={menuItems}
           onClick={handleMenuClick}
-          style={{ 
+          style={{
             borderRight: 0,
             background: 'transparent',
             padding: '0 16px'
@@ -927,10 +927,10 @@ function AdminPortal({ onLogout }) {
           className="custom-menu"
         />
       </Sider>
-      
+
       {/* Main Content Area */}
-      <Layout style={{ 
-        marginLeft: collapsed ? 80 : 200, 
+      <Layout style={{
+        marginLeft: collapsed ? 80 : 200,
         transition: 'margin-left 0.3s ease-in-out',
         background: 'transparent'
       }}>
@@ -940,12 +940,12 @@ function AdminPortal({ onLogout }) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.2 }}
         >
-          <Header style={{ 
-            padding: '0 32px', 
+          <Header style={{
+            padding: '0 32px',
             background: 'rgba(255, 255, 255, 0.95)',
             backdropFilter: 'blur(10px)',
-            display: 'flex', 
-            alignItems: 'center', 
+            display: 'flex',
+            alignItems: 'center',
             justifyContent: 'space-between',
             boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
             position: 'sticky',
@@ -964,9 +964,9 @@ function AdminPortal({ onLogout }) {
                   type="text"
                   icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
                   onClick={() => setCollapsed(!collapsed)}
-                  style={{ 
-                    fontSize: '18px', 
-                    width: 48, 
+                  style={{
+                    fontSize: '18px',
+                    width: 48,
                     height: 48,
                     borderRadius: '12px',
                     display: 'flex',
@@ -988,7 +988,7 @@ function AdminPortal({ onLogout }) {
                 </Title>
               </motion.div>
             </Space>
-            
+
             {/* Right Section */}
             <Space size="large">
               <motion.div
@@ -1014,8 +1014,8 @@ function AdminPortal({ onLogout }) {
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Avatar 
-                  icon={<UserOutlined />} 
+                <Avatar
+                  icon={<UserOutlined />}
                   size={48}
                   style={{
                     background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
@@ -1027,9 +1027,9 @@ function AdminPortal({ onLogout }) {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Button 
+                <Button
                   type="primary"
-                  icon={<LogoutOutlined />} 
+                  icon={<LogoutOutlined />}
                   onClick={onLogout}
                   style={{
                     borderRadius: '12px',
@@ -1046,11 +1046,11 @@ function AdminPortal({ onLogout }) {
             </Space>
           </Header>
         </motion.div>
-        
+
         {/* Content Area */}
-        <Content style={{ 
-          margin: '24px', 
-          padding: '32px', 
+        <Content style={{
+          margin: '24px',
+          padding: '32px',
           background: 'rgba(255, 255, 255, 0.95)',
           backdropFilter: 'blur(10px)',
           borderRadius: '20px',
@@ -1058,7 +1058,7 @@ function AdminPortal({ onLogout }) {
           boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
           border: '1px solid rgba(255,255,255,0.2)'
         }}>
-          <Spin 
+          <Spin
             spinning={loading}
             tip="Loading data..."
             size="large"
@@ -1095,7 +1095,7 @@ function AdminPortal({ onLogout }) {
           </Spin>
         </Content>
       </Layout>
-      
+
       {/* Group Members Modal */}
       <Modal
         title={`Adjust Members - ${selectedGroup?.name}`}
@@ -1116,7 +1116,7 @@ function AdminPortal({ onLogout }) {
             Select students to add to this group
           </Text>
         </div>
-        
+
         <Transfer
           dataSource={availableStudents.map(student => ({
             key: student.email,
@@ -1142,7 +1142,7 @@ function AdminPortal({ onLogout }) {
             item.title.indexOf(inputValue) !== -1 || item.description.indexOf(inputValue) !== -1
           }
         />
-        
+
         <div style={{ marginTop: 16, padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
           <Text strong>Current Group Members ({selectedStudents.length}):</Text>
           <div style={{ marginTop: 8 }}>
@@ -1161,7 +1161,7 @@ function AdminPortal({ onLogout }) {
           </div>
         </div>
       </Modal>
-      
+
       {/* Kit Inspection Modal */}
       <Modal
         title={`Kit Inspection - ${selectedKit?.name}`}
@@ -1190,24 +1190,24 @@ function AdminPortal({ onLogout }) {
               showIcon
               style={{ marginBottom: 16 }}
             />
-            
+
             <Descriptions title="Rental Information" bordered column={2} style={{ marginBottom: 16 }}>
               <Descriptions.Item label="Student">{selectedRental.userName}</Descriptions.Item>
               <Descriptions.Item label="Email">{selectedRental.userEmail}</Descriptions.Item>
               <Descriptions.Item label="Kit">{selectedKit.name}</Descriptions.Item>
               <Descriptions.Item label="Rental ID">#{selectedRental.id}</Descriptions.Item>
             </Descriptions>
-            
+
             <Divider>Component Inspection</Divider>
-            
+
             <div style={{ marginBottom: 16 }}>
               <Text strong>Check each component for damage:</Text>
             </div>
-            
+
             {selectedKit.components?.map((component, index) => (
-              <Card 
-                key={index} 
-                size="small" 
+              <Card
+                key={index}
+                size="small"
                 style={{ marginBottom: 8 }}
                 title={
                   <Space>
@@ -1245,13 +1245,13 @@ function AdminPortal({ onLogout }) {
                 </Row>
               </Card>
             ))}
-            
+
             <Divider />
-            
+
             <Alert
               message={`Total Fine: ${fineAmount.toLocaleString()} VND`}
               description={
-                fineAmount > 0 
+                fineAmount > 0
                   ? "This fine will be sent to the group leader if the student is part of a group, otherwise to the student directly."
                   : "No damage detected. Kit will be returned successfully."
               }
@@ -1259,7 +1259,7 @@ function AdminPortal({ onLogout }) {
               showIcon
               style={{ marginBottom: 16 }}
             />
-            
+
             {fineAmount > 0 && (
               <Alert
                 message="Fine Details"
@@ -1394,8 +1394,8 @@ const DashboardContent = ({ systemStats }) => {
                   }
                   value={stat.value}
                   suffix={stat.suffix}
-                  valueStyle={{ 
-                    color: stat.color, 
+                  valueStyle={{
+                    color: stat.color,
                     fontSize: '28px',
                     fontWeight: 'bold'
                   }}
@@ -1406,7 +1406,7 @@ const DashboardContent = ({ systemStats }) => {
           </Col>
         ))}
       </Row>
-      
+
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} lg={12}>
           <motion.div
@@ -1414,8 +1414,8 @@ const DashboardContent = ({ systemStats }) => {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.8, duration: 0.5 }}
           >
-            <Card 
-              title="Recent Activity" 
+            <Card
+              title="Recent Activity"
               extra={<a href="#" style={{ color: '#667eea', fontWeight: 'bold' }}>View All</a>}
               style={{
                 borderRadius: '20px',
@@ -1448,7 +1448,7 @@ const DashboardContent = ({ systemStats }) => {
                       >
                         {activity.action}
                       </motion.p>
-                      <motion.p 
+                      <motion.p
                         style={{ fontSize: 12, color: '#999' }}
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
@@ -1469,8 +1469,8 @@ const DashboardContent = ({ systemStats }) => {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.9, duration: 0.5 }}
           >
-            <Card 
-              title="Popular Kits" 
+            <Card
+              title="Popular Kits"
               extra={<a href="#" style={{ color: '#667eea', fontWeight: 'bold' }}>View All</a>}
               style={{
                 borderRadius: '20px',
@@ -1576,9 +1576,9 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
         <div>
           <Text>{record.components?.length || 0} components</Text>
           <br />
-          <Button 
-            type="link" 
-            size="small" 
+          <Button
+            type="link"
+            size="small"
             onClick={() => manageComponents(record)}
             style={{ padding: 0, height: 'auto' }}
           >
@@ -1628,18 +1628,18 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
             <Descriptions.Item label="Location">{kit.location}</Descriptions.Item>
             <Descriptions.Item label="Description" span={2}>{kit.description}</Descriptions.Item>
           </Descriptions>
-          
+
           <Divider>Components</Divider>
-          
+
           {kit.components && kit.components.length > 0 ? (
             <Table
               dataSource={kit.components}
               columns={[
                 { title: 'Component Name', dataIndex: 'name', key: 'name' },
                 { title: 'Quantity', dataIndex: 'quantity', key: 'quantity' },
-                { 
-                  title: 'Condition', 
-                  dataIndex: 'condition', 
+                {
+                  title: 'Condition',
+                  dataIndex: 'condition',
                   key: 'condition',
                   render: (condition) => (
                     <Tag color={condition === 'New' ? 'green' : condition === 'Used' ? 'orange' : 'red'}>
@@ -1684,7 +1684,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
   const handleComponentSubmit = (values) => {
     if (editingComponent) {
       // Edit existing component
-      setComponents(prev => prev.map(comp => 
+      setComponents(prev => prev.map(comp =>
         comp.id === editingComponent.id ? { ...comp, ...values } : comp
       ));
     } else {
@@ -1703,7 +1703,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
   };
 
   const saveComponents = () => {
-    setKits(prev => prev.map(kit => 
+    setKits(prev => prev.map(kit =>
       kit.id === editingKit.id ? { ...kit, components: components } : kit
     ));
     setComponentModalVisible(false);
@@ -1769,7 +1769,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
                     return false;
                   }}
                 >
-                  <Button 
+                  <Button
                     icon={<ImportOutlined />}
                     style={{
                       borderRadius: '12px',
@@ -1787,7 +1787,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Button 
+                <Button
                   icon={<ExportOutlined />}
                   onClick={handleExportKits}
                   style={{
@@ -1805,9 +1805,9 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Button 
-                  type="primary" 
-                  icon={<PlusOutlined />} 
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
                   onClick={() => setModalVisible(true)}
                   style={{
                     borderRadius: '12px',
@@ -1836,9 +1836,9 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
             borderRadius: '20px 20px 0 0'
           }}
         >
-          <Table 
-            columns={columns} 
-            dataSource={kits} 
+          <Table
+            columns={columns}
+            dataSource={kits}
             rowKey="id"
             pagination={{
               showSizeChanger: true,
@@ -1939,9 +1939,9 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
         style={{ top: 20 }}
       >
         <div style={{ marginBottom: 16 }}>
-          <Button 
-            type="primary" 
-            icon={<PlusOutlined />} 
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
             onClick={addComponent}
             style={{
               borderRadius: '8px',
@@ -1959,9 +1959,9 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           columns={[
             { title: 'Component Name', dataIndex: 'name', key: 'name' },
             { title: 'Quantity', dataIndex: 'quantity', key: 'quantity' },
-            { 
-              title: 'Condition', 
-              dataIndex: 'condition', 
+            {
+              title: 'Condition',
+              dataIndex: 'condition',
               key: 'condition',
               render: (condition) => (
                 <Tag color={condition === 'New' ? 'green' : condition === 'Used' ? 'orange' : 'red'}>
@@ -1974,10 +1974,10 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
               key: 'actions',
               render: (_, record) => (
                 <Space>
-                  <Button 
-                    type="default" 
-                    size="small" 
-                    icon={<EditOutlined />} 
+                  <Button
+                    type="default"
+                    size="small"
+                    icon={<EditOutlined />}
                     onClick={() => editComponent(record)}
                   >
                     Edit
@@ -1988,10 +1988,10 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
                     okText="Yes"
                     cancelText="No"
                   >
-                    <Button 
-                      type="default" 
-                      size="small" 
-                      danger 
+                    <Button
+                      type="default"
+                      size="small"
+                      danger
                       icon={<DeleteOutlined />}
                     >
                       Delete
@@ -2016,28 +2016,28 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           destroyOnClose
           maskClosable={false}
         >
-          <Form 
-            layout="vertical" 
+          <Form
+            layout="vertical"
             onFinish={handleComponentSubmit}
             initialValues={editingComponent || {}}
           >
-            <Form.Item 
-              name="name" 
-              label="Component Name" 
+            <Form.Item
+              name="name"
+              label="Component Name"
               rules={[{ required: true, message: 'Please enter component name' }]}
             >
               <Input />
             </Form.Item>
-            <Form.Item 
-              name="quantity" 
-              label="Quantity" 
+            <Form.Item
+              name="quantity"
+              label="Quantity"
               rules={[{ required: true, message: 'Please enter quantity' }]}
             >
               <InputNumber min={1} style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item 
-              name="condition" 
-              label="Condition" 
+            <Form.Item
+              name="condition"
+              label="Condition"
               rules={[{ required: true, message: 'Please select condition' }]}
             >
               <Select>
@@ -2107,19 +2107,19 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory }) =
       render: (status, record) => {
         const isEditing = selectedStatuses[record.id]?.editing || false;
         const selectedStatus = selectedStatuses[record.id]?.value || status;
-        
+
         return (
           <Space>
             {isEditing ? (
               <>
                 <Select
                   value={selectedStatus}
-                  onChange={(newStatus) => setSelectedStatuses(prev => ({ 
-                    ...prev, 
-                    [record.id]: { 
-                      ...prev[record.id], 
-                      value: newStatus 
-                    } 
+                  onChange={(newStatus) => setSelectedStatuses(prev => ({
+                    ...prev,
+                    [record.id]: {
+                      ...prev[record.id],
+                      value: newStatus
+                    }
                   }))}
                   style={{ width: 120 }}
                   size="small"
@@ -2163,13 +2163,13 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory }) =
               </>
             ) : (
               <>
-                <Tag 
+                <Tag
                   color={
-                    status === 'PENDING_APPROVAL' ? 'orange' : 
-                    status === 'APPROVED' ? 'green' : 
-                    status === 'UNDER_REVIEW' ? 'blue' : 
-                    status === 'ON_HOLD' ? 'purple' : 
-                    status === 'CANCELLED' ? 'red' : 'default'
+                    status === 'PENDING_APPROVAL' ? 'orange' :
+                      status === 'APPROVED' ? 'green' :
+                        status === 'UNDER_REVIEW' ? 'blue' :
+                          status === 'ON_HOLD' ? 'purple' :
+                            status === 'CANCELLED' ? 'red' : 'default'
                   }
                   style={{ minWidth: 80, textAlign: 'center' }}
                 >
@@ -2180,12 +2180,12 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory }) =
                     type="default"
                     size="small"
                     icon={<EditOutlined />}
-                    onClick={() => setSelectedStatuses(prev => ({ 
-                      ...prev, 
-                      [record.id]: { 
-                        editing: true, 
-                        value: status 
-                      } 
+                    onClick={() => setSelectedStatuses(prev => ({
+                      ...prev,
+                      [record.id]: {
+                        editing: true,
+                        value: status
+                      }
                     }))}
                     style={{
                       border: '1px solid #d9d9d9',
@@ -2233,7 +2233,7 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory }) =
 
   const handleStatusChange = (id, newStatus) => {
     const request = rentalRequests.find(req => req.id === id);
-    
+
     // If status is changing to BORROWED, add to log history and remove from rental requests
     if (newStatus === 'BORROWED') {
       // Add to log history
@@ -2258,12 +2258,12 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory }) =
         adminUser: 'admin@fpt.edu.vn',
         adminTimestamp: new Date().toISOString()
       };
-      
+
       setLogHistory(prev => [logEntry, ...prev]);
-      
+
       // Remove from rental requests
       setRentalRequests(prev => prev.filter(req => req.id !== id));
-      
+
       notification.success({
         message: 'Kit Borrowed',
         description: `Kit has been marked as borrowed and moved to log history`,
@@ -2272,15 +2272,15 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory }) =
       });
     } else {
       // Normal status update
-      setRentalRequests(prev => prev.map(req => 
-        req.id === id ? { 
-          ...req, 
+      setRentalRequests(prev => prev.map(req =>
+        req.id === id ? {
+          ...req,
           status: newStatus,
           updatedBy: 'admin@fpt.edu.vn',
           updatedDate: new Date().toISOString()
         } : req
       ));
-      
+
       notification.success({
         message: 'Status Updated',
         description: `Rental request status changed to ${newStatus.replace('_', ' ')}`,
@@ -2288,7 +2288,7 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory }) =
         duration: 3,
       });
     }
-    
+
     // Clear the editing state for this record
     setSelectedStatuses(prev => {
       const newState = { ...prev };
@@ -2300,17 +2300,17 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory }) =
 
   const handleApproval = async (id, action) => {
     const request = rentalRequests.find(req => req.id === id);
-    
+
     if (action === 'approve') {
-      setRentalRequests(prev => prev.map(req => 
-        req.id === id ? { 
-          ...req, 
+      setRentalRequests(prev => prev.map(req =>
+        req.id === id ? {
+          ...req,
           status: 'APPROVED',
           approvedBy: 'admin@fpt.edu.vn',
           approvalDate: new Date().toISOString()
         } : req
       ));
-      
+
       notification.success({
         message: 'Success',
         description: `Request approved successfully`,
@@ -2341,12 +2341,12 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory }) =
         adminUser: 'admin@fpt.edu.vn',
         adminTimestamp: new Date().toISOString()
       };
-      
+
       setLogHistory(prev => [logEntry, ...prev]);
-      
+
       // Remove from rental requests
       setRentalRequests(prev => prev.filter(req => req.id !== id));
-      
+
       notification.success({
         message: 'Request Rejected',
         description: `Rental request has been rejected and moved to log history`,
@@ -2364,7 +2364,7 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory }) =
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
     >
-      <Card 
+      <Card
         title="Rental Request Management"
         style={{
           borderRadius: '20px',
@@ -2381,9 +2381,9 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory }) =
           borderRadius: '20px 20px 0 0'
         }}
       >
-        <Table 
-          columns={columns} 
-          dataSource={rentalRequests} 
+        <Table
+          columns={columns}
+          dataSource={rentalRequests}
           rowKey="id"
           pagination={{
             showSizeChanger: true,
@@ -2435,19 +2435,19 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
       render: (status, record) => {
         const isEditing = selectedStatuses[record.id]?.editing || false;
         const selectedStatus = selectedStatuses[record.id]?.value || status;
-        
+
         return (
           <Space>
             {isEditing ? (
               <>
                 <Select
                   value={selectedStatus}
-                  onChange={(newStatus) => setSelectedStatuses(prev => ({ 
-                    ...prev, 
-                    [record.id]: { 
-                      ...prev[record.id], 
-                      value: newStatus 
-                    } 
+                  onChange={(newStatus) => setSelectedStatuses(prev => ({
+                    ...prev,
+                    [record.id]: {
+                      ...prev[record.id],
+                      value: newStatus
+                    }
                   }))}
                   style={{ width: 120 }}
                   size="small"
@@ -2492,15 +2492,15 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
               </>
             ) : (
               <>
-                <Tag 
+                <Tag
                   color={
-                    status === 'pending' ? 'orange' : 
-                    status === 'approved' ? 'green' : 
-                    status === 'under_review' ? 'blue' : 
-                    status === 'on_hold' ? 'purple' : 
-                    status === 'cancelled' ? 'red' : 
-                    status === 'REJECTED' ? 'red' : 
-                    status === 'RETURNED' ? 'green' : 'default'
+                    status === 'pending' ? 'orange' :
+                      status === 'approved' ? 'green' :
+                        status === 'under_review' ? 'blue' :
+                          status === 'on_hold' ? 'purple' :
+                            status === 'cancelled' ? 'red' :
+                              status === 'REJECTED' ? 'red' :
+                                status === 'RETURNED' ? 'green' : 'default'
                   }
                   style={{ minWidth: 80, textAlign: 'center' }}
                 >
@@ -2511,12 +2511,12 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
                     type="default"
                     size="small"
                     icon={<EditOutlined />}
-                    onClick={() => setSelectedStatuses(prev => ({ 
-                      ...prev, 
-                      [record.id]: { 
-                        editing: true, 
-                        value: status 
-                      } 
+                    onClick={() => setSelectedStatuses(prev => ({
+                      ...prev,
+                      [record.id]: {
+                        editing: true,
+                        value: status
+                      }
                     }))}
                     style={{
                       border: '1px solid #d9d9d9',
@@ -2561,10 +2561,10 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              <Button 
-                type="default" 
-                size="small" 
-                icon={<BuildOutlined />} 
+              <Button
+                type="default"
+                size="small"
+                icon={<BuildOutlined />}
                 onClick={() => openRefundKitInspection(record)}
                 style={{
                   background: 'linear-gradient(135deg, #faad14 0%, #d48806 100%)',
@@ -2583,7 +2583,7 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
 
   const handleRefundStatusChange = (id, newStatus) => {
     const request = refundRequests.find(req => req.id === id);
-    
+
     // If status is changing to REJECTED, add to log history and remove from refund requests
     if (newStatus === 'REJECTED') {
       // Add to log history
@@ -2610,12 +2610,12 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
         adminUser: 'admin@fpt.edu.vn',
         adminTimestamp: new Date().toISOString()
       };
-      
+
       setLogHistory(prev => [logEntry, ...prev]);
-      
+
       // Remove from refund requests
       setRefundRequests(prev => prev.filter(req => req.id !== id));
-      
+
       notification.success({
         message: 'Refund Rejected',
         description: `Refund request has been rejected and moved to log history`,
@@ -2646,12 +2646,12 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
         adminUser: 'admin@fpt.edu.vn',
         adminTimestamp: new Date().toISOString()
       };
-      
+
       setLogHistory(prev => [logEntry, ...prev]);
-      
+
       // Remove from refund requests
       setRefundRequests(prev => prev.filter(req => req.id !== id));
-      
+
       notification.success({
         message: 'Kit Returned',
         description: `Kit has been returned successfully and moved to log history`,
@@ -2660,15 +2660,15 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
       });
     } else {
       // Normal status update
-      setRefundRequests(prev => prev.map(req => 
-        req.id === id ? { 
-          ...req, 
+      setRefundRequests(prev => prev.map(req =>
+        req.id === id ? {
+          ...req,
           status: newStatus,
           updatedBy: 'admin@fpt.edu.vn',
           updatedDate: new Date().toISOString()
         } : req
       ));
-      
+
       notification.success({
         message: 'Status Updated',
         description: `Refund request status changed to ${newStatus.replace('_', ' ')}`,
@@ -2676,7 +2676,7 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
         duration: 3,
       });
     }
-    
+
     // Clear the editing state for this record
     setSelectedStatuses(prev => {
       const newState = { ...prev };
@@ -2687,17 +2687,17 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
 
   const handleRefundApproval = (id, action) => {
     const request = refundRequests.find(req => req.id === id);
-    
+
     if (action === 'approve') {
-      setRefundRequests(prev => prev.map(req => 
-        req.id === id ? { 
-          ...req, 
+      setRefundRequests(prev => prev.map(req =>
+        req.id === id ? {
+          ...req,
           status: 'approved',
           approvedBy: 'admin@fpt.edu.vn',
           approvalDate: new Date().toISOString()
         } : req
       ));
-      
+
       notification.success({
         message: 'Success',
         description: `Refund request approved successfully`,
@@ -2729,12 +2729,12 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
         adminUser: 'admin@fpt.edu.vn',
         adminTimestamp: new Date().toISOString()
       };
-      
+
       setLogHistory(prev => [logEntry, ...prev]);
-      
+
       // Remove from refund requests
       setRefundRequests(prev => prev.filter(req => req.id !== id));
-      
+
       notification.success({
         message: 'Refund Rejected',
         description: `Refund request has been rejected and moved to log history`,
@@ -2752,7 +2752,7 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
     >
-      <Card 
+      <Card
         title="Refund Request Management"
         style={{
           borderRadius: '20px',
@@ -2769,9 +2769,9 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
           borderRadius: '20px 20px 0 0'
         }}
       >
-        <Table 
-          columns={columns} 
-          dataSource={refundRequests} 
+        <Table
+          columns={columns}
+          dataSource={refundRequests}
           rowKey="id"
           pagination={{
             showSizeChanger: true,
@@ -2855,9 +2855,9 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
-            <Button 
-              type="primary" 
-              size="small" 
+            <Button
+              type="primary"
+              size="small"
               icon={<EyeOutlined />}
               onClick={() => showFineDetails(record)}
             >
@@ -2869,9 +2869,9 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              <Button 
-                type="default" 
-                size="small" 
+              <Button
+                type="default"
+                size="small"
                 icon={<CheckCircleOutlined />}
                 onClick={() => markAsPaid(record.id)}
                 style={{
@@ -2913,9 +2913,9 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
             <Descriptions.Item label="Created">{new Date(fine.createdAt).toLocaleString()}</Descriptions.Item>
             <Descriptions.Item label="Due Date">{new Date(fine.dueDate).toLocaleString()}</Descriptions.Item>
           </Descriptions>
-          
+
           <Divider>Damage Assessment</Divider>
-          
+
           {Object.entries(fine.damageAssessment).map(([component, assessment]) => (
             assessment.damaged && (
               <Card key={component} size="small" style={{ marginBottom: 8 }}>
@@ -2937,13 +2937,13 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
 
   const markAsPaid = (fineId) => {
     const fine = fines.find(f => f.id === fineId);
-    
-    setFines(prev => prev.map(f => 
-      f.id === fineId 
+
+    setFines(prev => prev.map(f =>
+      f.id === fineId
         ? { ...f, status: 'paid', paidDate: new Date().toISOString() }
         : f
     ));
-    
+
     // Add to log history
     const logEntry = {
       id: Date.now(),
@@ -2966,9 +2966,9 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
       adminUser: 'admin@fpt.edu.vn',
       adminTimestamp: new Date().toISOString()
     };
-    
+
     setLogHistory(prev => [logEntry, ...prev]);
-    
+
     notification.success({
       message: 'Fine Marked as Paid',
       description: 'The fine has been successfully marked as paid and added to log history.',
@@ -2982,7 +2982,7 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
     >
-      <Card 
+      <Card
         title="Fine Management"
         style={{
           borderRadius: '20px',
@@ -2999,9 +2999,9 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
           borderRadius: '20px 20px 0 0'
         }}
       >
-        <Table 
-          columns={columns} 
-          dataSource={fines} 
+        <Table
+          columns={columns}
+          dataSource={fines}
           rowKey="id"
           pagination={{
             showSizeChanger: true,
@@ -3056,9 +3056,9 @@ const GroupManagement = ({ groups, setGroups, generateRandomStudents, adjustGrou
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
-            <Button 
-              type="primary" 
-              size="small" 
+            <Button
+              type="primary"
+              size="small"
               icon={<UserOutlined />}
               onClick={() => generateRandomStudents(record.id, 2)}
               style={{
@@ -3073,9 +3073,9 @@ const GroupManagement = ({ groups, setGroups, generateRandomStudents, adjustGrou
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
-            <Button 
-              type="default" 
-              size="small" 
+            <Button
+              type="default"
+              size="small"
               icon={<EditOutlined />}
               onClick={() => adjustGroupMembers(record)}
             >
@@ -3089,38 +3089,38 @@ const GroupManagement = ({ groups, setGroups, generateRandomStudents, adjustGrou
 
   const handleSubmit = (values) => {
     // Get available students for random assignment
-    const availableStudentsForGroup = availableStudents.filter(student => 
-      !groups.some(group => 
-        group.members && 
+    const availableStudentsForGroup = availableStudents.filter(student =>
+      !groups.some(group =>
+        group.members &&
         group.members.includes(student.email)
       )
     );
-    
+
     let newGroup = {
       id: Date.now(),
       ...values,
       members: []
     };
-    
+
     // If there are available students, assign them randomly
     if (availableStudentsForGroup.length > 0) {
       const shuffled = availableStudentsForGroup.sort(() => 0.5 - Math.random());
       const selectedCount = Math.min(3, availableStudentsForGroup.length); // Assign up to 3 students
       const selectedStudents = shuffled.slice(0, selectedCount);
       const selectedEmails = selectedStudents.map(student => student.email);
-      
+
       // First student becomes the leader
       const leaderEmail = selectedEmails[0];
-      
+
       newGroup = {
         ...newGroup,
         leader: leaderEmail,
         members: selectedEmails
       };
-      
+
       // Update the group with the new leader
       setGroups(prev => [...prev, newGroup]);
-      
+
       notification.success({
         message: 'Group Created Successfully',
         description: `Group created with ${selectedEmails.length} random members. ${selectedStudents[0].name} assigned as leader.`,
@@ -3137,7 +3137,7 @@ const GroupManagement = ({ groups, setGroups, generateRandomStudents, adjustGrou
         duration: 4,
       });
     }
-    
+
     setModalVisible(false);
     form.resetFields();
   };
@@ -3156,9 +3156,9 @@ const GroupManagement = ({ groups, setGroups, generateRandomStudents, adjustGrou
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              <Button 
-                type="primary" 
-                icon={<PlusOutlined />} 
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
                 onClick={() => setModalVisible(true)}
                 style={{
                   borderRadius: '12px',
@@ -3186,9 +3186,9 @@ const GroupManagement = ({ groups, setGroups, generateRandomStudents, adjustGrou
             borderRadius: '20px 20px 0 0'
           }}
         >
-          <Table 
-            columns={columns} 
-            dataSource={groups} 
+          <Table
+            columns={columns}
+            dataSource={groups}
             rowKey="id"
             pagination={{
               showSizeChanger: true,
@@ -3368,26 +3368,26 @@ const UserManagement = ({ users, setUsers }) => {
       >
         <Card
           title="User Management"
-                  extra={
-          <motion.div
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-          >
-            <Button 
-              type="primary" 
-              icon={<PlusOutlined />} 
-              onClick={() => setModalVisible(true)}
-              style={{
-                borderRadius: '12px',
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                border: 'none',
-                fontWeight: 'bold'
-              }}
+          extra={
+            <motion.div
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
             >
-              Add User
-            </Button>
-          </motion.div>
-        }
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => setModalVisible(true)}
+                style={{
+                  borderRadius: '12px',
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  border: 'none',
+                  fontWeight: 'bold'
+                }}
+              >
+                Add User
+              </Button>
+            </motion.div>
+          }
           style={{
             borderRadius: '20px',
             background: 'rgba(255, 255, 255, 0.95)',
@@ -3403,9 +3403,9 @@ const UserManagement = ({ users, setUsers }) => {
             borderRadius: '20px 20px 0 0'
           }}
         >
-          <Table 
-            columns={columns} 
-            dataSource={users} 
+          <Table
+            columns={columns}
+            dataSource={users}
             rowKey="id"
             pagination={{
               showSizeChanger: true,
@@ -3486,9 +3486,9 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
   // Animation variants for this component
   const cardVariants = {
     hidden: { opacity: 0, y: 20, scale: 0.95 },
-    visible: { 
-      opacity: 1, 
-      y: 0, 
+    visible: {
+      opacity: 1,
+      y: 0,
       scale: 1,
       transition: {
         duration: 0.5,
@@ -3593,7 +3593,7 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
     const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     const dataBlob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     saveAs(dataBlob, 'transaction_history.xlsx');
-    
+
     notification.success({
       message: 'Export Successful',
       description: 'Transaction history exported to Excel file',
@@ -3602,7 +3602,7 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
   };
 
   const filteredTransactions = transactions.filter(transaction => {
-    const matchesSearch = 
+    const matchesSearch =
       transaction.transactionId.toLowerCase().includes(searchText.toLowerCase()) ||
       transaction.userName.toLowerCase().includes(searchText.toLowerCase()) ||
       transaction.userEmail.toLowerCase().includes(searchText.toLowerCase()) ||
@@ -3631,11 +3631,11 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
   return (
     <div>
       <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-        <Card 
-          title="Transaction History" 
+        <Card
+          title="Transaction History"
           extra={
-            <Button 
-              type="primary" 
+            <Button
+              type="primary"
               icon={<DownloadOutlined />}
               onClick={handleExportTransactions}
               style={{
@@ -3813,10 +3813,10 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
                 key: 'actions',
                 render: (_, record) => (
                   <Space>
-                    <Button 
-                      type="primary" 
-                      size="small" 
-                      icon={<EyeOutlined />} 
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<EyeOutlined />}
                       onClick={() => showTransactionDetails(record)}
                     >
                       View Details
@@ -3905,7 +3905,7 @@ const Settings = () => {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
     >
-      <Card 
+      <Card
         title="System Settings"
         style={{
           borderRadius: '20px',
@@ -3929,8 +3929,8 @@ const Settings = () => {
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.2, duration: 0.5 }}
             >
-              <Card 
-                title="General Settings" 
+              <Card
+                title="General Settings"
                 size="small"
                 style={{
                   borderRadius: '16px',
@@ -3967,8 +3967,8 @@ const Settings = () => {
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.4, duration: 0.5 }}
             >
-              <Card 
-                title="Security Settings" 
+              <Card
+                title="Security Settings"
                 size="small"
                 style={{
                   borderRadius: '16px',
@@ -4022,9 +4022,9 @@ const LogHistory = ({ logHistory, setLogHistory, cashFlowHistory, setCashFlowHis
   // Animation variants for the component
   const cardVariants = {
     hidden: { opacity: 0, y: 20, scale: 0.95 },
-    visible: { 
-      opacity: 1, 
-      y: 0, 
+    visible: {
+      opacity: 1,
+      y: 0,
       scale: 1,
       transition: {
         duration: 0.5,
@@ -4365,12 +4365,12 @@ const LogHistory = ({ logHistory, setLogHistory, cashFlowHistory, setCashFlowHis
 
   const filteredLogs = logHistory.filter(log => {
     const matchesSearch = log.userName.toLowerCase().includes(searchText.toLowerCase()) ||
-                         log.details.kitName.toLowerCase().includes(searchText.toLowerCase()) ||
-                         log.details.requestId.toLowerCase().includes(searchText.toLowerCase());
-    
+      log.details.kitName.toLowerCase().includes(searchText.toLowerCase()) ||
+      log.details.requestId.toLowerCase().includes(searchText.toLowerCase());
+
     const matchesStatus = statusFilter === 'all' || log.status === statusFilter;
     const matchesType = typeFilter === 'all' || log.type === typeFilter;
-    
+
     let matchesDate = true;
     if (dateRange && dateRange[0] && dateRange[1]) {
       const logDate = new Date(log.timestamp);
@@ -4378,18 +4378,18 @@ const LogHistory = ({ logHistory, setLogHistory, cashFlowHistory, setCashFlowHis
       const endDate = dateRange[1].endOf('day').toDate();
       matchesDate = logDate >= startDate && logDate <= endDate;
     }
-    
+
     return matchesSearch && matchesStatus && matchesType && matchesDate;
   });
 
   const filteredCashFlow = cashFlowHistory.filter(flow => {
     const matchesSearch = flow.userName.toLowerCase().includes(searchText.toLowerCase()) ||
-                         flow.kitName.toLowerCase().includes(searchText.toLowerCase()) ||
-                         flow.reference.toLowerCase().includes(searchText.toLowerCase());
-    
+      flow.kitName.toLowerCase().includes(searchText.toLowerCase()) ||
+      flow.reference.toLowerCase().includes(searchText.toLowerCase());
+
     const matchesStatus = statusFilter === 'all' || flow.status === statusFilter;
     const matchesType = typeFilter === 'all' || flow.type === typeFilter;
-    
+
     let matchesDate = true;
     if (dateRange && dateRange[0] && dateRange[1]) {
       const flowDate = new Date(flow.timestamp);
@@ -4397,7 +4397,7 @@ const LogHistory = ({ logHistory, setLogHistory, cashFlowHistory, setCashFlowHis
       const endDate = dateRange[1].endOf('day').toDate();
       matchesDate = flowDate >= startDate && flowDate <= endDate;
     }
-    
+
     return matchesSearch && matchesStatus && matchesType && matchesDate;
   });
 
@@ -4521,9 +4521,9 @@ const LogHistory = ({ logHistory, setLogHistory, cashFlowHistory, setCashFlowHis
       key: 'amount',
       width: 120,
       render: (amount, record) => (
-        <span style={{ 
-          color: record.flowType === 'INFLOW' ? '#52c41a' : 
-                 record.flowType === 'OUTFLOW' ? '#f5222d' : '#666',
+        <span style={{
+          color: record.flowType === 'INFLOW' ? '#52c41a' :
+            record.flowType === 'OUTFLOW' ? '#f5222d' : '#666',
           fontWeight: 'bold'
         }}>
           {amount.toLocaleString()} {record.currency}
@@ -4623,14 +4623,14 @@ const LogHistory = ({ logHistory, setLogHistory, cashFlowHistory, setCashFlowHis
                     'Admin Action': log.adminAction || 'N/A',
                     'Admin User': log.adminUser || 'N/A'
                   }));
-                  
+
                   const ws = XLSX.utils.json_to_sheet(data);
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, 'Log History');
                   const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
                   const dataBlob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                   saveAs(dataBlob, 'log_history.xlsx');
-                  
+
                   notification.success({
                     message: 'Export Successful',
                     description: 'Log history exported to Excel file',
@@ -4648,122 +4648,122 @@ const LogHistory = ({ logHistory, setLogHistory, cashFlowHistory, setCashFlowHis
             <Tabs.TabPane tab="Request History" key="requests">
               {/* Filters */}
               <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-            <Col xs={24} sm={12} md={6}>
-              <Input
-                placeholder="Search by user, kit, or request ID"
-                prefix={<SearchOutlined />}
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                allowClear
-              />
-            </Col>
-            <Col xs={24} sm={12} md={6}>
-                              <Select
-                  placeholder="Filter by status"
-                  value={statusFilter}
-                  onChange={setStatusFilter}
-                  style={{ width: '100%' }}
-                  allowClear
-                >
-                  <Option value="all">All Status</Option>
-                  <Option value="BORROWED">Borrowed</Option>
-                  <Option value="RETURNED">Returned</Option>
-                  <Option value="REJECTED">Rejected</Option>
-                  <Option value="PAID">Paid</Option>
-                </Select>
-            </Col>
-            <Col xs={24} sm={12} md={6}>
-              <Select
-                placeholder="Filter by type"
-                value={typeFilter}
-                onChange={setTypeFilter}
-                style={{ width: '100%' }}
-                allowClear
-              >
-                <Option value="all">All Types</Option>
-                <Option value="rental">Rental</Option>
-                <Option value="refund">Refund</Option>
-              </Select>
-            </Col>
-            <Col xs={24} sm={12} md={6}>
-              <DatePicker.RangePicker
-                value={dateRange}
-                onChange={setDateRange}
-                style={{ width: '100%' }}
-                placeholder={['Start Date', 'End Date']}
-              />
-            </Col>
-          </Row>
+                <Col xs={24} sm={12} md={6}>
+                  <Input
+                    placeholder="Search by user, kit, or request ID"
+                    prefix={<SearchOutlined />}
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    allowClear
+                  />
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                  <Select
+                    placeholder="Filter by status"
+                    value={statusFilter}
+                    onChange={setStatusFilter}
+                    style={{ width: '100%' }}
+                    allowClear
+                  >
+                    <Option value="all">All Status</Option>
+                    <Option value="BORROWED">Borrowed</Option>
+                    <Option value="RETURNED">Returned</Option>
+                    <Option value="REJECTED">Rejected</Option>
+                    <Option value="PAID">Paid</Option>
+                  </Select>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                  <Select
+                    placeholder="Filter by type"
+                    value={typeFilter}
+                    onChange={setTypeFilter}
+                    style={{ width: '100%' }}
+                    allowClear
+                  >
+                    <Option value="all">All Types</Option>
+                    <Option value="rental">Rental</Option>
+                    <Option value="refund">Refund</Option>
+                  </Select>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                  <DatePicker.RangePicker
+                    value={dateRange}
+                    onChange={setDateRange}
+                    style={{ width: '100%' }}
+                    placeholder={['Start Date', 'End Date']}
+                  />
+                </Col>
+              </Row>
 
-          {/* Statistics */}
-          <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-            <Col xs={24} sm={6}>
-              <Card size="small">
-                <Statistic
-                  title="Total Logs"
-                  value={filteredLogs.length}
-                  prefix={<HistoryOutlined />}
-                  valueStyle={{ color: '#1890ff' }}
-                />
-              </Card>
-            </Col>
-            <Col xs={24} sm={6}>
-              <Card size="small">
-                <Statistic
-                  title="Rental Requests"
-                  value={filteredLogs.filter(log => log.type === 'rental').length}
-                  prefix={<ShoppingOutlined />}
-                  valueStyle={{ color: '#52c41a' }}
-                />
-              </Card>
-            </Col>
-            <Col xs={24} sm={6}>
-              <Card size="small">
-                <Statistic
-                  title="Refund Requests"
-                  value={filteredLogs.filter(log => log.type === 'refund').length}
-                  prefix={<RollbackOutlined />}
-                  valueStyle={{ color: '#fa8c16' }}
-                />
-              </Card>
-            </Col>
-            <Col xs={24} sm={6}>
-              <Card size="small">
-                <Statistic
-                  title="Borrowed Items"
-                  value={filteredLogs.filter(log => log.status === 'BORROWED').length}
-                  prefix={<ShoppingOutlined />}
-                  valueStyle={{ color: '#1890ff' }}
-                />
-              </Card>
-            </Col>
-            <Col xs={24} sm={6}>
-              <Card size="small">
-                <Statistic
-                  title="Returned Items"
-                  value={filteredLogs.filter(log => log.status === 'RETURNED').length}
-                  prefix={<CheckCircleOutlined />}
-                  valueStyle={{ color: '#52c41a' }}
-                />
-              </Card>
-            </Col>
-          </Row>
+              {/* Statistics */}
+              <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+                <Col xs={24} sm={6}>
+                  <Card size="small">
+                    <Statistic
+                      title="Total Logs"
+                      value={filteredLogs.length}
+                      prefix={<HistoryOutlined />}
+                      valueStyle={{ color: '#1890ff' }}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Card size="small">
+                    <Statistic
+                      title="Rental Requests"
+                      value={filteredLogs.filter(log => log.type === 'rental').length}
+                      prefix={<ShoppingOutlined />}
+                      valueStyle={{ color: '#52c41a' }}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Card size="small">
+                    <Statistic
+                      title="Refund Requests"
+                      value={filteredLogs.filter(log => log.type === 'refund').length}
+                      prefix={<RollbackOutlined />}
+                      valueStyle={{ color: '#fa8c16' }}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Card size="small">
+                    <Statistic
+                      title="Borrowed Items"
+                      value={filteredLogs.filter(log => log.status === 'BORROWED').length}
+                      prefix={<ShoppingOutlined />}
+                      valueStyle={{ color: '#1890ff' }}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Card size="small">
+                    <Statistic
+                      title="Returned Items"
+                      value={filteredLogs.filter(log => log.status === 'RETURNED').length}
+                      prefix={<CheckCircleOutlined />}
+                      valueStyle={{ color: '#52c41a' }}
+                    />
+                  </Card>
+                </Col>
+              </Row>
 
-          {/* Log Table */}
-          <Table
-            dataSource={filteredLogs}
-            columns={columns}
-            rowKey="id"
-            pagination={{
-              pageSize: 10,
-              showSizeChanger: true,
-              showQuickJumper: true,
-              showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} logs`,
-            }}
-            scroll={{ x: 1200 }}
-          />
+              {/* Log Table */}
+              <Table
+                dataSource={filteredLogs}
+                columns={columns}
+                rowKey="id"
+                pagination={{
+                  pageSize: 10,
+                  showSizeChanger: true,
+                  showQuickJumper: true,
+                  showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} logs`,
+                }}
+                scroll={{ x: 1200 }}
+              />
             </Tabs.TabPane>
-            
+
             <Tabs.TabPane tab="Cash Flow History" key="cashflow">
               {/* Cash Flow Filters */}
               <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
@@ -4855,8 +4855,8 @@ const LogHistory = ({ logHistory, setLogHistory, cashFlowHistory, setCashFlowHis
                   <Card size="small">
                     <Statistic
                       title="Net Flow"
-                      value={(filteredCashFlow.filter(flow => flow.flowType === 'INFLOW').reduce((sum, flow) => sum + flow.amount, 0) - 
-                             filteredCashFlow.filter(flow => flow.flowType === 'OUTFLOW').reduce((sum, flow) => sum + flow.amount, 0)).toLocaleString()}
+                      value={(filteredCashFlow.filter(flow => flow.flowType === 'INFLOW').reduce((sum, flow) => sum + flow.amount, 0) -
+                        filteredCashFlow.filter(flow => flow.flowType === 'OUTFLOW').reduce((sum, flow) => sum + flow.amount, 0)).toLocaleString()}
                       prefix={<DollarOutlined />}
                       valueStyle={{ color: '#fa8c16' }}
                       suffix="VND"
@@ -4973,9 +4973,9 @@ const LogHistory = ({ logHistory, setLogHistory, cashFlowHistory, setCashFlowHis
                     {selectedLog.userName} ({selectedLog.user})
                   </Descriptions.Item>
                   <Descriptions.Item label="Amount">
-                    <span style={{ 
-                      color: selectedLog.flowType === 'INFLOW' ? '#52c41a' : 
-                             selectedLog.flowType === 'OUTFLOW' ? '#f5222d' : '#666',
+                    <span style={{
+                      color: selectedLog.flowType === 'INFLOW' ? '#52c41a' :
+                        selectedLog.flowType === 'OUTFLOW' ? '#f5222d' : '#666',
                       fontWeight: 'bold',
                       fontSize: '16px'
                     }}>
@@ -4996,7 +4996,7 @@ const LogHistory = ({ logHistory, setLogHistory, cashFlowHistory, setCashFlowHis
                   </Descriptions.Item>
                 </>
               )}
-              
+
               {/* Conditional fields based on action type - Only for Request History */}
               {selectedLog.action && selectedLog.type === 'rental' && (
                 <>
@@ -5008,7 +5008,7 @@ const LogHistory = ({ logHistory, setLogHistory, cashFlowHistory, setCashFlowHis
                   </Descriptions.Item>
                 </>
               )}
-              
+
               {selectedLog.action && selectedLog.type === 'refund' && (
                 <>
                   <Descriptions.Item label="Reason" span={2}>
@@ -5026,7 +5026,7 @@ const LogHistory = ({ logHistory, setLogHistory, cashFlowHistory, setCashFlowHis
                   )}
                 </>
               )}
-              
+
               {/* Admin action details - Only for Request History */}
               {selectedLog.action && selectedLog.adminAction && (
                 <>
@@ -5058,7 +5058,7 @@ const LogHistory = ({ logHistory, setLogHistory, cashFlowHistory, setCashFlowHis
                   {selectedLog.fineAmount.toLocaleString()} {selectedLog.currency}
                 </Descriptions.Item>
               )}
-              
+
               {!selectedLog.action && selectedLog.processedBy && (
                 <>
                   <Descriptions.Item label="Processed By" span={2}>
