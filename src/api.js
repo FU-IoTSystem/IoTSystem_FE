@@ -1,5 +1,5 @@
+// const API_BASE_URL = 'https://rental-kit-fvcrenhrbva3e4f2.eastasia-01.azurewebsites.net';
 const API_BASE_URL = 'https://iot-system-kit.azurewebsites.net';
-// const API_BASE_URL = 'http://localhost:8080';
 
 // Helper function to get JWT token from localStorage
 const getAuthToken = () => {
@@ -66,6 +66,7 @@ const extractArrayFromPayload = (payload) => {
   return Array.isArray(payload) ? payload : [];
 };
 
+
 // Helper function to make API requests
 const apiRequest = async (endpoint, options = {}) => {
   const url = `${API_BASE_URL}${endpoint}`;
@@ -109,29 +110,100 @@ const apiRequest = async (endpoint, options = {}) => {
 
 
 
-
 // Authentication API
 export const authAPI = {
-  // login: async (email, password) => {
-  //   return apiRequest('/api/auth/login', {
-  //     method: 'POST',
-  //     body: JSON.stringify({ email, password }),
-  //   });
-  // },
-  //
-  // logout: async () => {
-  //   return apiRequest('/api/auth/logout', {
-  //     method: 'POST',
-  //   });
-  // },
-  //
-  // Use mockLogin from loginMock.js for development instead
+  login: async (username, password) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username, password }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Login failed');
+      }
+
+      const token = await response.text();
+      localStorage.setItem('authToken', token);
+      return token;
+    } catch (error) {
+      console.error('Login failed:', error);
+      // Provide more helpful error messages
+      if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
+        throw new Error(`Cannot connect to server at ${API_BASE_URL}. Please ensure the backend server is running on port 8080.`);
+      }
+      throw error;
+    }
+  },
+
+  logout: () => {
+    localStorage.removeItem('authToken');
+  },
+
+  getProfile: async () => {
+    return apiRequest('/api/me/profile');
+  },
+
+  updateUser: async (userId, userData) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/register/${userId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        },
+        body: JSON.stringify(userData),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Update user failed');
+      }
+
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error('Update user failed:', error);
+      throw error;
+    }
+  },
+
+  updateProfile: async (profileData) => {
+    return apiRequest('/api/me/profile', {
+      method: 'PUT',
+      body: JSON.stringify(profileData),
+    });
+  },
+
+  changePassword: async (oldPassword, newPassword) => {
+    return apiRequest('/api/me/change-password', {
+      method: 'POST',
+      body: JSON.stringify({
+        oldPassword,
+        newPassword
+      }),
+    });
+  },
+
+  isAuthenticated: () => {
+    return !!getAuthToken();
+  }
 };
 
 // User Management API
 export const userAPI = {
   getUsers: async () => {
     return apiRequest('/api/admin/users');
+  },
+
+  getAllAccounts: async (page = 0, size = 10) => {
+    const response = await apiRequest(`/api/admin/accounts?page=${page}&size=${size}`);
+    // Handle different response formats: direct array, ApiResponse with array in data, or PageResponse
+    return extractArrayFromPayload(response);
   },
 
   createUser: async (userData) => {
@@ -141,10 +213,115 @@ export const userAPI = {
     });
   },
 
+  createSingleStudent: async (studentData) => {
+    // Map FE data to BE RegisterRequest format
+    // Note: username in BE is actually email
+    console.log('Creating student with data:', studentData);
+
+    if (!studentData.email) {
+      throw new Error('Email is required');
+    }
+
+    const requestData = {
+      username: studentData.email,  // username is email in RegisterRequest
+      password: studentData.password || '1',
+      studentCode: studentData.studentCode,
+      roles: 'STUDENT',
+      phoneNumber: studentData.phoneNumber,
+      fullName: studentData.name
+    };
+
+    console.log('Request data:', requestData);
+
+    return apiRequest('/api/aas/create-single-student', {
+      method: 'POST',
+      body: JSON.stringify(requestData),
+    });
+  },
+
+  updateStudent: async (id, studentData) => {
+    // Map FE data to BE RegisterRequest format for update
+    console.log('Updating student with data:', studentData);
+
+    if (!studentData.email) {
+      throw new Error('Email is required');
+    }
+
+    const requestData = {
+      username: studentData.email,  // username is email in RegisterRequest
+      password: studentData.password || '1',  // Password may not be changed, but required by API
+      studentCode: studentData.studentCode || '',
+      roles: 'STUDENT',
+      phoneNumber: studentData.phoneNumber || '',
+      fullName: studentData.name
+    };
+
+    console.log('Update request data:', requestData);
+
+    return apiRequest(`/api/register/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(requestData),
+    });
+  },
+
+  createSingleLecturer: async (lecturerData) => {
+    // Map FE data to BE RegisterRequest format
+    // Note: username in BE is actually email
+    console.log('Creating lecturer with data:', lecturerData);
+
+    if (!lecturerData.email) {
+      throw new Error('Email is required');
+    }
+
+    const requestData = {
+      username: lecturerData.email,  // username is email in RegisterRequest
+      password: lecturerData.password || '1',
+      studentCode: lecturerData.studentCode || '',
+      roles: 'LECTURER',
+      phoneNumber: lecturerData.phoneNumber,
+      fullName: lecturerData.name
+    };
+
+    console.log('Request data:', requestData);
+
+    return apiRequest('/api/aas/create-single-lecturer', {
+      method: 'POST',
+      body: JSON.stringify(requestData),
+    });
+  },
+
+  updateLecturer: async (id, lecturerData) => {
+    // Map FE data to BE RegisterRequest format for update
+    console.log('Updating lecturer with data:', lecturerData);
+
+    if (!lecturerData.email) {
+      throw new Error('Email is required');
+    }
+
+    const requestData = {
+      username: lecturerData.email,  // username is email in RegisterRequest
+      password: lecturerData.password || '1',  // Password may not be changed, but required by API
+      studentCode: lecturerData.studentCode || '',
+      roles: 'LECTURER',
+      phoneNumber: lecturerData.phoneNumber || '',
+      fullName: lecturerData.name
+    };
+
+    console.log('Update request data:', requestData);
+
+    return apiRequest(`/api/register/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(requestData),
+    });
+  },
+
   updateUser: async (id, userData) => {
     return apiRequest(`/api/admin/users/${id}`, {
       method: 'PUT',
       body: JSON.stringify(userData),
+      headers: {
+        'Content-Type': 'application/json',
+      },
     });
   },
 
@@ -153,306 +330,49 @@ export const userAPI = {
       method: 'DELETE',
     });
   },
-};
 
-// Kit Management API
-export const kitAPI = {
-  // getKits: async () => {
-  //   return apiRequest('/api/kits');
-  // },
-  // getAvailableKits: async () => {
-  //   return apiRequest('/api/kits/available');
-  // },
-  // createKit: async (kitData) => {
-  //   return apiRequest('/api/kits', {
-  //     method: 'POST',
-  //     body: JSON.stringify(kitData),
-  //   });
-  // },
-  // updateKitStatus: async (id, status) => {
-  //   return apiRequest(`/api/kits/${id}/status`, {
-  //     method: 'POST',
-  //     body: JSON.stringify({ status }),
-  //   });
-  // },
-  // chooseKit: async (kitName) => {
-  //   return apiRequest('/api/kits/choose', {
-  //     method: 'POST',
-  //     body: JSON.stringify({ kitName }),
-  //   });
-  // },
-  // importKits: async (kitsData) => {
-  //   return apiRequest('/api/kits/import', {
-  //     method: 'POST',
-  //     body: JSON.stringify({ kits: kitsData }),
-  //   });
-  // },
-  // Use mocks for testing
-};
+  getLecturers: async () => {
+    try {
+      const response = await apiRequest('/api/classes/getListLecturers');
+      if (response && Array.isArray(response)) {
+        return response.map(lecturer => ({
+          value: lecturer.email,
+          label: lecturer.fullName || lecturer.email,
+          email: lecturer.email,
+          fullName: lecturer.fullName,
+          id: lecturer.id,
+          phone: lecturer.phone,
+          createdAt: lecturer.createdAt,
+          status: lecturer.isActive ? 'ACTIVE' : 'INACTIVE'
+        }));
+      }
+      return [];
+    } catch (error) {
+      console.error('Failed to fetch lecturers:', error);
+      return [];
+    }
+  },
 
-// Group Management API
-export const groupAPI = {
-  // getGroups: async () => {
-  //   return apiRequest('/api/groups');
-  // },
-  // getStudentGroup: async (email) => {
-  //   return apiRequest(`/api/groups/student?email=${encodeURIComponent(email)}`);
-  // },
-  // getLecturerGroups: async (email) => {
-  //   return apiRequest(`/api/groups/lecturer?email=${encodeURIComponent(email)}`);
-  // },
-  // createGroup: async (groupData) => {
-  //   return apiRequest('/api/groups', {
-  //     method: 'POST',
-  //     body: JSON.stringify(groupData),
-  //   });
-  // },
-  // addMemberToGroup: async (groupName, memberEmail) => {
-  //   return apiRequest('/api/groups/add-member', {
-  //     method: 'POST',
-  //     body: JSON.stringify({ groupName, memberEmail }),
-  //   });
-  // },
-  // moveMember: async (memberEmail, fromGroup, toGroup) => {
-  //   return apiRequest('/api/groups/move-member', {
-  //     method: 'POST',
-  //     body: JSON.stringify({ memberEmail, fromGroup, toGroup }),
-  //   });
-  // },
-  // importGroups: async (formData) => {
-  //   return apiRequest('/api/groups/import', {
-  //     method: 'POST',
-  //     body: formData,
-  //     headers: {}, // Let browser set Content-Type for FormData
-  //   });
-  // },
-  // Use mocks for testing
-};
+  getStudents: async () => {
+    try {
+      const response = await apiRequest('/api/getAllStudent');
+      console.log('Students response:', response);
 
-// Wallet API
-export const walletAPI = {
-  // getWallet: async () => {
-  //   return apiRequest('/api/wallet');
-  // },
-  // deposit: async () => {
-  //   return apiRequest('/api/wallet/deposit', {
-  //     method: 'POST',
-  //   });
-  // },
-  // deduct: async (amount, description) => {
-  //   return apiRequest('/api/wallet/deduct', {
-  //     method: 'POST',
-  //     body: JSON.stringify({ amount, description }),
-  //   });
-  // },
-  // refund: async (amount, description) => {
-  //   return apiRequest('/api/wallet/refund', {
-  //     method: 'POST',
-  //     body: JSON.stringify({ amount, description }),
-  //   });
-  // },
-  // Use mocks for testing
+      if (response && response.data && Array.isArray(response.data)) {
+        return response.data.map(student => ({
+          id: student.id,
+          email: student.email,
+          fullName: student.fullName || student.email,
+          studentCode: student.studentCode,
+          phoneNumber: student.phone,
+          createdAt: student.createdAt, // Backend trả về createdAt
+          status: student.isActive ? 'ACTIVE' : 'INACTIVE'
+        }));
+      }
+      return [];
+    } catch (error) {
+      console.error('Failed to fetch students:', error);
+      return [];
+    }
+  },
 };
-
-// Rental API
-export const rentalAPI = {
-  // submitRentalRequest: async (rentalData) => {
-  //   return apiRequest('/api/rentals/request', {
-  //     method: 'POST',
-  //     body: JSON.stringify(rentalData),
-  //   });
-  // },
-  // getRentalRequests: async () => {
-  //   return apiRequest('/api/admin/rental-requests');
-  // },
-  // approveRentalRequest: async (id) => {
-  //   return apiRequest(`/api/admin/rental-requests/${id}/approve`, {
-  //     method: 'POST',
-  //   });
-  // },
-  // rejectRentalRequest: async (id, reason) => {
-  //   return apiRequest(`/api/admin/rental-requests/${id}/reject`, {
-  //     method: 'POST',
-  //     body: JSON.stringify({ reason }),
-  //   });
-  // },
-  // Use mocks for testing
-};
-
-// Refund API
-export const refundAPI = {
-  // submitRefundRequest: async (refundData) => {
-  //   return apiRequest('/api/refunds/request', {
-  //     method: 'POST',
-  //     body: JSON.stringify(refundData),
-  //   });
-  // },
-  // getRefundRequests: async () => {
-  //   return apiRequest('/api/admin/refund-requests');
-  // },
-  // approveRefundRequest: async (id, damageAssessment) => {
-  //   return apiRequest(`/api/admin/refund-requests/${id}/approve`, {
-  //     method: 'POST',
-  //     body: JSON.stringify({ damageAssessment }),
-  //   });
-  // },
-  // rejectRefundRequest: async (id, reason) => {
-  //   return apiRequest(`/api/admin/refund-requests/${id}/reject`, {
-  //     method: 'POST',
-  //     body: JSON.stringify({ reason }),
-  //   });
-  // },
-  // Use mocks for testing
-};
-
-// Notification API
-export const notificationAPI = {
-  // sendNotification: async (notificationData) => {
-  //   return apiRequest('/api/notifications/send', {
-  //     method: 'POST',
-  //     body: JSON.stringify(notificationData),
-  //   });
-  // },
-  // getUserNotifications: async (userEmail) => {
-  //   return apiRequest(`/api/notifications/${userEmail}`);
-  // },
-  // Use mocks for testing
-};
-
-// Student Import API
-export const studentAPI = {
-  // importStudents: async (studentsData) => {
-  //   return apiRequest('/api/students/import', {
-  //     method: 'POST',
-  //     body: JSON.stringify({ students: studentsData }),
-  //   });
-  // },
-  // Use mocks for testing
-};
-
-// Academic Affairs API
-export const academicAPI = {
-  // Semesters
-  // getSemesters: async () => {
-  //   return apiRequest('/api/academic/semesters');
-  // },
-  // createSemester: async (semesterData) => {
-  //   return apiRequest('/api/academic/semesters', {
-  //     method: 'POST',
-  //     body: JSON.stringify(semesterData),
-  //   });
-  // },
-  // updateSemester: async (id, semesterData) => {
-  //   return apiRequest(`/api/academic/semesters/${id}`, {
-  //     method: 'PUT',
-  //     body: JSON.stringify(semesterData),
-  //   });
-  // },
-  // deleteSemester: async (id) => {
-  //   return apiRequest(`/api/academic/semesters/${id}`, {
-  //     method: 'DELETE',
-  //   });
-  // },
-  // Classes
-  // getClasses: async (semesterId) => {
-  //   if (semesterId) {
-  //     return apiRequest(`/api/academic/semesters/${semesterId}/classes`);
-  //   } else {
-  //     return apiRequest('/api/academic/classes');
-  //   }
-  // },
-  // createClass: async (semesterId, classData) => {
-  //   return apiRequest(`/api/academic/semesters/${semesterId}/classes`, {
-  //     method: 'POST',
-  //     body: JSON.stringify(classData),
-  //   });
-  // },
-  // updateClass: async (id, classData) => {
-  //   return apiRequest(`/api/academic/classes/${id}`, {
-  //     method: 'PUT',
-  //     body: JSON.stringify(classData),
-  //   });
-  // },
-  // deleteClass: async (id) => {
-  //   return apiRequest(`/api/academic/classes/${id}`, {
-  //     method: 'DELETE',
-  //   });
-  // },
-  // Students
-  // getStudents: async () => {
-  //   return apiRequest('/api/academic/students');
-  // },
-  // createStudent: async (studentData) => {
-  //   return apiRequest('/api/academic/students', {
-  //     method: 'POST',
-  //     body: JSON.stringify(studentData),
-  //   });
-  // },
-  // updateStudent: async (id, studentData) => {
-  //   return apiRequest(`/api/academic/students/${id}`, {
-  //     method: 'PUT',
-  //     body: JSON.stringify(studentData),
-  //   });
-  // },
-  // deleteStudent: async (id) => {
-  //   return apiRequest(`/api/academic/students/${id}`, {
-  //     method: 'DELETE',
-  //   });
-  // },
-  // Lecturers
-  // getLecturers: async () => {
-  //   return apiRequest('/api/academic/lecturers');
-  // },
-  // createLecturer: async (lecturerData) => {
-  //   return apiRequest('/api/academic/lecturers', {
-  //     method: 'POST',
-  //     body: JSON.stringify(lecturerData),
-  //   });
-  // },
-  // updateLecturer: async (id, lecturerData) => {
-  //   return apiRequest(`/api/academic/lecturers/${id}`, {
-  //     method: 'PUT',
-  //     body: JSON.stringify(lecturerData),
-  //   });
-  // },
-  // deleteLecturer: async (id) => {
-  //   return apiRequest(`/api/academic/lecturers/${id}`, {
-  //     method: 'DELETE',
-  //   });
-  // },
-  // Enrollments
-  // getEnrollments: async () => {
-  //   return apiRequest('/api/academic/enrollments');
-  // },
-  // createEnrollment: async (enrollmentData) => {
-  //   return apiRequest('/api/academic/enrollments', {
-  //     method: 'POST',
-  //     body: JSON.stringify(enrollmentData),
-  //   });
-  // },
-  // deleteEnrollment: async (id) => {
-  //   return apiRequest(`/api/academic/enrollments/${id}`, {
-  //     method: 'DELETE',
-  //   });
-  // },
-  // Assignments
-  // getAssignments: async () => {
-  //   return apiRequest('/api/academic/assignments');
-  // },
-  // createAssignment: async (assignmentData) => {
-  //   return apiRequest('/api/academic/assignments', {
-  //     method: 'POST',
-  //     body: JSON.stringify(assignmentData),
-  //   });
-  // },
-  // deleteAssignment: async (id) => {
-  //   return apiRequest(`/api/academic/assignments/${id}`, {
-  //     method: 'DELETE',
-  //   });
-  // },
-  // Logs
-  // getLogs: async () => {
-  //   return apiRequest('/api/academic/logs');
-  // },
-  // Use mocks for testing
-}; 

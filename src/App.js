@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom';
 import AdminPortal from './AdminPortal';
 import LeaderPortal from './LeaderPortal';
 import LecturerPortal from './LecturerPortal';
@@ -10,45 +10,21 @@ import AdminRentalApprovalPage from './AdminRentalApprovalPage';
 import AdminRefundApprovalPage from './AdminRefundApprovalPage';
 import TopUpPage from './TopUpPage';
 import PenaltyPaymentPage from './PenaltyPaymentPage';
-import { motion, AnimatePresence } from 'framer-motion';
-import AppBar from '@mui/material/AppBar';
-import Toolbar from '@mui/material/Toolbar';
+import QRInfoPage from './QRInfoPage';
+import { motion } from 'framer-motion';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
-import CardActions from '@mui/material/CardActions';
-import Grid from '@mui/material/Grid';
 import Box from '@mui/material/Box';
 import Container from '@mui/material/Container';
 import TextField from '@mui/material/TextField';
 import Alert from '@mui/material/Alert';
-import Chip from '@mui/material/Chip';
-import Table from '@mui/material/Table';
-import TableBody from '@mui/material/TableBody';
-import TableCell from '@mui/material/TableCell';
-import TableContainer from '@mui/material/TableContainer';
-import TableHead from '@mui/material/TableHead';
-import TableRow from '@mui/material/TableRow';
-import Paper from '@mui/material/Paper';
-import Dialog from '@mui/material/Dialog';
-import DialogTitle from '@mui/material/DialogTitle';
-import DialogContent from '@mui/material/DialogContent';
-import DialogActions from '@mui/material/DialogActions';
-import Drawer from '@mui/material/Drawer';
-import List from '@mui/material/List';
-import ListItem from '@mui/material/ListItem';
-import ListItemButton from '@mui/material/ListItemButton';
-import ListItemIcon from '@mui/material/ListItemIcon';
-import ListItemText from '@mui/material/ListItemText';
-import InventoryIcon from '@mui/icons-material/Inventory';
-import MonetizationOnIcon from '@mui/icons-material/MonetizationOn';
-import ReplayIcon from '@mui/icons-material/Replay';
-import GroupIcon from '@mui/icons-material/Group';
-import { mockWallet, mockKits, mockGroups, mockLogin } from './mocks';
+import { authAPI, borrowingGroupAPI } from './api';
 
 function Home({ onLogin, user }) {
   const [error, setError] = useState('');
+  const [loginCredentials, setLoginCredentials] = useState({ email: '', password: '' });
   const navigate = useNavigate();
 
   // Redirect if user is already logged in
@@ -59,13 +35,13 @@ function Home({ onLogin, user }) {
           navigate('/admin');
           break;
         case 'leader':
-          navigate('/leader');
+          navigate('/leader'); // Leader role loads LeaderPortal
           break;
         case 'lecturer':
           navigate('/lecturer');
           break;
         case 'member':
-          navigate('/member');
+          navigate('/member'); // Student role loads MemberPortal
           break;
         case 'academic':
           navigate('/academic');
@@ -76,15 +52,82 @@ function Home({ onLogin, user }) {
     }
   }, [user, navigate]);
 
-  const handleLoginAs = async (userObj) => {
+  const handleLogin = async () => {
     try {
       setError('');
-      // Use mockLogin to validate credentials
-      const authenticatedUser = await mockLogin(userObj.email, userObj.password);
+      // Use real API login
+      await authAPI.login(loginCredentials.email, loginCredentials.password);
+
+      // Get user profile after successful login
+      const profileResponse = await authAPI.getProfile();
+      const userProfile = profileResponse.data;
+
+      // Map backend role to frontend role
+      const roleMapping = {
+        'ADMIN': 'admin',
+        'STUDENT': 'member', // Student role loads MemberPortal
+        'LECTURER': 'lecturer',
+        'LEADER': 'leader',   // Leader role loads LeaderPortal
+        'ACADEMIC': 'academic' // Academic role loads AcademicAffairsPortal
+      };
+
+      const mappedRole = roleMapping[userProfile.role] || 'member';
+
+      // Check borrowing group role for STUDENT to determine if they are leader
+      let finalRole = mappedRole;
+      let borrowingGroupInfo = null;
+
+      if (mappedRole === 'member' || mappedRole === 'student') {
+        try {
+          // Get user's borrowing groups
+          const borrowingGroups = await borrowingGroupAPI.getByAccountId(userProfile.id);
+          console.log('User borrowing groups:', borrowingGroups);
+
+          if (borrowingGroups && borrowingGroups.length > 0) {
+            // Find if user has LEADER role
+            const leaderGroup = borrowingGroups.find(bg => bg.roles === 'LEADER');
+            if (leaderGroup) {
+              finalRole = 'leader';
+              borrowingGroupInfo = {
+                groupId: leaderGroup.studentGroupId,
+                role: 'LEADER'
+              };
+              console.log('User is a LEADER in group:', borrowingGroupInfo);
+            } else {
+              // User is a member
+              const memberGroup = borrowingGroups.find(bg => bg.roles === 'MEMBER');
+              if (memberGroup) {
+                borrowingGroupInfo = {
+                  groupId: memberGroup.studentGroupId,
+                  role: 'MEMBER'
+                };
+                console.log('User is a MEMBER in group:', borrowingGroupInfo);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error checking borrowing group role:', error);
+          // Continue with default role
+        }
+      }
+
+      const authenticatedUser = {
+        id: userProfile.id,
+        email: userProfile.email,
+        name: userProfile.fullName || userProfile.email,
+        role: finalRole,
+        avatarUrl: userProfile.avatarUrl,
+        phone: userProfile.phone,
+        studentCode: userProfile.studentCode,
+        borrowingGroupInfo: borrowingGroupInfo
+      };
+
+      console.log('Final authenticated user:', authenticatedUser);
+
       onLogin(authenticatedUser);
-      
-      // Navigate to appropriate portal based on role
-      switch (authenticatedUser.role.toLowerCase()) {
+
+      // Navigate to appropriate portal based on final role
+      switch (finalRole) {
         case 'admin':
           navigate('/admin');
           break;
@@ -95,13 +138,14 @@ function Home({ onLogin, user }) {
           navigate('/lecturer');
           break;
         case 'member':
-          navigate('/member');
+        case 'student':
+          navigate('/member'); // Student role loads MemberPortal
           break;
         case 'academic':
-          navigate('/academic');
+          navigate('/academic'); // Academic role loads AcademicAffairsPortal
           break;
         default:
-          // Stay on home page if role is not recognized
+          navigate('/member');
           break;
       }
     } catch (error) {
@@ -110,22 +154,22 @@ function Home({ onLogin, user }) {
   };
 
   return (
-    <Box sx={{ 
-      minHeight: '100vh', 
+    <Box sx={{
+      minHeight: '100vh',
       background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       padding: 2
     }}>
-      <Container maxWidth="md">
+      <Container maxWidth="lg">
         <motion.div
           initial={{ opacity: 0, y: 50 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8 }}
         >
-          <Card sx={{ 
-            borderRadius: 4, 
+          <Card sx={{
+            borderRadius: 4,
             boxShadow: '0 20px 40px rgba(0,0,0,0.1)',
             background: 'rgba(255, 255, 255, 0.95)',
             backdropFilter: 'blur(10px)',
@@ -133,7 +177,7 @@ function Home({ onLogin, user }) {
           }}>
             <CardContent sx={{ p: 4 }}>
               <Box sx={{ textAlign: 'center', mb: 4 }}>
-                <Typography variant="h3" component="h1" gutterBottom sx={{ 
+                <Typography variant="h3" component="h1" gutterBottom sx={{
                   fontWeight: 'bold',
                   background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                   backgroundClip: 'text',
@@ -147,55 +191,53 @@ function Home({ onLogin, user }) {
                 </Typography>
               </Box>
 
-              <Box sx={{ textAlign: 'center', mb: 4 }}>
-                <Typography variant="h5" gutterBottom sx={{ fontWeight: 'bold', color: '#2c3e50' }}>
-                  Quick Login
-                </Typography>
-                <Typography variant="body1" color="text.secondary" paragraph>
-                  Click on any role below to login with demo credentials:
-                </Typography>
-              </Box>
-              
-              {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
-              
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 400, mx: 'auto' }}>
-                {[
-                  { email: 'admin@fpt.edu.vn', password: 'admin', role: 'Admin', color: '#e74c3c' },
-                  { email: 'leader@fpt.edu.vn', password: 'leader', role: 'Leader', color: '#3498db' },
-                  { email: 'lecturer@fpt.edu.vn', password: 'lecturer', role: 'Lecturer', color: '#2ecc71' },
-                  { email: 'member@fpt.edu.vn', password: 'member', role: 'Member', color: '#f39c12' },
-                  { email: 'academic@fpt.edu.vn', password: 'academic', role: 'Academic', color: '#9b59b6' }
-                ].map((user, index) => (
-                  <motion.div
-                    key={user.role}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.1 }}
-                  >
+              <Box>
+                <Box sx={{ textAlign: 'center', mb: 4 }}>
+                  <Typography variant="h5" gutterBottom sx={{ fontWeight: 'bold', color: '#2c3e50' }}>
+                    Login
+                  </Typography>
+                  <Typography variant="body1" color="text.secondary">
+                    Enter your credentials to access the IoT Kit Rental System
+                  </Typography>
+                </Box>
+
+                {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
+
+                <Box sx={{ maxWidth: 400, mx: 'auto' }}>
+                  <TextField
+                    fullWidth
+                    label="Email"
+                    value={loginCredentials.email}
+                    onChange={(e) => setLoginCredentials({ ...loginCredentials, email: e.target.value })}
+                    sx={{ mb: 2 }}
+                  />
+                  <TextField
+                    fullWidth
+                    label="Password"
+                    type="password"
+                    value={loginCredentials.password}
+                    onChange={(e) => setLoginCredentials({ ...loginCredentials, password: e.target.value })}
+                    sx={{ mb: 3 }}
+                  />
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                     <Button
                       variant="contained"
                       fullWidth
-                      onClick={() => handleLoginAs(user)}
+                      onClick={handleLogin}
                       sx={{
-                        py: 2,
-                        background: `linear-gradient(135deg, ${user.color} 0%, ${user.color}dd 100%)`,
+                        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                         borderRadius: 2,
                         fontWeight: 'bold',
-                        textTransform: 'none',
-                        fontSize: '1.1rem',
-                        boxShadow: '0 4px 15px rgba(0,0,0,0.1)',
+                        py: 1.5,
                         '&:hover': {
-                          background: `linear-gradient(135deg, ${user.color}dd 0%, ${user.color} 100%)`,
-                          boxShadow: '0 6px 20px rgba(0,0,0,0.15)'
+                          background: 'linear-gradient(135deg, #764ba2 0%, #667eea 100%)',
                         }
                       }}
                     >
-                      Login as {user.role}
+                      Login
                     </Button>
-                  </motion.div>
-                ))}
+                  </Box>
+                </Box>
               </Box>
             </CardContent>
           </Card>
@@ -217,6 +259,7 @@ function App() {
   };
 
   const handleLogout = () => {
+    authAPI.logout();
     setUser(null);
     navigate('/');
   };
@@ -234,6 +277,7 @@ function App() {
       <Route path="/admin/refund-approval" element={<AdminRefundApprovalPage user={user} onLogout={handleLogout} />} />
       <Route path="/top-up" element={<TopUpPage user={user} onLogout={handleLogout} />} />
       <Route path="/penalty-payment" element={<PenaltyPaymentPage user={user} onLogout={handleLogout} />} />
+      <Route path="/qr-info" element={<QRInfoPage user={user} onLogout={handleLogout} />} />
     </Routes>
   );
 }
