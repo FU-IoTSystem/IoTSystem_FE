@@ -21,7 +21,7 @@ import {
   Grid,
   Divider
 } from '@mui/material';
-import { rentalAPI, notificationAPI } from './api';
+import { borrowingRequestAPI, notificationAPI } from './api';
 
 function AdminRentalApprovalPage() {
   const [rentalRequests, setRentalRequests] = useState([]);
@@ -35,20 +35,40 @@ function AdminRentalApprovalPage() {
 
   const fetchRentalRequests = async () => {
     try {
-      const data = await rentalAPI.getRentalRequests();
-      setRentalRequests(data.requests || []);
+      console.log('Fetching rental requests...');
+      console.log('Auth token:', localStorage.getItem('authToken'));
+      const data = await borrowingRequestAPI.getAll();
+      console.log('Fetched rental requests:', data);
+      setRentalRequests(data || []);
     } catch (error) {
       console.error('Error fetching rental requests:', error);
+      console.error('Error details:', error.message);
+      setMessage('Error fetching rental requests: ' + error.message);
     }
   };
 
   const handleApprove = async (requestId) => {
     try {
-      await rentalAPI.approveRentalRequest(requestId);
+      const request = rentalRequests.find(req => req.id === requestId);
+      // Update the borrowing request status to approved
+      await borrowingRequestAPI.update(requestId, { status: 'APPROVED' });
       setMessage('Rental request approved successfully!');
       fetchRentalRequests();
       // Send notification to user
-      await sendNotification(requestId, 'APPROVED');
+      if (request?.requestedBy?.id) {
+        try {
+          await notificationAPI.createNotifications([
+            {
+              subType: 'RENTAL_SUCCESS',
+              title: 'Yêu cầu thuê kit được chấp nhận',
+              message: `Yêu cầu thuê kit ${request?.kit?.kitName || ''} của bạn đã được admin phê duyệt.`,
+              userId: request.requestedBy.id
+            }
+          ]);
+        } catch (notifyError) {
+          console.error('Error sending approval notification:', notifyError);
+        }
+      }
     } catch (error) {
       setMessage(error.message || 'Error approving request');
     }
@@ -56,35 +76,38 @@ function AdminRentalApprovalPage() {
 
   const handleReject = async (requestId, reason) => {
     try {
-      await rentalAPI.rejectRentalRequest(requestId, reason);
+      const request = rentalRequests.find(req => req.id === requestId);
+      // Update the borrowing request status to rejected
+      await borrowingRequestAPI.update(requestId, { status: 'REJECTED', reason: reason });
       setMessage('Rental request rejected successfully!');
       fetchRentalRequests();
       // Send notification to user
-      await sendNotification(requestId, 'REJECTED', reason);
+      if (request?.requestedBy?.id) {
+        try {
+          await notificationAPI.createNotifications([
+            {
+              subType: 'RENTAL_REJECTED',
+              title: 'Yêu cầu thuê kit bị từ chối',
+              message: `Yêu cầu thuê kit ${request?.kit?.kitName || ''} của bạn đã bị admin từ chối.`,
+              userId: request.requestedBy.id
+            }
+          ]);
+        } catch (notifyError) {
+          console.error('Error sending rejection notification:', notifyError);
+        }
+      }
     } catch (error) {
       setMessage(error.message || 'Error rejecting request');
     }
   };
 
-  const sendNotification = async (requestId, status, reason = '') => {
-    try {
-      await notificationAPI.sendNotification({
-        requestId,
-        status,
-        reason,
-        type: 'RENTAL_REQUEST'
-      });
-    } catch (error) {
-      console.error('Error sending notification:', error);
-    }
-  };
-
   const getStatusColor = (status) => {
     switch (status) {
-      case 'PENDING_APPROVAL': return 'warning';
+      case 'PENDING': return 'warning';
       case 'APPROVED': return 'success';
       case 'REJECTED': return 'error';
       case 'BORROWED': return 'info';
+      case 'RETURNED': return 'success';
       default: return 'default';
     }
   };
@@ -96,7 +119,7 @@ function AdminRentalApprovalPage() {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mt: 4 }}>
       <Typography variant="h4" gutterBottom>Rental Request Management</Typography>
-      
+
       {message && (
         <Alert sx={{ mb: 2, width: '100%', maxWidth: 1200 }} severity="info">
           {message}
@@ -112,34 +135,34 @@ function AdminRentalApprovalPage() {
                   <TableCell>Request ID</TableCell>
                   <TableCell>User</TableCell>
                   <TableCell>Kit</TableCell>
-                  <TableCell>Duration</TableCell>
-                  <TableCell>Total Cost</TableCell>
+                  <TableCell>Request Type</TableCell>
+                  <TableCell>Deposit Amount</TableCell>
+                  <TableCell>Expected Return Date</TableCell>
                   <TableCell>Status</TableCell>
-                  <TableCell>Request Date</TableCell>
                   <TableCell>Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {rentalRequests.map((request) => (
                   <TableRow key={request.id}>
-                    <TableCell>#{request.id}</TableCell>
+                    <TableCell>#{request.id.substring(0, 8)}...</TableCell>
                     <TableCell>
-                      <Typography variant="body2">{request.userName}</Typography>
+                      <Typography variant="body2">{request.requestedBy?.fullName || 'N/A'}</Typography>
                       <Typography variant="caption" color="text.secondary">
-                        {request.userEmail}
+                        {request.requestedBy?.email || 'N/A'}
                       </Typography>
                     </TableCell>
-                    <TableCell>{request.kitName}</TableCell>
-                    <TableCell>{request.duration} days</TableCell>
-                    <TableCell>{request.totalCost.toLocaleString()} VND</TableCell>
+                    <TableCell>{request.kit?.kitName || 'N/A'}</TableCell>
+                    <TableCell>{request.requestType || 'N/A'}</TableCell>
+                    <TableCell>{request.depositAmount ? request.depositAmount.toLocaleString() : '0'} VND</TableCell>
+                    <TableCell>{request.expectReturnDate ? formatDate(request.expectReturnDate) : 'N/A'}</TableCell>
                     <TableCell>
-                      <Chip 
-                        label={request.status.replace('_', ' ')} 
-                        color={getStatusColor(request.status)} 
-                        size="small" 
+                      <Chip
+                        label={request.status || 'PENDING'}
+                        color={getStatusColor(request.status)}
+                        size="small"
                       />
                     </TableCell>
-                    <TableCell>{formatDate(request.requestDate)}</TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', gap: 1 }}>
                         <Button
@@ -152,7 +175,7 @@ function AdminRentalApprovalPage() {
                         >
                           View
                         </Button>
-                        {request.status === 'PENDING_APPROVAL' && (
+                        {request.status === 'PENDING' && (
                           <>
                             <Button
                               size="small"
@@ -191,42 +214,44 @@ function AdminRentalApprovalPage() {
               <Grid container spacing={2}>
                 <Grid item xs={12} md={6}>
                   <Typography variant="subtitle1" gutterBottom>User Information</Typography>
-                  <Typography><strong>Name:</strong> {selectedRequest.userName}</Typography>
-                  <Typography><strong>Email:</strong> {selectedRequest.userEmail}</Typography>
-                  <Typography><strong>Role:</strong> {selectedRequest.userRole}</Typography>
+                  <Typography><strong>Name:</strong> {selectedRequest.requestedBy?.fullName || 'N/A'}</Typography>
+                  <Typography><strong>Email:</strong> {selectedRequest.requestedBy?.email || 'N/A'}</Typography>
+                  <Typography><strong>Phone:</strong> {selectedRequest.requestedBy?.phone || 'N/A'}</Typography>
                 </Grid>
                 <Grid item xs={12} md={6}>
                   <Typography variant="subtitle1" gutterBottom>Kit Information</Typography>
-                  <Typography><strong>Kit Name:</strong> {selectedRequest.kitName}</Typography>
-                  <Typography><strong>Kit ID:</strong> {selectedRequest.kitId}</Typography>
+                  <Typography><strong>Kit Name:</strong> {selectedRequest.kit?.kitName || 'N/A'}</Typography>
+                  <Typography><strong>Kit Type:</strong> {selectedRequest.kit?.type || 'N/A'}</Typography>
+                  <Typography><strong>Kit Amount:</strong> {selectedRequest.kit?.amount ? selectedRequest.kit.amount.toLocaleString() : '0'} VND</Typography>
                 </Grid>
               </Grid>
 
               <Divider sx={{ my: 2 }} />
 
-              <Typography variant="subtitle1" gutterBottom>Rental Details</Typography>
+              <Typography variant="subtitle1" gutterBottom>Request Details</Typography>
               <Grid container spacing={2}>
                 <Grid item xs={12}>
                   <Typography><strong>Reason:</strong></Typography>
                   <Typography variant="body2" sx={{ pl: 2, mb: 1 }}>
-                    {selectedRequest.reason}
+                    {selectedRequest.reason || 'N/A'}
                   </Typography>
                 </Grid>
-                <Grid item xs={12}>
-                  <Typography><strong>Purpose:</strong></Typography>
-                  <Typography variant="body2" sx={{ pl: 2, mb: 1 }}>
-                    {selectedRequest.purpose}
-                  </Typography>
+                <Grid item xs={12} md={6}>
+                  <Typography><strong>Request Type:</strong> {selectedRequest.requestType || 'N/A'}</Typography>
                 </Grid>
-                <Grid item xs={12} md={4}>
-                  <Typography><strong>Duration:</strong> {selectedRequest.duration} days</Typography>
+                <Grid item xs={12} md={6}>
+                  <Typography><strong>Expected Return Date:</strong> {selectedRequest.expectReturnDate ? formatDate(selectedRequest.expectReturnDate) : 'N/A'}</Typography>
                 </Grid>
-                <Grid item xs={12} md={4}>
-                  <Typography><strong>Start Date:</strong> {formatDate(selectedRequest.startDate)}</Typography>
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <Typography><strong>End Date:</strong> {formatDate(selectedRequest.endDate)}</Typography>
-                </Grid>
+                {selectedRequest.actualReturnDate && (
+                  <Grid item xs={12} md={6}>
+                    <Typography><strong>Actual Return Date:</strong> {formatDate(selectedRequest.actualReturnDate)}</Typography>
+                  </Grid>
+                )}
+                {selectedRequest.approvedDate && (
+                  <Grid item xs={12} md={6}>
+                    <Typography><strong>Approved Date:</strong> {formatDate(selectedRequest.approvedDate)}</Typography>
+                  </Grid>
+                )}
               </Grid>
 
               <Divider sx={{ my: 2 }} />
@@ -234,36 +259,33 @@ function AdminRentalApprovalPage() {
               <Typography variant="subtitle1" gutterBottom>Financial Information</Typography>
               <Grid container spacing={2}>
                 <Grid item xs={12} md={6}>
-                  <Typography><strong>Total Cost:</strong> {selectedRequest.totalCost.toLocaleString()} VND</Typography>
+                  <Typography><strong>Deposit Amount:</strong> {selectedRequest.depositAmount ? selectedRequest.depositAmount.toLocaleString() : '0'} VND</Typography>
                 </Grid>
                 <Grid item xs={12} md={6}>
-                  <Typography><strong>Status:</strong> 
-                    <Chip 
-                      label={selectedRequest.status.replace('_', ' ')} 
-                      color={getStatusColor(selectedRequest.status)} 
-                      size="small" 
+                  <Typography><strong>Status:</strong>
+                    <Chip
+                      label={selectedRequest.status || 'PENDING'}
+                      color={getStatusColor(selectedRequest.status)}
+                      size="small"
                       sx={{ ml: 1 }}
                     />
                   </Typography>
                 </Grid>
               </Grid>
 
-              <Divider sx={{ my: 2 }} />
-
-              <Typography variant="subtitle1" gutterBottom>Request Information</Typography>
-              <Typography><strong>Request Date:</strong> {formatDate(selectedRequest.requestDate)}</Typography>
-              {selectedRequest.approvalDate && (
-                <Typography><strong>Approval Date:</strong> {formatDate(selectedRequest.approvalDate)}</Typography>
-              )}
-              {selectedRequest.approvedBy && (
-                <Typography><strong>Approved By:</strong> {selectedRequest.approvedBy}</Typography>
+              {selectedRequest.note && (
+                <>
+                  <Divider sx={{ my: 2 }} />
+                  <Typography variant="subtitle1" gutterBottom>Additional Notes</Typography>
+                  <Typography variant="body2">{selectedRequest.note}</Typography>
+                </>
               )}
             </Box>
           )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDetailDialog(false)}>Close</Button>
-          {selectedRequest && selectedRequest.status === 'PENDING_APPROVAL' && (
+          {selectedRequest && selectedRequest.status === 'PENDING' && (
             <>
               <Button
                 variant="contained"
