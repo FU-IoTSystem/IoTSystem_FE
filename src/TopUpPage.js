@@ -27,13 +27,23 @@ import {
   WalletOutlined,
   BankOutlined,
   SafetyCertificateOutlined,
-  CheckCircleOutlined,
   DollarOutlined,
-  PhoneOutlined,
   CreditCardOutlined,
   LoadingOutlined
 } from '@ant-design/icons';
-import { mockVietnameseBanks, mockOTPVerification, mockTopUpTransaction } from './mocks';
+import { walletAPI } from './api';
+
+// Vietnamese banks supported by VNPay
+const vnPayBanks = [
+  { id: 'NCB', code: 'NCB', name: 'Ngân hàng Quốc Dân', shortName: 'NCB' },
+  { id: 'VIETCOMBANK', code: 'VIETCOMBANK', name: 'Ngân hàng Ngoại Thương Việt Nam', shortName: 'Vietcombank' },
+  { id: 'VIETINBANK', code: 'VIETINBANK', name: 'Ngân hàng Công Thương Việt Nam', shortName: 'Vietinbank' },
+  { id: 'TECHCOMBANK', code: 'TECHCOMBANK', name: 'Ngân hàng Kỹ Thương Việt Nam', shortName: 'Techcombank' },
+  { id: 'ACB', code: 'ACB', name: 'Ngân hàng Á Châu', shortName: 'ACB' },
+  { id: 'TPBANK', code: 'TPBANK', name: 'Ngân hàng Tiên Phong', shortName: 'TPBank' },
+  { id: 'MBBANK', code: 'MBBANK', name: 'Ngân hàng Quân Đội', shortName: 'MB Bank' },
+  { id: 'VPBANK', code: 'VPBANK', name: 'Ngân hàng Việt Nam Thịnh Vượng', shortName: 'VPBank' },
+];
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -42,9 +52,9 @@ const { Step } = Steps;
 // Animation variants
 const cardVariants = {
   hidden: { opacity: 0, y: 20, scale: 0.95 },
-  visible: { 
-    opacity: 1, 
-    y: 0, 
+  visible: {
+    opacity: 1,
+    y: 0,
     scale: 1,
     transition: { duration: 0.5, ease: "easeOut" }
   },
@@ -70,19 +80,13 @@ const pageTransition = {
 function TopUpPage({ user, onLogout }) {
   const navigate = useNavigate();
   const [form] = Form.useForm();
-  
+
   // State management
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [selectedBank, setSelectedBank] = useState(null);
   const [topUpAmount, setTopUpAmount] = useState(0);
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  const [generatedOTP, setGeneratedOTP] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
-  const [otpVerified, setOtpVerified] = useState(false);
   const [transactionResult, setTransactionResult] = useState(null);
-  const [countdown, setCountdown] = useState(0);
 
   // Predefined amount options
   const amountOptions = [
@@ -93,15 +97,6 @@ function TopUpPage({ user, onLogout }) {
     { label: '1,000,000 VND', value: 1000000 },
     { label: '2,000,000 VND', value: 2000000 }
   ];
-
-  // Countdown timer for OTP resend
-  useEffect(() => {
-    let timer;
-    if (countdown > 0) {
-      timer = setTimeout(() => setCountdown(countdown - 1), 1000);
-    }
-    return () => clearTimeout(timer);
-  }, [countdown]);
 
   const handleBackToPortal = () => {
     const userRole = user?.role?.toLowerCase();
@@ -127,8 +122,13 @@ function TopUpPage({ user, onLogout }) {
   };
 
   const handleBankSelect = (bankId) => {
-    const bank = mockVietnameseBanks.find(b => b.id === bankId);
+    const bank = vnPayBanks.find(b => b.id === bankId);
     setSelectedBank(bank);
+    setCurrentStep(1);
+  };
+
+  const handleSkipBank = () => {
+    setSelectedBank(null);
     setCurrentStep(1);
   };
 
@@ -141,79 +141,59 @@ function TopUpPage({ user, onLogout }) {
     setTopUpAmount(value || 0);
   };
 
-  const handleSendOTP = async () => {
-    if (!phoneNumber) {
-      message.error('Please enter your phone number');
+  const handleTopUp = async () => {
+    if (!topUpAmount || topUpAmount < 10000) {
+      message.error('Số tiền nạp tối thiểu là 10,000 VND');
+      return;
+    }
+    if (topUpAmount > 10000000) {
+      message.error('Số tiền nạp tối đa là 10,000,000 VND');
       return;
     }
 
     setLoading(true);
     try {
-      const result = await mockOTPVerification.sendOTP(phoneNumber);
-      if (result.success) {
-        setGeneratedOTP(result.otp);
-        setOtpSent(true);
-        setCountdown(60); // 60 seconds countdown
-        message.success('OTP sent successfully!');
-        setCurrentStep(2);
+      const description = `Nạp tiền IoT Wallet - ${topUpAmount.toLocaleString()} VND`;
+
+      // Call API to create top-up transaction
+      const response = await walletAPI.topUp(topUpAmount, description);
+
+      if (response && response.data) {
+        // Store transaction info
+        setTransactionResult({
+          transactionId: response.data.id,
+          orderId: response.data.id,
+          amount: topUpAmount,
+          bank: selectedBank?.shortName || 'N/A'
+        });
+
+        message.success('Nạp tiền thành công! Số dư ví đã được cập nhật.');
+
+        // Redirect to previous page after 1 second
+        setTimeout(() => {
+          handleComplete();
+        }, 1000);
+      } else {
+        message.error('Không thể nạp tiền. Vui lòng thử lại.');
       }
+
     } catch (error) {
-      message.error('Failed to send OTP. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVerifyOTP = async () => {
-    if (!otpCode) {
-      message.error('Please enter the OTP code');
-      return;
-    }
-
-    if (mockOTPVerification.verifyOTP(otpCode, generatedOTP)) {
-      setOtpVerified(true);
-      message.success('OTP verified successfully! Processing top-up...');
-      
-      // Auto-confirm and process the top-up
-      setLoading(true);
-      try {
-        const result = await mockTopUpTransaction(user.id, topUpAmount, selectedBank.code, otpCode);
-        if (result.success) {
-          setTransactionResult(result);
-          message.success('Top-up completed successfully!');
-          setCurrentStep(3); // Skip confirmation step, go directly to success
-        }
-      } catch (error) {
-        message.error(error.message || 'Top-up failed. Please try again.');
-        setCurrentStep(1); // Go back to amount selection if failed
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      message.error('Invalid OTP code. Please try again.');
-    }
-  };
-
-
-  const handleResendOTP = async () => {
-    if (countdown > 0) return;
-    
-    setLoading(true);
-    try {
-      const result = await mockOTPVerification.sendOTP(phoneNumber);
-      if (result.success) {
-        setGeneratedOTP(result.otp);
-        setCountdown(60);
-        message.success('OTP resent successfully!');
-      }
-    } catch (error) {
-      message.error('Failed to resend OTP. Please try again.');
+      console.error('Top-up error:', error);
+      message.error(error.response?.data?.message || 'Không thể nạp tiền. Vui lòng thử lại.');
     } finally {
       setLoading(false);
     }
   };
 
   const handleComplete = () => {
+    // Clear form and state
+    form.resetFields();
+    setTopUpAmount(0);
+    setSelectedBank(null);
+    setTransactionResult(null);
+    setCurrentStep(0);
+
+    // Return to portal
     handleBackToPortal();
   };
 
@@ -224,17 +204,17 @@ function TopUpPage({ user, onLogout }) {
       animate="visible"
       whileHover="hover"
     >
-      <Card 
+      <Card
         title={
           <Space>
             <BankOutlined style={{ color: '#1890ff' }} />
-            <span>Select Bank</span>
+            <span>Chọn Ngân Hàng</span>
           </Space>
         }
         style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
       >
         <Row gutter={[16, 16]}>
-          {mockVietnameseBanks.map((bank) => (
+          {vnPayBanks.map((bank) => (
             <Col xs={24} sm={12} md={8} lg={6} key={bank.id}>
               <motion.div
                 whileHover={{ scale: 1.05 }}
@@ -245,16 +225,20 @@ function TopUpPage({ user, onLogout }) {
                   onClick={() => handleBankSelect(bank.id)}
                   style={{
                     borderRadius: '12px',
-                    border: '2px solid #f0f0f0',
+                    border: selectedBank?.id === bank.id ? '2px solid #1890ff' : '2px solid #f0f0f0',
                     cursor: 'pointer',
-                    transition: 'all 0.3s ease'
+                    transition: 'all 0.3s ease',
+                    background: selectedBank?.id === bank.id ? '#f6ffed' : 'white'
                   }}
                   bodyStyle={{ padding: '16px', textAlign: 'center' }}
                 >
                   <Avatar
                     size={48}
-                    src={bank.logo}
-                    style={{ marginBottom: '12px' }}
+                    style={{
+                      marginBottom: '12px',
+                      background: selectedBank?.id === bank.id ? '#1890ff' : '#f0f0f0',
+                      color: selectedBank?.id === bank.id ? 'white' : '#1890ff'
+                    }}
                   >
                     {bank.shortName.charAt(0)}
                   </Avatar>
@@ -264,19 +248,28 @@ function TopUpPage({ user, onLogout }) {
                     </Text>
                     <br />
                     <Text type="secondary" style={{ fontSize: '12px' }}>
-                      {bank.code}
+                      {bank.name}
                     </Text>
                   </div>
-                  {bank.supported && (
-                    <Tag color="green" style={{ marginTop: '8px' }}>
-                      Supported
-                    </Tag>
-                  )}
                 </Card>
               </motion.div>
             </Col>
           ))}
         </Row>
+        <div style={{ textAlign: 'center', marginTop: '16px' }}>
+          <Button
+            type="default"
+            size="large"
+            onClick={handleSkipBank}
+            style={{
+              borderRadius: '12px',
+              height: 48,
+              padding: '0 32px'
+            }}
+          >
+            Bỏ qua - Thanh toán trực tiếp
+          </Button>
+        </div>
       </Card>
     </motion.div>
   );
@@ -288,7 +281,7 @@ function TopUpPage({ user, onLogout }) {
       animate="visible"
       whileHover="hover"
     >
-      <Card 
+      <Card
         title={
           <Space>
             <DollarOutlined style={{ color: '#52c41a' }} />
@@ -324,9 +317,9 @@ function TopUpPage({ user, onLogout }) {
               </Col>
             ))}
           </Row>
-          
+
           <Divider>Or enter custom amount</Divider>
-          
+
           <Form.Item
             name="amount"
             label="Custom Amount (VND)"
@@ -346,139 +339,125 @@ function TopUpPage({ user, onLogout }) {
             />
           </Form.Item>
 
-          <Form.Item
-            name="phoneNumber"
-            label="Phone Number"
-            rules={[
-              { required: true, message: 'Please enter phone number' },
-              { pattern: /^[0-9]{10,11}$/, message: 'Please enter valid phone number' }
-            ]}
-          >
-            <Input
-              prefix={<PhoneOutlined />}
-              placeholder="Enter your phone number"
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-            />
-          </Form.Item>
-
           <div style={{ textAlign: 'center', marginTop: '24px' }}>
-            <Button
-              type="primary"
-              size="large"
-              onClick={handleSendOTP}
-              loading={loading}
-              disabled={!topUpAmount || !phoneNumber}
-              style={{
-                borderRadius: '12px',
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                border: 'none',
-                height: 48,
-                padding: '0 32px',
-                fontWeight: 'bold'
-              }}
-            >
-              Send OTP
-            </Button>
+            <Space size="large">
+              <Button
+                size="large"
+                onClick={() => setCurrentStep(0)}
+                style={{
+                  borderRadius: '12px',
+                  height: 48,
+                  padding: '0 24px'
+                }}
+              >
+                Quay lại
+              </Button>
+              <Button
+                type="primary"
+                size="large"
+                onClick={() => setCurrentStep(2)}
+                disabled={!topUpAmount}
+                style={{
+                  borderRadius: '12px',
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  border: 'none',
+                  height: 48,
+                  padding: '0 32px',
+                  fontWeight: 'bold'
+                }}
+              >
+                Tiếp tục
+              </Button>
+            </Space>
           </div>
         </Form>
       </Card>
     </motion.div>
   );
 
-  const renderOTPVerification = () => (
+  const renderPaymentInfo = () => (
     <motion.div
       variants={cardVariants}
       initial="hidden"
       animate="visible"
       whileHover="hover"
     >
-      <Card 
+      <Card
         title={
           <Space>
-            <SafetyCertificateOutlined style={{ color: '#fa8c16' }} />
-            <span>Verify OTP & Complete</span>
+            <SafetyCertificateOutlined style={{ color: '#52c41a' }} />
+            <span>Xác Nhận Nạp Tiền</span>
           </Space>
         }
         style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
       >
         <div style={{ textAlign: 'center', padding: '24px' }}>
-          <Avatar
-            size={64}
-            icon={<PhoneOutlined />}
-            style={{ 
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              marginBottom: '16px'
-            }}
-          />
-          
-          <Title level={4}>Enter OTP Code</Title>
-          <Text type="secondary">
-            We've sent a 6-digit code to {phoneNumber}
-          </Text>
-          
-          <div style={{ margin: '24px 0' }}>
-            <Input
-              size="large"
-              placeholder="Enter OTP code"
-              value={otpCode}
-              onChange={(e) => setOtpCode(e.target.value)}
-              maxLength={6}
-              style={{
-                fontSize: '18px',
-                textAlign: 'center',
-                letterSpacing: '2px',
-                borderRadius: '12px'
-              }}
-            />
-          </div>
+          <Card size="small" style={{ background: '#f6ffed', border: '1px solid #b7eb8f', marginBottom: '24px' }}>
+            <Row gutter={[16, 8]}>
+              <Col span={8}>
+                <Text type="secondary">Số tiền:</Text>
+              </Col>
+              <Col span={16}>
+                <Text strong style={{ fontSize: '18px', color: '#52c41a' }}>
+                  {topUpAmount.toLocaleString()} VND
+                </Text>
+              </Col>
+              {selectedBank && (
+                <>
+                  <Col span={8}>
+                    <Text type="secondary">Ngân hàng:</Text>
+                  </Col>
+                  <Col span={16}>
+                    <Text strong>{selectedBank.shortName}</Text>
+                  </Col>
+                </>
+              )}
+              <Col span={8}>
+                <Text type="secondary">Phương thức:</Text>
+              </Col>
+              <Col span={16}>
+                <Text strong>Trực tiếp</Text>
+              </Col>
+            </Row>
+          </Card>
 
-          <Space direction="vertical" size="large" style={{ width: '100%' }}>
+          <Alert
+            message="Thông Tin"
+            description="Nhấn xác nhận để hoàn tất giao dịch nạp tiền"
+            type="info"
+            style={{ marginBottom: '24px' }}
+            showIcon
+          />
+
+          <Space size="large">
+            <Button
+              size="large"
+              onClick={() => setCurrentStep(1)}
+              style={{
+                borderRadius: '12px',
+                height: 48,
+                padding: '0 24px'
+              }}
+            >
+              Quay lại
+            </Button>
             <Button
               type="primary"
               size="large"
-              onClick={handleVerifyOTP}
-              disabled={!otpCode || otpCode.length !== 6}
+              onClick={handleTopUp}
               loading={loading}
               style={{
                 borderRadius: '12px',
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
                 border: 'none',
                 height: 48,
                 padding: '0 32px',
                 fontWeight: 'bold'
               }}
             >
-              {loading ? 'Processing...' : 'Verify & Complete Top-up'}
+              {loading ? 'Đang xử lý...' : 'Xác Nhận Nạp Tiền'}
             </Button>
-
-            <div>
-              <Text type="secondary">
-                Didn't receive the code?{' '}
-                {countdown > 0 ? (
-                  <Text type="secondary">Resend in {countdown}s</Text>
-                ) : (
-                  <Button
-                    type="link"
-                    onClick={handleResendOTP}
-                    loading={loading}
-                    style={{ padding: 0 }}
-                  >
-                    Resend OTP
-                  </Button>
-                )}
-              </Text>
-            </div>
           </Space>
-
-          {/* Demo OTP Display */}
-          <Alert
-            message="Demo Mode"
-            description={`For demo purposes, use this OTP: ${generatedOTP}`}
-            type="info"
-            style={{ marginTop: '16px' }}
-            showIcon
-          />
         </div>
       </Card>
     </motion.div>
@@ -533,7 +512,7 @@ function TopUpPage({ user, onLogout }) {
                 <Text type="secondary">Bank:</Text>
               </Col>
               <Col span={16}>
-                <Text strong>{selectedBank?.shortName}</Text>
+                <Text strong>{transactionResult?.bank || 'N/A'}</Text>
               </Col>
               <Col span={8}>
                 <Text type="secondary">Status:</Text>
@@ -555,9 +534,7 @@ function TopUpPage({ user, onLogout }) {
       case 1:
         return renderAmountSelection();
       case 2:
-        return renderOTPVerification();
-      case 3:
-        return renderSuccess();
+        return renderPaymentInfo();
       default:
         return renderBankSelection();
     }
@@ -566,21 +543,19 @@ function TopUpPage({ user, onLogout }) {
   const getStepTitle = () => {
     switch (currentStep) {
       case 0:
-        return 'Select Bank';
+        return 'Chọn Ngân Hàng';
       case 1:
-        return 'Enter Amount';
+        return 'Nhập Số Tiền';
       case 2:
-        return 'Verify OTP & Complete';
-      case 3:
-        return 'Success';
+        return 'Thanh Toán';
       default:
-        return 'Top-up Wallet';
+        return 'Nạp Tiền Ví';
     }
   };
 
   return (
-    <div style={{ 
-      minHeight: '100vh', 
+    <div style={{
+      minHeight: '100vh',
       background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
       padding: '24px'
     }}>
@@ -592,8 +567,8 @@ function TopUpPage({ user, onLogout }) {
           transition={{ duration: 0.5 }}
           style={{ marginBottom: '24px' }}
         >
-          <Card style={{ 
-            borderRadius: '16px', 
+          <Card style={{
+            borderRadius: '16px',
             boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
             background: 'rgba(255, 255, 255, 0.95)',
             backdropFilter: 'blur(10px)',
@@ -613,18 +588,18 @@ function TopUpPage({ user, onLogout }) {
                   <div>
                     <Title level={2} style={{ margin: 0, color: '#2c3e50' }}>
                       <WalletOutlined style={{ marginRight: '8px', color: '#667eea' }} />
-                      Top-up Wallet
+                      Nạp Tiền Ví
                     </Title>
                     <Text type="secondary">
-                      Secure and convenient wallet top-up
+                      Nạp tiền an toàn và tiện lợi qua VNPay
                     </Text>
                   </div>
                 </Space>
               </Col>
               <Col>
                 <Space>
-                  <Avatar 
-                    icon={<CreditCardOutlined />} 
+                  <Avatar
+                    icon={<CreditCardOutlined />}
                     size={48}
                     style={{
                       background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
@@ -644,8 +619,8 @@ function TopUpPage({ user, onLogout }) {
           transition={{ duration: 0.5, delay: 0.2 }}
           style={{ marginBottom: '32px' }}
         >
-          <Card style={{ 
-            borderRadius: '16px', 
+          <Card style={{
+            borderRadius: '16px',
             boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
             background: 'rgba(255, 255, 255, 0.95)',
             backdropFilter: 'blur(10px)',
@@ -656,10 +631,9 @@ function TopUpPage({ user, onLogout }) {
               size="small"
               style={{ padding: '16px 0' }}
             >
-              <Step title="Bank" icon={<BankOutlined />} />
-              <Step title="Amount" icon={<DollarOutlined />} />
-              <Step title="OTP & Complete" icon={<SafetyCertificateOutlined />} />
-              <Step title="Success" icon={<CheckCircleOutlined />} />
+              <Step title="Ngân Hàng" icon={<BankOutlined />} />
+              <Step title="Số Tiền" icon={<DollarOutlined />} />
+              <Step title="Thanh Toán" icon={<SafetyCertificateOutlined />} />
             </Steps>
           </Card>
         </motion.div>
@@ -674,7 +648,7 @@ function TopUpPage({ user, onLogout }) {
             variants={pageVariants}
             transition={pageTransition}
           >
-            <Spin 
+            <Spin
               spinning={loading}
               indicator={
                 <motion.div

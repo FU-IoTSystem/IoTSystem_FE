@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { penaltiesAPI, penaltyDetailAPI, walletAPI, borrowingRequestAPI, penaltyPoliciesAPI } from './api';
 import {
   Card,
   Row,
@@ -16,7 +17,9 @@ import {
   Tag,
   Avatar,
   Badge,
-  Modal
+  Modal,
+  List,
+  Empty
 } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -28,18 +31,19 @@ import {
   CreditCardOutlined,
   LoadingOutlined,
   InfoCircleOutlined,
-  WarningOutlined
+  WarningOutlined,
+  ShoppingOutlined
 } from '@ant-design/icons';
-import { mockPenaltyFees, mockPenaltyPayment, mockGetUserPenalties, mockWallet } from './mocks';
+// Removed mock data - using real API calls
 
 const { Title, Text } = Typography;
 
 // Animation variants
 const cardVariants = {
   hidden: { opacity: 0, y: 20, scale: 0.95 },
-  visible: { 
-    opacity: 1, 
-    y: 0, 
+  visible: {
+    opacity: 1,
+    y: 0,
     scale: 1,
     transition: { duration: 0.5, ease: "easeOut" }
   },
@@ -65,12 +69,14 @@ const pageTransition = {
 function PenaltyPaymentPage({ user, onLogout }) {
   const navigate = useNavigate();
   const location = useLocation();
-  
+
   // State management
   const [loading, setLoading] = useState(false);
   const [penalties, setPenalties] = useState([]);
   const [selectedPenalty, setSelectedPenalty] = useState(null);
-  const [walletBalance, setWalletBalance] = useState(mockWallet.balance);
+  const [penaltyDetails, setPenaltyDetails] = useState([]);
+  const [borrowRequest, setBorrowRequest] = useState(null);
+  const [walletBalance, setWalletBalance] = useState(0);
   const [paymentResult, setPaymentResult] = useState(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [currentStep, setCurrentStep] = useState(0); // 0: select penalty, 1: confirm, 2: result
@@ -80,19 +86,202 @@ function PenaltyPaymentPage({ user, onLogout }) {
 
   useEffect(() => {
     loadPenalties();
+    loadWalletBalance();
   }, [user]);
 
-  const loadPenalties = () => {
-    const userPenalties = mockGetUserPenalties(user?.email);
-    setPenalties(userPenalties);
-    
-    // If penaltyId is provided, auto-select it
-    if (penaltyId) {
-      const penalty = userPenalties.find(p => p.id === parseInt(penaltyId));
-      if (penalty) {
-        setSelectedPenalty(penalty);
-        setCurrentStep(1);
+  const loadWalletBalance = async () => {
+    try {
+      const walletResponse = await walletAPI.getMyWallet();
+      const walletData = walletResponse?.data || walletResponse || {};
+      setWalletBalance(walletData.balance || 0);
+    } catch (error) {
+      console.error('Error loading wallet balance:', error);
+      setWalletBalance(0);
+    }
+  };
+
+  const loadPenalties = async () => {
+    try {
+      setLoading(true);
+      const response = await penaltiesAPI.getPenByAccount();
+      console.log('Penalties by account response:', response);
+
+      // Handle response format
+      let penaltiesData = [];
+      if (Array.isArray(response)) {
+        penaltiesData = response;
+      } else if (response && response.data && Array.isArray(response.data)) {
+        penaltiesData = response.data;
       }
+
+      // Map to expected format, keep original data for update
+      const mappedPenalties = penaltiesData.map(penalty => ({
+        id: penalty.id,
+        penaltyId: penalty.id,
+        kitName: penalty.kitName || 'Unknown Kit',
+        rentalId: penalty.borrowRequestId || 'N/A',
+        amount: penalty.totalAmount || 0,
+        penaltyType: penalty.type || 'other',
+        dueDate: penalty.takeEffectDate || new Date().toISOString(),
+        reason: penalty.note || 'Penalty fee',
+        status: penalty.resolved ? 'resolved' : 'pending',
+        // Keep original data for update
+        originalData: penalty
+      }));
+
+      // Filter only unresolved penalties
+      const pendingPenalties = mappedPenalties.filter(p => p.status === 'pending');
+      setPenalties(pendingPenalties);
+
+      // If penaltyId is provided, auto-select it
+      if (penaltyId) {
+        const penalty = pendingPenalties.find(p => p.id === penaltyId || p.penaltyId === penaltyId);
+        if (penalty) {
+          setSelectedPenalty(penalty);
+          loadPenaltyDetails(penalty.id);
+          // Load borrow request if available
+          if (penalty.rentalId && penalty.rentalId !== 'N/A') {
+            loadBorrowRequest(penalty.rentalId);
+          } else {
+            const originalData = penalty.originalData;
+            if (originalData && originalData.borrowRequestId) {
+              loadBorrowRequest(originalData.borrowRequestId);
+            }
+          }
+          setCurrentStep(1);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading penalties:', error);
+      setPenalties([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadPenaltyDetails = async (penaltyId) => {
+    if (!penaltyId) {
+      console.warn('No penaltyId provided for loading penalty details');
+      setPenaltyDetails([]);
+      return;
+    }
+
+    try {
+      console.log('=== Loading penalty details for penaltyId:', penaltyId);
+      console.log('PenaltyId type:', typeof penaltyId);
+
+      const response = await penaltyDetailAPI.findByPenaltyId(penaltyId);
+      console.log('=== Raw penalty details response:', response);
+      console.log('Response type:', typeof response);
+      console.log('Response keys:', response ? Object.keys(response) : 'null');
+      console.log('Is array:', Array.isArray(response));
+
+      let detailsData = [];
+
+      // Check if response has ApiResponse wrapper structure
+      if (response && typeof response === 'object') {
+        // Check for ApiResponse format: { status, message, data }
+        if (response.data !== undefined) {
+          if (Array.isArray(response.data)) {
+            detailsData = response.data;
+            console.log('Found data array in ApiResponse:', detailsData.length, 'items');
+          } else if (response.data && typeof response.data === 'object' && response.data.id) {
+            // Single object wrapped in data
+            detailsData = [response.data];
+            console.log('Found single object in ApiResponse.data');
+          } else if (response.data === null || response.data === undefined) {
+            detailsData = [];
+            console.log('ApiResponse.data is null or undefined');
+          }
+        }
+        // Check if response itself is array
+        else if (Array.isArray(response)) {
+          detailsData = response;
+          console.log('Response is direct array:', detailsData.length, 'items');
+        }
+        // Check if response is a single PenaltyDetail object
+        else if (response.id) {
+          detailsData = [response];
+          console.log('Response is single PenaltyDetail object');
+        }
+        // Check nested structure
+        else if (response.response && response.response.data) {
+          if (Array.isArray(response.response.data)) {
+            detailsData = response.response.data;
+          } else {
+            detailsData = [response.response.data];
+          }
+          console.log('Found nested response structure');
+        }
+      }
+
+      console.log('=== Parsed penalty details data:', detailsData);
+      console.log('=== Number of penalty details:', detailsData.length);
+
+      if (detailsData.length > 0) {
+        console.log('First penalty detail sample:', detailsData[0]);
+      }
+
+      // Fetch penalty policy info for each detail if policiesId exists
+      if (detailsData.length > 0) {
+        const detailsWithPolicies = await Promise.all(
+          detailsData.map(async (detail) => {
+            if (detail.policiesId) {
+              try {
+                const policyResponse = await penaltyPoliciesAPI.getById(detail.policiesId);
+                let policyData = null;
+                if (policyResponse) {
+                  if (policyResponse.data) {
+                    policyData = policyResponse.data;
+                  } else if (policyResponse.id) {
+                    policyData = policyResponse;
+                  }
+                }
+                return { ...detail, policy: policyData };
+              } catch (error) {
+                console.error(`Error loading policy for detail ${detail.id}:`, error);
+                return { ...detail, policy: null };
+              }
+            }
+            return { ...detail, policy: null };
+          })
+        );
+        setPenaltyDetails(detailsWithPolicies);
+      } else {
+        setPenaltyDetails(detailsData);
+      }
+    } catch (error) {
+      console.error('=== Error loading penalty details:', error);
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+      message.error(`Failed to load penalty details: ${error.message}`);
+      setPenaltyDetails([]);
+    }
+  };
+
+  const loadBorrowRequest = async (borrowRequestId) => {
+    if (!borrowRequestId || borrowRequestId === 'N/A') {
+      setBorrowRequest(null);
+      return;
+    }
+
+    try {
+      const response = await borrowingRequestAPI.getById(borrowRequestId);
+      console.log('Borrow request response:', response);
+
+      let requestData = null;
+      if (response) {
+        if (response.data) {
+          requestData = response.data;
+        } else if (response.id) {
+          requestData = response;
+        }
+      }
+
+      setBorrowRequest(requestData);
+    } catch (error) {
+      console.error('Error loading borrow request:', error);
+      setBorrowRequest(null);
     }
   };
 
@@ -121,6 +310,19 @@ function PenaltyPaymentPage({ user, onLogout }) {
 
   const handleSelectPenalty = (penalty) => {
     setSelectedPenalty(penalty);
+    loadPenaltyDetails(penalty.id);
+    // Load borrow request if available
+    if (penalty.rentalId && penalty.rentalId !== 'N/A') {
+      loadBorrowRequest(penalty.rentalId);
+    } else {
+      // Try to get from original data
+      const originalData = penalty.originalData;
+      if (originalData && originalData.borrowRequestId) {
+        loadBorrowRequest(originalData.borrowRequestId);
+      } else {
+        setBorrowRequest(null);
+      }
+    }
     setCurrentStep(1);
   };
 
@@ -131,21 +333,41 @@ function PenaltyPaymentPage({ user, onLogout }) {
   const handleProcessPayment = async () => {
     setLoading(true);
     setShowConfirmation(false);
-    
     try {
-      const result = await mockPenaltyPayment(user.id, selectedPenalty.id, walletBalance);
-      
-      if (result.success) {
-        setPaymentResult(result);
-        setWalletBalance(result.remainingBalance);
-        
-        // Update penalty status
-        setPenalties(prev => prev.filter(p => p.id !== selectedPenalty.id));
-        
-        message.success('Penalty payment completed successfully!');
-        setCurrentStep(2);
+      // Kiểm tra số dư ví trước khi tiếp tục
+      if (!isBalanceSufficient()) {
+        message.error('Số dư ví không đủ để thanh toán penalty! Vui lòng nạp thêm tiền.');
+        handleBackToPortal();
+        return;
       }
+
+      // Get current penalty from penalties list to have full data
+      const currentPenalty = penalties.find(p => p.id === selectedPenalty.id || p.penaltyId === selectedPenalty.id);
+      if (!currentPenalty) {
+        throw new Error('Penalty not found');
+      }
+      // Use original data if available, otherwise use mapped data
+      const penaltyData = currentPenalty.originalData || currentPenalty;
+
+      // Gọi đúng endpoint confirm-payment BE
+      await penaltiesAPI.confirmPenaltyPayment(selectedPenalty.id);
+      await loadWalletBalance();
+      await loadPenalties();
+      // Set payment result
+      const newWalletBalance = walletBalance - selectedPenalty.amount;
+      setPaymentResult({
+        success: true,
+        paymentId: `PAY-${Date.now()}`,
+        penaltyId: selectedPenalty.id,
+        amount: selectedPenalty.amount,
+        timestamp: new Date().toISOString(),
+        status: 'completed',
+        remainingBalance: Math.max(0, newWalletBalance)
+      });
+      message.success('Thanh toán penalty thành công!');
+      setCurrentStep(2);
     } catch (error) {
+      console.error('Error processing payment:', error);
       message.error(error.message || 'Payment failed. Please try again.');
       setCurrentStep(0); // Go back to penalty selection
     } finally {
@@ -183,6 +405,26 @@ function PenaltyPaymentPage({ user, onLogout }) {
     }
   };
 
+  const getStatusColor = (status) => {
+    if (!status) return 'default';
+    const statusLower = status.toLowerCase();
+    switch (statusLower) {
+      case 'approved':
+      case 'completed':
+      case 'active':
+        return 'success';
+      case 'pending':
+      case 'pending_approval':
+        return 'warning';
+      case 'rejected':
+      case 'cancelled':
+      case 'inactive':
+        return 'error';
+      default:
+        return 'default';
+    }
+  };
+
   const isBalanceSufficient = () => {
     return walletBalance >= selectedPenalty?.amount;
   };
@@ -194,7 +436,7 @@ function PenaltyPaymentPage({ user, onLogout }) {
       animate="visible"
       whileHover="hover"
     >
-      <Card 
+      <Card
         title={
           <Space>
             <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />
@@ -227,8 +469,8 @@ function PenaltyPaymentPage({ user, onLogout }) {
                         <Avatar
                           size={48}
                           icon={<ExclamationCircleOutlined />}
-                          style={{ 
-                            background: penalty.amount > walletBalance ? '#ff4d4f' : '#fa8c16' 
+                          style={{
+                            background: penalty.amount > walletBalance ? '#ff4d4f' : '#fa8c16'
                           }}
                         />
                       </Col>
@@ -249,9 +491,9 @@ function PenaltyPaymentPage({ user, onLogout }) {
                       </Col>
                       <Col>
                         <div style={{ textAlign: 'right' }}>
-                          <Text strong style={{ 
-                            fontSize: '18px', 
-                            color: penalty.amount > walletBalance ? '#ff4d4f' : '#52c41a' 
+                          <Text strong style={{
+                            fontSize: '18px',
+                            color: penalty.amount > walletBalance ? '#ff4d4f' : '#52c41a'
                           }}>
                             {penalty.amount.toLocaleString()} VND
                           </Text>
@@ -272,7 +514,7 @@ function PenaltyPaymentPage({ user, onLogout }) {
             <Avatar
               size={64}
               icon={<CheckCircleOutlined />}
-              style={{ 
+              style={{
                 background: '#52c41a',
                 marginBottom: '16px'
               }}
@@ -312,7 +554,7 @@ function PenaltyPaymentPage({ user, onLogout }) {
       animate="visible"
       whileHover="hover"
     >
-      <Card 
+      <Card
         title={
           <Space>
             <InfoCircleOutlined style={{ color: '#1890ff' }} />
@@ -330,9 +572,6 @@ function PenaltyPaymentPage({ user, onLogout }) {
                     <Tag color={getPenaltyTypeColor(selectedPenalty.penaltyType)}>
                       {getPenaltyTypeText(selectedPenalty.penaltyType)}
                     </Tag>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Kit Name">
-                    <Text strong>{selectedPenalty.kitName}</Text>
                   </Descriptions.Item>
                   <Descriptions.Item label="Rental ID">
                     <Text code>{selectedPenalty.rentalId}</Text>
@@ -352,18 +591,192 @@ function PenaltyPaymentPage({ user, onLogout }) {
               </Card>
             </Col>
 
+            {/* Penalty Details - Always show this section */}
             <Col span={24}>
-              <Card size="small" style={{ 
-                background: isBalanceSufficient() ? '#f0f9ff' : '#fff2f0', 
-                border: `1px solid ${isBalanceSufficient() ? '#91d5ff' : '#ffccc7'}` 
+              <Card
+                title={
+                  <Space>
+                    <InfoCircleOutlined />
+                    <span>Penalty Details</span>
+                    {penaltyDetails && penaltyDetails.length > 0 && (
+                      <Tag color="blue">{penaltyDetails.length} item(s)</Tag>
+                    )}
+                  </Space>
+                }
+                size="small"
+                style={{ background: '#fffbe6', border: '1px solid #ffe58f' }}
+              >
+                {penaltyDetails && penaltyDetails.length > 0 ? (
+                  <Descriptions column={1} bordered size="small">
+                    {penaltyDetails.map((detail, index) => (
+                      <React.Fragment key={detail.id || index}>
+                        <Descriptions.Item label={`Detail ${index + 1}`}>
+                          <div style={{ marginBottom: 8 }}>
+                            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                              <div>
+                                <Text strong style={{ fontSize: 14 }}>
+                                  {detail.description || 'Penalty Detail'}
+                                </Text>
+                              </div>
+                              <div>
+                                <Text>Amount: </Text>
+                                <Text strong style={{ color: '#ff4d4f', fontSize: 16 }}>
+                                  {detail.amount ? detail.amount.toLocaleString() : 0} VND
+                                </Text>
+                              </div>
+                              {detail.createdAt && (
+                                <div>
+                                  <Text type="secondary" style={{ fontSize: 12 }}>
+                                    Created: {new Date(detail.createdAt).toLocaleString('vi-VN')}
+                                  </Text>
+                                </div>
+                              )}
+                              {detail.policiesId && (
+                                <div>
+                                  <Text type="secondary" style={{ fontSize: 12 }}>
+                                    Policy ID: <Text code>{detail.policiesId}</Text>
+                                  </Text>
+                                </div>
+                              )}
+                              {detail.policy && (
+                                <div style={{ marginTop: 8, padding: 8, background: '#f5f5f5', borderRadius: 4 }}>
+                                  <Text strong style={{ fontSize: 12, color: '#1890ff' }}>Policy Information:</Text>
+                                  <div style={{ marginTop: 4 }}>
+                                    <Text style={{ fontSize: 12 }}>
+                                      <Text strong>Policy Name: </Text>
+                                      {detail.policy.policyName || 'N/A'}
+                                    </Text>
+                                  </div>
+                                  {detail.policy.type && (
+                                    <div>
+                                      <Text style={{ fontSize: 12 }}>
+                                        <Text strong>Type: </Text>
+                                        <Tag color="blue" size="small">{detail.policy.type}</Tag>
+                                      </Text>
+                                    </div>
+                                  )}
+                                  {detail.policy.amount && (
+                                    <div>
+                                      <Text style={{ fontSize: 12 }}>
+                                        <Text strong>Policy Amount: </Text>
+                                        {detail.policy.amount.toLocaleString()} VND
+                                      </Text>
+                                    </div>
+                                  )}
+                                  {detail.policy.issuedDate && (
+                                    <div>
+                                      <Text type="secondary" style={{ fontSize: 12 }}>
+                                        Issued: {new Date(detail.policy.issuedDate).toLocaleDateString('vi-VN')}
+                                      </Text>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </Space>
+                          </div>
+                        </Descriptions.Item>
+                        {index < penaltyDetails.length - 1 && <Divider />}
+                      </React.Fragment>
+                    ))}
+                  </Descriptions>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '20px' }}>
+                    <Empty
+                      description="No penalty details found"
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    />
+                    <Text type="secondary" style={{ fontSize: 12, marginTop: 8 }}>
+                      This penalty does not have any details yet.
+                    </Text>
+                    <div style={{ marginTop: 8 }}>
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        Penalty ID: {selectedPenalty?.id || 'N/A'}
+                      </Text>
+                    </div>
+                  </div>
+                )}
+              </Card>
+            </Col>
+
+            {/* Borrow Request Information */}
+            {borrowRequest && (
+              <Col span={24}>
+                <Card
+                  title={<Space><ShoppingOutlined /> Borrow Request Information</Space>}
+                  size="small"
+                  style={{ background: '#e6f7ff', border: '1px solid #91d5ff' }}
+                >
+                  <Descriptions column={2} bordered size="small">
+                    <Descriptions.Item label="Request ID">
+                      <Text code>{borrowRequest.id || 'N/A'}</Text>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Status">
+                      <Tag color={getStatusColor(borrowRequest.status)}>
+                        {borrowRequest.status || 'N/A'}
+                      </Tag>
+                    </Descriptions.Item>
+                    {borrowRequest.kit && (
+                      <>
+                        <Descriptions.Item label="Kit Name">
+                          <Text strong>{borrowRequest.kit.kitName || borrowRequest.kitName || 'N/A'}</Text>
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Kit Type">
+                          <Text>{borrowRequest.kit.type || borrowRequest.kitType || 'N/A'}</Text>
+                        </Descriptions.Item>
+                      </>
+                    )}
+                    {borrowRequest.requestType && (
+                      <Descriptions.Item label="Request Type">
+                        <Tag>{borrowRequest.requestType}</Tag>
+                      </Descriptions.Item>
+                    )}
+                    {borrowRequest.reason && (
+                      <Descriptions.Item label="Reason" span={2}>
+                        <Text>{borrowRequest.reason}</Text>
+                      </Descriptions.Item>
+                    )}
+                    {borrowRequest.requestDate && (
+                      <Descriptions.Item label="Request Date">
+                        <Text>{new Date(borrowRequest.requestDate).toLocaleString('vi-VN')}</Text>
+                      </Descriptions.Item>
+                    )}
+                    {borrowRequest.createdAt && (
+                      <Descriptions.Item label="Created Date">
+                        <Text>{new Date(borrowRequest.createdAt).toLocaleString('vi-VN')}</Text>
+                      </Descriptions.Item>
+                    )}
+                    {borrowRequest.expectReturnDate && (
+                      <Descriptions.Item label="Expected Return Date">
+                        <Text>{new Date(borrowRequest.expectReturnDate).toLocaleString('vi-VN')}</Text>
+                      </Descriptions.Item>
+                    )}
+                    {borrowRequest.approvedDate && (
+                      <Descriptions.Item label="Approved Date">
+                        <Text>{new Date(borrowRequest.approvedDate).toLocaleString('vi-VN')}</Text>
+                      </Descriptions.Item>
+                    )}
+                    {borrowRequest.depositAmount !== undefined && (
+                      <Descriptions.Item label="Deposit Amount">
+                        <Text strong>{borrowRequest.depositAmount?.toLocaleString() || 0} VND</Text>
+                      </Descriptions.Item>
+                    )}
+                  </Descriptions>
+                </Card>
+              </Col>
+            )}
+
+            <Col span={24}>
+              <Card size="small" style={{
+                background: isBalanceSufficient() ? '#f0f9ff' : '#fff2f0',
+                border: `1px solid ${isBalanceSufficient() ? '#91d5ff' : '#ffccc7'}`
               }}>
                 <Row gutter={[16, 16]} align="middle">
                   <Col>
                     <Avatar
                       size={48}
                       icon={<WalletOutlined />}
-                      style={{ 
-                        background: isBalanceSufficient() ? '#1890ff' : '#ff4d4f' 
+                      style={{
+                        background: isBalanceSufficient() ? '#1890ff' : '#ff4d4f'
                       }}
                     />
                   </Col>
@@ -373,9 +786,9 @@ function PenaltyPaymentPage({ user, onLogout }) {
                         Current Wallet Balance
                       </Text>
                       <br />
-                      <Text strong style={{ 
-                        fontSize: '18px', 
-                        color: isBalanceSufficient() ? '#1890ff' : '#ff4d4f' 
+                      <Text strong style={{
+                        fontSize: '18px',
+                        color: isBalanceSufficient() ? '#1890ff' : '#ff4d4f'
                       }}>
                         {walletBalance.toLocaleString()} VND
                       </Text>
@@ -442,8 +855,8 @@ function PenaltyPaymentPage({ user, onLogout }) {
                 disabled={!isBalanceSufficient()}
                 style={{
                   borderRadius: '12px',
-                  background: isBalanceSufficient() ? 
-                    'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)' : 
+                  background: isBalanceSufficient() ?
+                    'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)' :
                     '#d9d9d9',
                   border: 'none',
                   height: 48,
@@ -550,8 +963,8 @@ function PenaltyPaymentPage({ user, onLogout }) {
   };
 
   return (
-    <div style={{ 
-      minHeight: '100vh', 
+    <div style={{
+      minHeight: '100vh',
       background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
       padding: '24px'
     }}>
@@ -563,8 +976,8 @@ function PenaltyPaymentPage({ user, onLogout }) {
           transition={{ duration: 0.5 }}
           style={{ marginBottom: '24px' }}
         >
-          <Card style={{ 
-            borderRadius: '16px', 
+          <Card style={{
+            borderRadius: '16px',
             boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
             background: 'rgba(255, 255, 255, 0.95)',
             backdropFilter: 'blur(10px)',
@@ -594,8 +1007,8 @@ function PenaltyPaymentPage({ user, onLogout }) {
               </Col>
               <Col>
                 <Space>
-                  <Avatar 
-                    icon={<CreditCardOutlined />} 
+                  <Avatar
+                    icon={<CreditCardOutlined />}
                     size={48}
                     style={{
                       background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
@@ -618,7 +1031,7 @@ function PenaltyPaymentPage({ user, onLogout }) {
             variants={pageVariants}
             transition={pageTransition}
           >
-            <Spin 
+            <Spin
               spinning={loading}
               indicator={
                 <motion.div
@@ -661,7 +1074,7 @@ function PenaltyPaymentPage({ user, onLogout }) {
             <Avatar
               size={64}
               icon={<ExclamationCircleOutlined />}
-              style={{ 
+              style={{
                 background: '#fa8c16',
                 marginBottom: '16px'
               }}
