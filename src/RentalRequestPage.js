@@ -99,8 +99,14 @@ import {
   LogoutOutlined
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { rentalAPI, walletAPI } from './api';
-import { mockGenerateQRCode } from './mocks';
+import { borrowingRequestAPI, walletAPI, kitAPI, notificationAPI } from './api';
+// Mock function - TODO: Replace with real API call
+const mockGenerateQRCode = (rentalData) => ({
+  rentalId: `RENT-${Date.now()}`,
+  qrData: rentalData,
+  qrCodeUrl: `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(JSON.stringify(rentalData))}`,
+  qrCodeText: JSON.stringify(rentalData, null, 2)
+});
 
 const { Header, Content } = Layout;
 const { Title, Text } = Typography;
@@ -123,9 +129,9 @@ const pageTransition = {
 
 const cardVariants = {
   hidden: { opacity: 0, y: 20, scale: 0.95 },
-  visible: { 
-    opacity: 1, 
-    y: 0, 
+  visible: {
+    opacity: 1,
+    y: 0,
     scale: 1,
     transition: {
       duration: 0.5,
@@ -145,16 +151,15 @@ const cardVariants = {
 function RentalRequestPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const selectedKit = location.state?.kit;
+  const selectedKitId = location.state?.kitId;
   const user = location.state?.user;
 
   const [currentStep, setCurrentStep] = useState(0);
+  const [selectedKit, setSelectedKit] = useState(null);
   const [rentalData, setRentalData] = useState({
     reason: '',
-    purpose: '',
-    duration: '',
-    startDate: '',
-    endDate: '',
+    expectReturnDate: '',
+    requestType: 'BORROW_KIT',
     totalCost: 0
   });
   const [wallet, setWallet] = useState({ balance: 0, transactions: [] });
@@ -165,39 +170,98 @@ function RentalRequestPage() {
   const [showQRCode, setShowQRCode] = useState(false);
 
   useEffect(() => {
-    if (!selectedKit || !user) {
+    if (!selectedKitId || !user) {
       navigate('/');
       return;
     }
+    fetchKitDetails();
     fetchWallet();
-    calculateTotalCost();
-  }, [selectedKit, user, navigate]);
+  }, [selectedKitId, user, navigate]);
+
+  const fetchKitDetails = async () => {
+    try {
+      setLoading(true);
+      const response = await kitAPI.getKitById(selectedKitId);
+      console.log('Kit API response:', response);
+
+      // Handle ApiResponse wrapper
+      let kitData;
+      if (response && response.data) {
+        kitData = response.data;
+      } else if (response && response.id) {
+        kitData = response;
+      } else {
+        throw new Error('Invalid response format');
+      }
+
+      console.log('Kit data:', kitData);
+      setSelectedKit(kitData);
+    } catch (error) {
+      console.error('Error fetching kit:', error);
+      message.error('Failed to load kit details');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const fetchWallet = async () => {
     try {
-      const data = await walletAPI.getWallet();
-      setWallet(data.wallet);
+      const data = await walletAPI.getMyWallet();
+      console.log('Wallet data:', data);
+      // Handle different response formats
+      if (data && data.data) {
+        // Handle ApiResponse wrapper
+        setWallet({ balance: data.data.balance || 0, transactions: [] });
+      } else if (data && data.balance !== undefined) {
+        setWallet({ balance: data.balance, transactions: [] });
+      } else {
+        setWallet({ balance: 0, transactions: [] });
+      }
     } catch (error) {
       console.error('Error fetching wallet:', error);
+      setWallet({ balance: 0, transactions: [] });
     }
   };
 
   const calculateTotalCost = () => {
-    if (selectedKit && rentalData.duration) {
-      const days = parseInt(rentalData.duration);
-      const dailyRate = selectedKit.price / 30; // Assuming monthly rate, convert to daily
-      const total = days * dailyRate;
-      setRentalData(prev => ({ ...prev, totalCost: total }));
+    // Bỏ tính daily rate: không tự động tính totalCost theo ngày nữa
+    // Giữ nguyên totalCost hiện có (có thể điền/tính từ nơi khác), hoặc để 0
+    setRentalData(prev => ({ ...prev, totalCost: prev.totalCost || 0 }));
+  };
+
+  const formatDateTimeForDisplay = (dateString) => {
+    if (!dateString) return 'N/A';
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleString('vi-VN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (e) {
+      return dateString;
     }
   };
 
   const handleNext = () => {
     if (currentStep === 0) {
       // Validate rental details
-      if (!rentalData.reason || !rentalData.purpose || !rentalData.duration || !rentalData.startDate || !rentalData.endDate) {
+      if (!rentalData.reason || !rentalData.expectReturnDate || !rentalData.requestType) {
         message.error('Please fill in all required fields');
         return;
       }
+
+      // Validate dates
+      const today = new Date();
+      const end = new Date(rentalData.expectReturnDate);
+      if (end <= today) {
+        message.error('Expected return date must be in the future');
+        return;
+      }
+
+      calculateTotalCost();
     }
     setCurrentStep(currentStep + 1);
     setStatusMessage('');
@@ -213,8 +277,9 @@ function RentalRequestPage() {
     setStatusMessage('');
 
     try {
-      // Check if wallet has enough balance
-      if (wallet.balance < rentalData.totalCost) {
+      // Check if wallet has enough balance for deposit (kit amount / 2)
+      const requiredAmount = selectedKit ? selectedKit.amount / 2 : 0;
+      if (wallet.balance < requiredAmount) {
         message.error('Insufficient wallet balance. Please top up your wallet.');
         setLoading(false);
         return;
@@ -223,7 +288,7 @@ function RentalRequestPage() {
       // Generate QR code data
       const qrData = mockGenerateQRCode({
         kitId: selectedKit.id,
-        kitName: selectedKit.name,
+        kitName: selectedKit.kitName,
         userId: user.id,
         userEmail: user.email,
         startDate: rentalData.startDate,
@@ -235,31 +300,41 @@ function RentalRequestPage() {
       setShowQRCode(true);
       setCurrentStep(2); // Move to QR code step
 
-      // Submit rental request
-      await rentalAPI.submitRentalRequest({
+      // Submit borrowing request
+      await borrowingRequestAPI.create({
         kitId: selectedKit.id,
-        kitName: selectedKit.name,
-        userId: user.id,
-        userEmail: user.email,
-        userRole: user.role,
+        accountID: user.id,
         reason: rentalData.reason,
-        purpose: rentalData.purpose,
-        duration: rentalData.duration,
-        startDate: rentalData.startDate,
-        endDate: rentalData.endDate,
-        totalCost: rentalData.totalCost,
-        status: 'PENDING_APPROVAL',
-        rentalId: qrData.rentalId
+        expectReturnDate: rentalData.expectReturnDate,
+        requestType: rentalData.requestType
       });
 
+      try {
+        await notificationAPI.createNotifications([
+          {
+            subType: 'RENTAL_REQUEST',
+            title: 'Đã gửi yêu cầu thuê kit',
+            message: `Bạn đã gửi yêu cầu thuê kit ${selectedKit.kitName}.`
+          },
+          {
+            subType: 'BORROW_REQUEST_CREATED',
+            title: 'Yêu cầu mượn kit mới',
+            message: `${user?.fullName || user?.email || 'Thành viên'} đã gửi yêu cầu thuê kit ${selectedKit.kitName}.`
+          }
+        ]);
+      } catch (notifyError) {
+        console.error('Error sending notifications:', notifyError);
+      }
+
       // Deduct money from wallet
-      await walletAPI.deduct(rentalData.totalCost, `Rental request for ${selectedKit.name}`);
-      
+      await walletAPI.deduct(rentalData.totalCost, `Rental request for ${selectedKit.kitName}`);
+
       message.success('Rental request submitted successfully! QR code generated.');
     } catch (error) {
-      message.error('Network error. Please try again.');
+      console.error('Submit rental error:', error);
+      message.error(error.message || 'Failed to submit rental request. Please try again.');
     }
-    
+
     setLoading(false);
   };
 
@@ -288,33 +363,50 @@ function RentalRequestPage() {
             animate="visible"
             whileHover="hover"
           >
-            <Card 
-              title="Kit Information" 
+            <Card
+              title="Kit Information"
               style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)', marginBottom: '24px' }}
             >
               <Row gutter={[24, 24]}>
                 <Col xs={24} md={12}>
                   <Descriptions column={1}>
-                    <Descriptions.Item label="Kit Name">{selectedKit?.name}</Descriptions.Item>
-                    <Descriptions.Item label="Category">{selectedKit?.category}</Descriptions.Item>
-                    <Descriptions.Item label="Daily Rate">{(selectedKit?.price / 30).toLocaleString()} VND</Descriptions.Item>
+                    <Descriptions.Item label="Kit Name">{selectedKit?.kitName}</Descriptions.Item>
+                    <Descriptions.Item label="Type">
+                      <Tag color={selectedKit?.type === 'LECTURER_KIT' ? 'red' : 'blue'}>
+                        {selectedKit?.type}
+                      </Tag>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Total Quantity">{selectedKit?.quantityTotal || 0}</Descriptions.Item>
+                    <Descriptions.Item label="Available">{selectedKit?.quantityAvailable || 0}</Descriptions.Item>
                   </Descriptions>
                 </Col>
                 <Col xs={24} md={12}>
                   <Descriptions column={1}>
-                    <Descriptions.Item label="Location">{selectedKit?.location}</Descriptions.Item>
                     <Descriptions.Item label="Status">
-                      <Tag color={selectedKit?.status === 'AVAILABLE' ? 'success' : 'warning'}>
+                      <Tag color={selectedKit?.status === 'AVAILABLE' ? 'success' : selectedKit?.status === 'IN_USE' ? 'warning' : 'error'}>
                         {selectedKit?.status}
                       </Tag>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Components">
+                      {selectedKit?.components && selectedKit.components.length > 0 ? (
+                        <div>
+                          {selectedKit.components.map((comp, idx) => (
+                            <Tag key={idx} color="blue" style={{ marginBottom: '4px' }}>
+                              {comp.componentName} ({comp.quantityAvailable}/{comp.quantityTotal})
+                            </Tag>
+                          ))}
+                        </div>
+                      ) : (
+                        <Text type="secondary">No components</Text>
+                      )}
                     </Descriptions.Item>
                   </Descriptions>
                 </Col>
               </Row>
             </Card>
 
-            <Card 
-              title="Rental Details" 
+            <Card
+              title="Rental Details"
               style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
             >
               <Form layout="vertical">
@@ -322,53 +414,37 @@ function RentalRequestPage() {
                   <Col xs={24}>
                     <Form.Item label="Reason for Rental" required>
                       <TextArea
-                        rows={3}
+                        rows={4}
                         placeholder="Please explain why you need to rent this kit..."
                         value={rentalData.reason}
                         onChange={(e) => setRentalData({ ...rentalData, reason: e.target.value })}
                       />
                     </Form.Item>
                   </Col>
-                  <Col xs={24}>
-                    <Form.Item label="Purpose/Project Description" required>
-                      <TextArea
-                        rows={3}
-                        placeholder="Describe your project or purpose for using this kit..."
-                        value={rentalData.purpose}
-                        onChange={(e) => setRentalData({ ...rentalData, purpose: e.target.value })}
-                      />
+                  <Col xs={24} md={12}>
+                    <Form.Item label="Request Type" required>
+                      <Select
+                        value={rentalData.requestType}
+                        onChange={(value) => setRentalData({ ...rentalData, requestType: value })}
+                      >
+                        <Option value="BORROW_KIT">Borrow Kit</Option>
+                        <Option value="BORROW_COMPONENT">Borrow Component</Option>
+                      </Select>
                     </Form.Item>
                   </Col>
-                  <Col xs={24} md={8}>
-                    <Form.Item label="Duration (days)" required>
-                      <Input
-                        type="number"
-                        placeholder="Enter duration"
-                        value={rentalData.duration}
-                        onChange={(e) => {
-                          setRentalData({ ...rentalData, duration: e.target.value });
+                  <Col xs={24} md={12}>
+                    <Form.Item label="Expected Return Date" required>
+                      <DatePicker
+                        showTime
+                        format="YYYY-MM-DD HH:mm:ss"
+                        style={{ width: '100%' }}
+                        placeholder="Select expected return date"
+                        onChange={(date, dateString) => {
+                          // Convert to ISO format with time
+                          const isoDate = date ? date.format('YYYY-MM-DDTHH:mm:ss') : null;
+                          setRentalData({ ...rentalData, expectReturnDate: isoDate });
                           setTimeout(calculateTotalCost, 100);
                         }}
-                        min={1}
-                        max={30}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} md={8}>
-                    <Form.Item label="Start Date" required>
-                      <DatePicker
-                        style={{ width: '100%' }}
-                        placeholder="Select start date"
-                        onChange={(date, dateString) => setRentalData({ ...rentalData, startDate: dateString })}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} md={8}>
-                    <Form.Item label="End Date" required>
-                      <DatePicker
-                        style={{ width: '100%' }}
-                        placeholder="Select end date"
-                        onChange={(date, dateString) => setRentalData({ ...rentalData, endDate: dateString })}
                       />
                     </Form.Item>
                   </Col>
@@ -385,35 +461,37 @@ function RentalRequestPage() {
             animate="visible"
             whileHover="hover"
           >
-            <Card 
-              title="Payment & Confirmation" 
+            <Card
+              title="Payment & Confirmation"
               style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)', marginBottom: '24px' }}
             >
               <Row gutter={[24, 24]}>
                 <Col xs={24} md={12}>
                   <Card title="Rental Summary" size="small">
                     <Descriptions column={1}>
-                      <Descriptions.Item label="Kit">{selectedKit?.name}</Descriptions.Item>
-                      <Descriptions.Item label="Duration">{rentalData.duration} days</Descriptions.Item>
-                      <Descriptions.Item label="Start Date">{rentalData.startDate}</Descriptions.Item>
-                      <Descriptions.Item label="End Date">{rentalData.endDate}</Descriptions.Item>
+                      <Descriptions.Item label="Kit">{selectedKit?.kitName}</Descriptions.Item>
+                      <Descriptions.Item label="Request Type">
+                        <Tag color={rentalData.requestType === 'BORROW_KIT' ? 'blue' : 'purple'}>
+                          {rentalData.requestType}
+                        </Tag>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Expected Return Date">{formatDateTimeForDisplay(rentalData.expectReturnDate)}</Descriptions.Item>
                     </Descriptions>
                   </Card>
                 </Col>
                 <Col xs={24} md={12}>
                   <Card title="Cost Breakdown" size="small">
                     <Descriptions column={1}>
-                      <Descriptions.Item label="Daily Rate">{(selectedKit?.price / 30).toLocaleString()} VND</Descriptions.Item>
-                      <Descriptions.Item label="Total Cost">{rentalData.totalCost.toLocaleString()} VND</Descriptions.Item>
-                      <Descriptions.Item label="Current Balance">{wallet.balance.toLocaleString()} VND</Descriptions.Item>
+                      <Descriptions.Item label="Total Cost">{(rentalData.totalCost || 0).toLocaleString()} VND</Descriptions.Item>
+                      <Descriptions.Item label="Current Balance">{(wallet.balance || 0).toLocaleString()} VND</Descriptions.Item>
                     </Descriptions>
                   </Card>
                 </Col>
               </Row>
             </Card>
 
-            <Card 
-              title="Wallet Status" 
+            <Card
+              title="Wallet Status"
               style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)', marginBottom: '24px' }}
             >
               <Row gutter={[24, 24]}>
@@ -428,8 +506,8 @@ function RentalRequestPage() {
                 </Col>
                 <Col xs={24} md={8}>
                   <Statistic
-                    title="Required Amount"
-                    value={rentalData.totalCost}
+                    title="Required Amount (Deposit)"
+                    value={selectedKit?.amount ? selectedKit.amount / 2 : 0}
                     prefix={<DollarOutlined />}
                     suffix="VND"
                     valueStyle={{ color: '#fa8c16' }}
@@ -438,28 +516,28 @@ function RentalRequestPage() {
                 <Col xs={24} md={8}>
                   <Statistic
                     title="Remaining Balance"
-                    value={wallet.balance - rentalData.totalCost}
+                    value={selectedKit ? wallet.balance - (selectedKit.amount / 2) : wallet.balance}
                     prefix={<DollarOutlined />}
                     suffix="VND"
-                    valueStyle={{ color: wallet.balance >= rentalData.totalCost ? '#52c41a' : '#f5222d' }}
+                    valueStyle={{ color: selectedKit && wallet.balance >= (selectedKit.amount / 2) ? '#52c41a' : '#f5222d' }}
                   />
                 </Col>
               </Row>
-              
+
               <Divider />
-              
+
               <Space direction="vertical" style={{ width: '100%' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Text>Balance Status:</Text>
-                  <Tag color={wallet.balance >= rentalData.totalCost ? 'success' : 'error'}>
-                    {wallet.balance >= rentalData.totalCost ? 'Sufficient' : 'Insufficient'}
+                  <Tag color={selectedKit && wallet.balance >= (selectedKit.amount / 2) ? 'success' : 'error'}>
+                    {selectedKit && wallet.balance >= (selectedKit.amount / 2) ? 'Sufficient' : 'Insufficient'}
                   </Tag>
                 </div>
-                
-                {wallet.balance < rentalData.totalCost && (
+
+                {selectedKit && wallet.balance < (selectedKit.amount / 2) && (
                   <Alert
                     message="Insufficient Balance"
-                    description={`You need ${(rentalData.totalCost - wallet.balance).toLocaleString()} VND more to complete this rental.`}
+                    description={`You need ${(((selectedKit.amount / 2) || 0) - (wallet.balance || 0)).toLocaleString()} VND more to complete this rental.`}
                     type="warning"
                     showIcon
                   />
@@ -467,8 +545,8 @@ function RentalRequestPage() {
               </Space>
             </Card>
 
-            <Card 
-              title="Terms & Conditions" 
+            <Card
+              title="Terms & Conditions"
               style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
             >
               <Text type="secondary" style={{ display: 'block', marginBottom: '16px' }}>
@@ -477,7 +555,7 @@ function RentalRequestPage() {
               <List
                 size="small"
                 dataSource={[
-                  `Pay the total amount of ${rentalData.totalCost.toLocaleString()} VND`,
+                  `Pay the total amount of ${(rentalData.totalCost || 0).toLocaleString()} VND`,
                   `Return the kit by ${rentalData.endDate}`,
                   'Use the kit only for the stated purpose',
                   'Report any damage or issues immediately'
@@ -499,15 +577,15 @@ function RentalRequestPage() {
             animate="visible"
             whileHover="hover"
           >
-            <Card 
-              title="Rental Request QR Code" 
+            <Card
+              title="Rental Request QR Code"
               style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)', marginBottom: '24px' }}
             >
               <div style={{ textAlign: 'center', padding: '32px' }}>
                 <Avatar
                   size={80}
                   icon={<CheckCircleOutlined />}
-                  style={{ 
+                  style={{
                     background: '#52c41a',
                     marginBottom: '24px'
                   }}
@@ -518,11 +596,11 @@ function RentalRequestPage() {
                 <Text type="secondary" style={{ display: 'block', marginBottom: '32px' }}>
                   Your rental request has been submitted and is pending admin approval.
                 </Text>
-                
+
                 {qrCodeData && (
                   <div>
-                    <Card size="small" style={{ 
-                      background: '#f6ffed', 
+                    <Card size="small" style={{
+                      background: '#f6ffed',
                       border: '1px solid #b7eb8f',
                       marginBottom: '24px',
                       maxWidth: '400px',
@@ -530,11 +608,11 @@ function RentalRequestPage() {
                     }}>
                       <Row gutter={[16, 16]} align="middle">
                         <Col span={24} style={{ textAlign: 'center' }}>
-                          <img 
-                            src={qrCodeData.qrCodeUrl} 
+                          <img
+                            src={qrCodeData.qrCodeUrl}
                             alt="Rental QR Code"
-                            style={{ 
-                              maxWidth: '200px', 
+                            style={{
+                              maxWidth: '200px',
                               height: 'auto',
                               borderRadius: '8px',
                               border: '2px solid #d9d9d9'
@@ -547,21 +625,26 @@ function RentalRequestPage() {
                               <Text code>{qrCodeData.rentalId}</Text>
                             </Descriptions.Item>
                             <Descriptions.Item label="Kit">
-                              <Text strong>{selectedKit?.name}</Text>
+                              <Text strong>{selectedKit?.kitName}</Text>
                             </Descriptions.Item>
-                            <Descriptions.Item label="Duration">
-                              <Text>{rentalData.duration} days</Text>
+                            <Descriptions.Item label="Request Type">
+                              <Tag color={rentalData.requestType === 'BORROW_KIT' ? 'blue' : 'purple'}>
+                                {rentalData.requestType}
+                              </Tag>
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Expected Return Date">
+                              <Text>{formatDateTimeForDisplay(rentalData.expectReturnDate)}</Text>
                             </Descriptions.Item>
                             <Descriptions.Item label="Total Cost">
                               <Text strong style={{ color: '#52c41a' }}>
-                                {rentalData.totalCost.toLocaleString()} VND
+                                {(rentalData.totalCost || 0).toLocaleString()} VND
                               </Text>
                             </Descriptions.Item>
                           </Descriptions>
                         </Col>
                       </Row>
                     </Card>
-                    
+
                     <Alert
                       message="Important"
                       description="Please save this QR code. You may need to show it when collecting or returning the kit."
@@ -569,7 +652,7 @@ function RentalRequestPage() {
                       showIcon
                       style={{ marginBottom: '24px' }}
                     />
-                    
+
                     <Space direction="vertical" size="large" style={{ width: '100%' }}>
                       <Button
                         type="primary"
@@ -592,7 +675,7 @@ function RentalRequestPage() {
                       >
                         Download QR Code
                       </Button>
-                      
+
                       <Button
                         size="large"
                         onClick={() => navigate('/')}
@@ -616,7 +699,7 @@ function RentalRequestPage() {
     }
   };
 
-  if (!selectedKit || !user) {
+  if (!selectedKitId || !user) {
     return (
       <Layout style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
         <Content style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
@@ -634,6 +717,24 @@ function RentalRequestPage() {
     );
   }
 
+  if (!selectedKit && loading) {
+    return (
+      <Layout style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
+        <Content style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.5 }}
+          >
+            <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
+              <Spin size="large" tip="Loading kit details..." />
+            </Card>
+          </motion.div>
+        </Content>
+      </Layout>
+    );
+  }
+
   return (
     <Layout style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
       {/* Header */}
@@ -642,12 +743,12 @@ function RentalRequestPage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 0.2 }}
       >
-        <Header style={{ 
-          padding: '0 32px', 
+        <Header style={{
+          padding: '0 32px',
           background: 'rgba(255, 255, 255, 0.95)',
           backdropFilter: 'blur(10px)',
-          display: 'flex', 
-          alignItems: 'center', 
+          display: 'flex',
+          alignItems: 'center',
           justifyContent: 'space-between',
           boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
           position: 'sticky',
@@ -665,9 +766,9 @@ function RentalRequestPage() {
                 type="text"
                 icon={<ArrowLeftOutlined />}
                 onClick={() => navigate(-1)}
-                style={{ 
-                  fontSize: '18px', 
-                  width: 48, 
+                style={{
+                  fontSize: '18px',
+                  width: 48,
                   height: 48,
                   borderRadius: '12px',
                   display: 'flex',
@@ -688,14 +789,14 @@ function RentalRequestPage() {
               </Title>
             </motion.div>
           </Space>
-          
+
           <Space size="large">
             <motion.div
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.95 }}
             >
-              <Avatar 
-                icon={<UserOutlined />} 
+              <Avatar
+                icon={<UserOutlined />}
                 size={48}
                 style={{
                   background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
@@ -707,9 +808,9 @@ function RentalRequestPage() {
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              <Button 
+              <Button
                 type="primary"
-                icon={<LogoutOutlined />} 
+                icon={<LogoutOutlined />}
                 onClick={() => navigate('/')}
                 style={{
                   borderRadius: '12px',
@@ -726,11 +827,11 @@ function RentalRequestPage() {
           </Space>
         </Header>
       </motion.div>
-      
+
       {/* Content Area */}
-      <Content style={{ 
-        margin: '24px', 
-        padding: '32px', 
+      <Content style={{
+        margin: '24px',
+        padding: '32px',
         background: 'rgba(255, 255, 255, 0.95)',
         backdropFilter: 'blur(10px)',
         borderRadius: '20px',
@@ -738,7 +839,7 @@ function RentalRequestPage() {
         boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
         border: '1px solid rgba(255,255,255,0.2)'
       }}>
-        <Spin 
+        <Spin
           spinning={loading}
           tip="Processing request..."
           size="large"
@@ -792,7 +893,7 @@ function RentalRequestPage() {
                 >
                   Back
                 </Button>
-                
+
                 <Space>
                   {currentStep === steps.length - 1 ? (
                     <Button
@@ -813,7 +914,7 @@ function RentalRequestPage() {
                       type="primary"
                       size="large"
                       onClick={handleSubmitRental}
-                      disabled={loading || wallet.balance < rentalData.totalCost}
+                      disabled={loading || (selectedKit && wallet.balance < (selectedKit.amount / 2))}
                       icon={<CheckCircleOutlined />}
                       style={{
                         borderRadius: '12px',
@@ -825,8 +926,8 @@ function RentalRequestPage() {
                       {loading ? 'Submitting...' : 'Submit Rental Request'}
                     </Button>
                   ) : (
-                    <Button 
-                      type="primary" 
+                    <Button
+                      type="primary"
                       onClick={handleNext}
                       size="large"
                       icon={<StepForwardOutlined />}

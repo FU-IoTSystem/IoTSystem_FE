@@ -17,16 +17,15 @@ import {
   Avatar,
   Badge,
   List,
-  Steps,
-  Alert,
   Descriptions,
   Empty,
   Spin,
+  Popover,
   notification,
   Modal,
-  Select,
   DatePicker,
-  Switch
+  Switch,
+  Divider
 } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -37,7 +36,6 @@ import {
   ToolOutlined,
   ShoppingOutlined,
   LogoutOutlined,
-  PlusOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   LoadingOutlined,
@@ -46,23 +44,32 @@ import {
   DollarOutlined,
   BookOutlined,
   BellOutlined,
-  ArrowLeftOutlined,
-  EyeOutlined
+  EyeOutlined,
+  ExclamationCircleOutlined,
+  InfoCircleOutlined,
+  BuildOutlined,
+  ReloadOutlined,
+  EditOutlined,
+  CheckCircleOutlined,
+  UploadOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { mockWallet, mockKits, mockGroups, mockLecturerFines, mockLecturerRefunds, mockLecturerBorrowStatus } from './mocks';
+import { kitAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, walletTransactionAPI, borrowingRequestAPI, penaltiesAPI, penaltyDetailAPI, notificationAPI, authAPI } from './api';
+import dayjs from 'dayjs';
+
+// Default wallet structure
+const defaultWallet = { balance: 0, transactions: [] };
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
-const { Option } = Select;
 const { TextArea } = Input;
 
 // Helper functions
 const cardVariants = {
   hidden: { opacity: 0, y: 20, scale: 0.95 },
-  visible: { 
-    opacity: 1, 
-    y: 0, 
+  visible: {
+    opacity: 1,
+    y: 0,
     scale: 1,
     transition: { duration: 0.5, ease: "easeOut" }
   },
@@ -75,6 +82,12 @@ const cardVariants = {
 
 const formatDate = (dateString) => {
   return new Date(dateString).toLocaleDateString();
+};
+
+const formatDateTimeDisplay = (dateString) => {
+  if (!dateString) return 'N/A';
+  const date = dayjs(dateString);
+  return date.isValid() ? date.format('DD/MM/YYYY HH:mm') : 'N/A';
 };
 
 const getStatusColor = (status) => {
@@ -101,17 +114,39 @@ function LecturerPortal({ user, onLogout }) {
   const [loading, setLoading] = useState(false);
   const [kits, setKits] = useState([]);
   const [lecturerGroups, setLecturerGroups] = useState([]);
-  const [wallet, setWallet] = useState(mockWallet);
-  const [refundRequests, setRefundRequests] = useState([]);
-  const [newRefundModal, setNewRefundModal] = useState(false);
-  const [refundForm] = Form.useForm();
+  const [wallet, setWallet] = useState(defaultWallet);
+  const [selectedGroupMembers, setSelectedGroupMembers] = useState([]);
   const [groupDetailModal, setGroupDetailModal] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState(null);
-  
+
   // New state for fines/refunds and borrow status
   const [lecturerFines, setLecturerFines] = useState([]);
   const [lecturerRefunds, setLecturerRefunds] = useState([]);
   const [borrowStatus, setBorrowStatus] = useState([]);
+  const [penalties, setPenalties] = useState([]);
+  const [penaltyDetails, setPenaltyDetails] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
+  const [notificationLoading, setNotificationLoading] = useState(false);
+  const [profile, setProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+
+  // State for detail modal
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
+  const [selectedRentalDetail, setSelectedRentalDetail] = useState(null);
+
+  // State for kit detail modal
+  const [kitDetailModalVisible, setKitDetailModalVisible] = useState(false);
+  const [selectedKitDetail, setSelectedKitDetail] = useState(null);
+  const [kitDetailModalType, setKitDetailModalType] = useState('kit-rental'); // 'kit-rental' or 'component-rental'
+  const [componentQuantities, setComponentQuantities] = useState({}); // Store quantities for each component
+
+  // State for rent component modal
+  const [rentComponentModalVisible, setRentComponentModalVisible] = useState(false);
+  const [selectedComponent, setSelectedComponent] = useState(null);
+  const [componentQuantity, setComponentQuantity] = useState(1);
+  const [componentExpectReturnDate, setComponentExpectReturnDate] = useState(null);
+  const [componentReason, setComponentReason] = useState('');
 
   // Animation variants
   const pageVariants = {
@@ -127,52 +162,321 @@ function LecturerPortal({ user, onLogout }) {
   };
 
   useEffect(() => {
-    loadData();
-  }, []);
+    console.log('===== LecturerPortal useEffect triggered =====');
+    console.log('User:', user);
+    if (user) {
+      loadData();
+    }
+  }, [user]);
 
   const loadData = async () => {
+    if (!user || !user.id) {
+      console.warn('User or user.id is missing');
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
-      setKits(mockKits);
-      setWallet(mockWallet);
-      const foundGroups = mockGroups.filter(g => g.lecturer === user?.email);
-      setLecturerGroups(foundGroups);
-      setRefundRequests([
-        {
-          id: 1,
-          kitName: 'Raspberry Pi Kit',
-          requester: user?.email,
-          requestDate: '2024-01-10',
-          refundDate: '2024-01-12',
-          status: 'pending_approval',
-          reason: 'Kit malfunction',
-          purpose: 'Project completion'
+      console.log('===== Loading lecturer data =====');
+
+      // Load all kits
+      try {
+        const kitsResponse = await kitAPI.getAllKits();
+        console.log('Kits response:', kitsResponse);
+        const kitsData = kitsResponse?.data || kitsResponse || [];
+        const mappedKits = kitsData.map(kit => ({
+          id: kit.id,
+          name: kit.kitName,
+          type: kit.type,
+          status: kit.status,
+          description: kit.description,
+          imageUrl: kit.imageUrl,
+          quantityTotal: kit.quantityTotal,
+          quantityAvailable: kit.quantityAvailable,
+          amount: kit.amount || 0,
+          components: kit.components || []
+        }));
+        setKits(mappedKits);
+      } catch (error) {
+        console.error('Error loading kits:', error);
+        setKits([]);
+      }
+
+      // Load penalties
+      try {
+        const penaltiesResponse = await penaltiesAPI.getPenByAccount();
+        console.log('Penalties response:', penaltiesResponse);
+
+        let penaltiesData = [];
+        if (Array.isArray(penaltiesResponse)) {
+          penaltiesData = penaltiesResponse;
+        } else if (penaltiesResponse && penaltiesResponse.data && Array.isArray(penaltiesResponse.data)) {
+          penaltiesData = penaltiesResponse.data;
         }
-      ]);
-      
-      // Load lecturer-specific data
-      const lecturerFinesData = mockLecturerFines.filter(fine => fine.lecturerEmail === user?.email);
-      const lecturerRefundsData = mockLecturerRefunds.filter(refund => refund.lecturerEmail === user?.email);
-      const borrowStatusData = mockLecturerBorrowStatus.filter(borrow => borrow.lecturerEmail === user?.email);
-      
-      setLecturerFines(lecturerFinesData);
-      setLecturerRefunds(lecturerRefundsData);
-      setBorrowStatus(borrowStatusData);
+
+        setPenalties(penaltiesData);
+
+        // Load penalty details for each penalty
+        if (penaltiesData.length > 0) {
+          const detailsPromises = penaltiesData.map(async (penalty) => {
+            try {
+              const detailsResponse = await penaltyDetailAPI.findByPenaltyId(penalty.id);
+              let detailsData = [];
+              if (Array.isArray(detailsResponse)) {
+                detailsData = detailsResponse;
+              } else if (detailsResponse && detailsResponse.data && Array.isArray(detailsResponse.data)) {
+                detailsData = detailsResponse.data;
+              }
+              return { penaltyId: penalty.id, details: detailsData };
+            } catch (error) {
+              console.error(`Error loading penalty details for penalty ${penalty.id}:`, error);
+              return { penaltyId: penalty.id, details: [] };
+            }
+          });
+
+          const allDetails = await Promise.all(detailsPromises);
+          const detailsMap = {};
+          allDetails.forEach(({ penaltyId, details }) => {
+            detailsMap[penaltyId] = details;
+          });
+          setPenaltyDetails(detailsMap);
+        }
+      } catch (error) {
+        console.error('Error loading penalties:', error);
+        setPenalties([]);
+      }
+
+      // Load wallet
+      try {
+        const walletResponse = await walletAPI.getMyWallet();
+        const walletData = walletResponse?.data || walletResponse || {};
+
+        // Fetch transaction history separately
+        let transactions = [];
+        try {
+          const transactionHistoryResponse = await walletTransactionAPI.getHistory();
+          console.log('Transaction history response:', transactionHistoryResponse);
+
+          // Handle response format - could be array or wrapped in data
+          const transactionData = Array.isArray(transactionHistoryResponse)
+            ? transactionHistoryResponse
+            : (transactionHistoryResponse?.data || []);
+
+          // Map transactions to expected format for WalletManagement component
+          transactions = transactionData.map(txn => ({
+            type: txn.type || txn.transactionType || 'UNKNOWN',
+            amount: txn.amount || 0,
+            date: txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('vi-VN') : 'N/A',
+            description: txn.description || '',
+            status: txn.status || txn.transactionStatus || 'COMPLETED',
+            id: txn.id
+          }));
+
+          console.log('Mapped transactions:', transactions);
+        } catch (txnError) {
+          console.error('Error loading transaction history:', txnError);
+          transactions = [];
+        }
+
+        setWallet({
+          balance: walletData.balance || 0,
+          transactions: transactions
+        });
+      } catch (error) {
+        console.error('Error loading wallet:', error);
+        setWallet(defaultWallet);
+      }
+
+      // Load groups for lecturer
+      try {
+        const allGroups = await studentGroupAPI.getAll();
+        console.log('All groups response:', allGroups);
+
+        // Filter groups where lecturer is assigned (check lecturerEmail or lecturerId)
+        const lecturerGroups = allGroups.filter(group =>
+          group.lecturerEmail === user.email ||
+          group.accountId === user.id
+        );
+
+        console.log('Filtered lecturer groups:', lecturerGroups);
+
+        // Load borrowing groups for each lecturer group
+        const groupsWithMembers = await Promise.all(
+          lecturerGroups.map(async (group) => {
+            const borrowingGroups = await borrowingGroupAPI.getByStudentGroupId(group.id);
+            const members = (borrowingGroups || []).map(bg => ({
+              id: bg.accountId,
+              name: bg.accountName,
+              email: bg.accountEmail,
+              role: bg.roles
+            }));
+
+            const leaderMember = members.find(member => (member.role || '').toUpperCase() === 'LEADER');
+
+            return {
+              id: group.id,
+              name: group.groupName,
+              lecturer: group.lecturerEmail,
+              lecturerName: group.lecturerName,
+              leader: leaderMember ? (leaderMember.name || leaderMember.email || 'N/A') : 'N/A',
+              leaderEmail: leaderMember?.email || null,
+              leaderId: leaderMember?.id || null,
+              members: members,
+              status: group.status ? 'active' : 'inactive',
+              classId: group.classId
+            };
+          })
+        );
+
+        setLecturerGroups(groupsWithMembers);
+      } catch (error) {
+        console.error('Error loading groups:', error);
+        setLecturerGroups([]);
+      }
+
+      // Load borrowing requests for user (borrow status)
+      try {
+        const borrowRequests = await borrowingRequestAPI.getByUser(user.id);
+        console.log('Borrow requests raw data:', borrowRequests);
+        const mappedBorrowStatus = (Array.isArray(borrowRequests) ? borrowRequests : []).map((request) => {
+          const borrowDate = request.borrowDate || request.startDate || request.createdAt;
+          const dueDate = request.dueDate || request.expectReturnDate;
+          const returnDate = request.returnDate || request.actualReturnDate || null;
+          const normalizedStatus = (request.status || '').toUpperCase();
+
+          let duration = request.duration;
+          if (!duration && borrowDate && (returnDate || dueDate)) {
+            const start = dayjs(borrowDate);
+            const end = dayjs(returnDate || dueDate);
+            if (start.isValid() && end.isValid()) {
+              const diff = end.diff(start, 'day');
+              duration = diff >= 0 ? diff : 0;
+            }
+          }
+
+          return {
+            id: request.id || request.requestId || request.borrowingRequestId || request.rentalId || request.code,
+            kitName: request.kitName || request.kit?.kitName || 'Unknown Kit',
+            requestType: request.requestType || request.type || 'BORROW_KIT',
+            rentalId: request.requestCode || request.rentalId || request.id || request.code || 'N/A',
+            borrowDate,
+            dueDate,
+            returnDate,
+            status: normalizedStatus || 'PENDING',
+            totalCost: request.totalCost || request.cost || 0,
+            depositAmount: request.depositAmount || request.deposit || 0,
+            duration: duration ?? 0,
+            groupName: request.groupName || request.studentGroupName || request.borrowingGroup?.groupName || 'N/A',
+            raw: request
+          };
+        });
+
+        console.log('Mapped borrow status data:', mappedBorrowStatus);
+        setBorrowStatus(mappedBorrowStatus);
+      } catch (error) {
+        console.error('Error loading borrow status:', error);
+        setBorrowStatus([]);
+      }
+
+      // Set empty arrays for now (can be implemented with API later)
+      setLecturerFines([]);
+      setLecturerRefunds([]);
+      // borrowStatus is already set from API above (line 348)
+
+      console.log('Lecturer data loaded successfully');
     } catch (error) {
+      console.error('Error loading data:', error);
       message.error('Failed to load data');
     } finally {
       setLoading(false);
     }
   };
 
+  const loadNotifications = async () => {
+    try {
+      setNotificationLoading(true);
+      const response = await notificationAPI.getMyNotifications();
+      const data = response?.data ?? response;
+      setNotifications(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error loading notifications:', error);
+      setNotifications([]);
+    } finally {
+      setNotificationLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (user && user.id) {
+      loadNotifications();
+    }
+  }, [user]);
+
+  const unreadNotificationsCount = notifications.filter((item) => !item.isRead).length;
+
+  const notificationTypeStyles = {
+    ALERT: { color: 'volcano', label: 'Cảnh báo' },
+    DEPOSIT: { color: 'green', label: 'Giao dịch ví' },
+    SYSTEM: { color: 'blue', label: 'Hệ thống' },
+    USER: { color: 'purple', label: 'Người dùng' }
+  };
+
+  const handleNotificationOpenChange = (open) => {
+    setNotificationPopoverOpen(open);
+    if (open) {
+      loadNotifications();
+    }
+  };
+
+  const renderNotificationContent = () => (
+    <div style={{ width: 320 }}>
+      <Spin spinning={notificationLoading}>
+        {notifications.length > 0 ? (
+          <List
+            rowKey={(item) => item.id || item.title}
+            dataSource={notifications}
+            renderItem={(item) => {
+              const typeInfo = notificationTypeStyles[item.type] || { color: 'blue', label: item.type };
+              const notificationDate = item.createdAt ? formatDateTimeDisplay(item.createdAt) : 'N/A';
+              return (
+                <List.Item style={{ alignItems: 'flex-start' }}>
+                  <List.Item.Meta
+                    title={
+                      <Space size={8} align="start">
+                        <Tag color={typeInfo.color}>{typeInfo.label}</Tag>
+                        <Text strong>{item.title || item.subType}</Text>
+                      </Space>
+                    }
+                    description={
+                      <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                        <Text type="secondary">{item.message}</Text>
+                        <Text type="secondary" style={{ fontSize: '12px' }}>
+                          {notificationDate}
+                        </Text>
+                      </Space>
+                    }
+                  />
+                </List.Item>
+              );
+            }}
+          />
+        ) : (
+          <Empty description="Không có thông báo" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        )}
+      </Spin>
+    </div>
+  );
+
   const menuItems = [
     { key: 'dashboard', icon: <DashboardOutlined />, label: 'Dashboard' },
     { key: 'groups', icon: <TeamOutlined />, label: 'My Groups' },
     { key: 'kits', icon: <ToolOutlined />, label: 'Kit Rental' },
+    { key: 'kit-component-rental', icon: <BuildOutlined />, label: 'Kit Component Rental' },
     { key: 'borrow-status', icon: <ShoppingOutlined />, label: 'Borrow Status' },
     { key: 'fines-refunds', icon: <DollarOutlined />, label: 'Fines & Refunds' },
-    { key: 'refunds', icon: <RollbackOutlined />, label: 'Refund Requests' },
     { key: 'wallet', icon: <WalletOutlined />, label: 'Wallet' },
+    { key: 'profile', icon: <UserOutlined />, label: 'Profile' },
     { key: 'settings', icon: <SettingOutlined />, label: 'Settings' },
   ];
 
@@ -189,42 +493,237 @@ function LecturerPortal({ user, onLogout }) {
   };
 
   const handleRent = (kit) => {
-    navigate('/rental-request', { 
-      state: { kit: kit, user: user } 
+    navigate('/rental-request', {
+      state: {
+        kitId: kit?.id,
+        kit,
+        user
+      }
     });
   };
 
-  const handleNewRefund = () => {
-    setNewRefundModal(true);
-  };
-
   const handleViewGroupDetails = (group) => {
+    console.log('Viewing group details:', group);
     setSelectedGroup(group);
+    // Load members from borrowing groups
+    if (group.id) {
+      borrowingGroupAPI.getByStudentGroupId(group.id).then(members => {
+        console.log('Group members:', members);
+        setSelectedGroupMembers(members);
+      });
+    }
     setGroupDetailModal(true);
   };
 
-  const handleRefundSubmit = async (values) => {
-    const newRefund = {
-      id: Date.now(),
-      kitName: values.kitName,
-      requester: user?.email,
-      requestDate: new Date().toISOString().split('T')[0],
-      refundDate: values.refundDate,
-      status: 'pending_approval'
-    };
-    
-    setRefundRequests(prev => [...prev, newRefund]);
-    setNewRefundModal(false);
-    refundForm.resetFields();
-    message.success('Refund request submitted successfully!');
+  const handleViewDetail = (rental) => {
+    setSelectedRentalDetail(rental);
+    setDetailModalVisible(true);
   };
+
+  const handleCloseDetailModal = () => {
+    setDetailModalVisible(false);
+    setSelectedRentalDetail(null);
+  };
+
+  const handleViewKitDetail = (kit, modalType = 'kit-rental') => {
+    setSelectedKitDetail(kit);
+    setKitDetailModalType(modalType);
+    setKitDetailModalVisible(true);
+  };
+
+  const handleCloseKitDetailModal = () => {
+    setKitDetailModalVisible(false);
+    setSelectedKitDetail(null);
+    setComponentQuantities({});
+  };
+
+  const handleComponentQuantityChange = (componentId, quantity) => {
+    setComponentQuantities(prev => ({
+      ...prev,
+      [componentId]: quantity
+    }));
+  };
+
+  const handleRentComponent = (component) => {
+    // If component has rentQuantity, use it; otherwise default to 1
+    const qty = component.rentQuantity || componentQuantity || 1;
+    setSelectedComponent(component);
+    setComponentQuantity(qty);
+    setRentComponentModalVisible(true);
+  };
+
+  const handleCloseRentComponentModal = () => {
+    setRentComponentModalVisible(false);
+    setSelectedComponent(null);
+    setComponentQuantity(1);
+    setComponentExpectReturnDate(null);
+    setComponentReason('');
+  };
+
+  const handleConfirmRentComponent = async () => {
+    if (!selectedComponent || componentQuantity <= 0) {
+      message.error('Please enter a valid quantity');
+      return;
+    }
+
+    if (componentQuantity > selectedComponent.quantityAvailable) {
+      message.error('Quantity exceeds available amount');
+      return;
+    }
+
+    if (!componentExpectReturnDate) {
+      message.error('Please select expected return date');
+      return;
+    }
+
+    if (!componentReason || componentReason.trim() === '') {
+      message.error('Please provide a reason for renting this component');
+      return;
+    }
+
+    // Check if wallet has enough balance for deposit
+    const depositAmount = (selectedComponent.pricePerCom || 0) * componentQuantity;
+    if (wallet.balance < depositAmount) {
+      message.error(`Insufficient wallet balance. You need ${depositAmount.toLocaleString()} VND but only have ${wallet.balance.toLocaleString()} VND. Please top up your wallet.`);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const requestData = {
+        kitComponentsId: selectedComponent.id,
+        componentName: selectedComponent.componentName,
+        quantity: componentQuantity,
+        reason: componentReason,
+        depositAmount: depositAmount,
+        expectReturnDate: componentExpectReturnDate
+      };
+
+      console.log('Component request data:', requestData);
+
+      const response = await borrowingRequestAPI.createComponentRequest(requestData);
+
+      if (response) {
+        try {
+          await notificationAPI.createNotifications([
+            {
+              subType: 'RENTAL_REQUEST',
+              title: 'Đã gửi yêu cầu thuê linh kiện',
+              message: `Bạn đã gửi yêu cầu thuê ${selectedComponent.componentName} x${componentQuantity}.`
+            },
+            {
+              subType: 'BORROW_REQUEST_CREATED',
+              title: 'Yêu cầu mượn linh kiện mới',
+              message: `${user?.fullName || user?.email || 'Giảng viên'} đã gửi yêu cầu thuê ${selectedComponent.componentName} x${componentQuantity}.`
+            }
+          ]);
+        } catch (notifyError) {
+          console.error('Error sending notifications:', notifyError);
+        }
+        message.success('Component rental request created successfully! Waiting for admin approval.');
+        handleCloseRentComponentModal();
+        loadData();
+      }
+    } catch (error) {
+      console.error('Error creating component request:', error);
+      const errorMessage = error.message || 'Unknown error';
+
+      // Check if it's an insufficient balance error
+      if (errorMessage.includes('Insufficient wallet balance') || errorMessage.includes('balance')) {
+        message.error({
+          content: errorMessage,
+          duration: 5,
+        });
+        notification.error({
+          message: 'Insufficient Balance',
+          description: errorMessage,
+          placement: 'topRight',
+          duration: 5,
+        });
+
+        // Create notification in database for insufficient balance
+        try {
+          await notificationAPI.createNotifications([
+            {
+              subType: 'RENTAL_FAILED_INSUFFICIENT_BALANCE',
+              title: 'Số dư không đủ',
+              message: `Không thể thuê ${selectedComponent.componentName} do số dư ví không đủ. ${errorMessage}`
+            }
+          ]);
+        } catch (notifyError) {
+          console.error('Error creating insufficient balance notification:', notifyError);
+        }
+      } else {
+        message.error('Failed to create component request: ' + errorMessage);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePromoteToLeader = async (studentGroupId, accountId) => {
+    try {
+      console.log('Promoting to leader:', { studentGroupId, accountId });
+      const requestData = { studentGroupId, accountId };
+      await borrowingGroupAPI.promoteToLeader(requestData);
+
+      message.success('Successfully promoted member to leader');
+
+      // Refresh the group members in the modal if it's open for this group
+      if (selectedGroup && selectedGroup.id === studentGroupId) {
+        try {
+          // Fetch fresh members data directly from API
+          const updatedMembers = await borrowingGroupAPI.getByStudentGroupId(studentGroupId);
+          console.log('Refreshed group members:', updatedMembers);
+          setSelectedGroupMembers(updatedMembers || []);
+        } catch (refreshError) {
+          console.error('Error refreshing group members:', refreshError);
+        }
+      }
+
+      // Reload all data to update the groups list
+      loadData();
+    } catch (error) {
+      console.error('Error promoting to leader:', error);
+      message.error('Failed to promote member to leader');
+    }
+  };
+
+  const handleDemoteToMember = async (studentGroupId, accountId) => {
+    try {
+      console.log('Demoting to member:', { studentGroupId, accountId });
+      const requestData = { studentGroupId, accountId };
+      await borrowingGroupAPI.demoteToMember(requestData);
+
+      message.success('Successfully demoted leader to member');
+
+      // Refresh the group members in the modal if it's open for this group
+      if (selectedGroup && selectedGroup.id === studentGroupId) {
+        try {
+          // Fetch fresh members data directly from API
+          const updatedMembers = await borrowingGroupAPI.getByStudentGroupId(studentGroupId);
+          console.log('Refreshed group members:', updatedMembers);
+          setSelectedGroupMembers(updatedMembers || []);
+        } catch (refreshError) {
+          console.error('Error refreshing group members:', refreshError);
+        }
+      }
+
+      // Reload all data to update the groups list
+      loadData();
+    } catch (error) {
+      console.error('Error demoting to member:', error);
+      message.error('Failed to demote leader to member');
+    }
+  };
+
 
   return (
     <Layout style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
       {/* Sidebar */}
-      <Sider 
-        trigger={null} 
-        collapsible 
+      <Sider
+        trigger={null}
+        collapsible
         collapsed={collapsed}
         theme="light"
         style={{
@@ -240,11 +739,11 @@ function LecturerPortal({ user, onLogout }) {
         }}
       >
         {/* Logo Section */}
-        <motion.div 
-          style={{ 
-            height: 80, 
-            display: 'flex', 
-            alignItems: 'center', 
+        <motion.div
+          style={{
+            height: 80,
+            display: 'flex',
+            alignItems: 'center',
             justifyContent: 'center',
             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             margin: '16px',
@@ -259,24 +758,24 @@ function LecturerPortal({ user, onLogout }) {
             {collapsed ? 'LCT' : 'Lecturer Portal'}
           </Title>
         </motion.div>
-        
+
         {/* Navigation Menu */}
         <Menu
           mode="inline"
           selectedKeys={[selectedKey]}
           items={menuItems}
           onClick={handleMenuClick}
-          style={{ 
+          style={{
             borderRight: 0,
             background: 'transparent',
             padding: '0 16px'
           }}
         />
       </Sider>
-      
+
       {/* Main Content Area */}
-      <Layout style={{ 
-        marginLeft: collapsed ? 80 : 200, 
+      <Layout style={{
+        marginLeft: collapsed ? 80 : 200,
         transition: 'margin-left 0.3s ease-in-out',
         background: 'transparent'
       }}>
@@ -286,12 +785,12 @@ function LecturerPortal({ user, onLogout }) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.2 }}
         >
-          <Header style={{ 
-            padding: '0 32px', 
+          <Header style={{
+            padding: '0 32px',
             background: 'rgba(255, 255, 255, 0.95)',
             backdropFilter: 'blur(10px)',
-            display: 'flex', 
-            alignItems: 'center', 
+            display: 'flex',
+            alignItems: 'center',
             justifyContent: 'space-between',
             boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
             position: 'sticky',
@@ -310,9 +809,9 @@ function LecturerPortal({ user, onLogout }) {
                   type="text"
                   icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
                   onClick={() => setCollapsed(!collapsed)}
-                  style={{ 
-                    fontSize: '18px', 
-                    width: 48, 
+                  style={{
+                    fontSize: '18px',
+                    width: 48,
                     height: 48,
                     borderRadius: '12px',
                     display: 'flex',
@@ -334,34 +833,43 @@ function LecturerPortal({ user, onLogout }) {
                 </Title>
               </motion.div>
             </Space>
-            
+
             {/* Right Section */}
             <Space size="large">
               <motion.div
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Badge count={2} size="small" style={{ cursor: 'pointer' }}>
-                  <div style={{
-                    padding: '12px',
-                    borderRadius: '12px',
-                    background: 'rgba(102, 126, 234, 0.1)',
-                    color: '#667eea',
-                    fontSize: '18px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    <BellOutlined />
-                  </div>
-                </Badge>
+                <Popover
+                  trigger="click"
+                  placement="bottomRight"
+                  open={notificationPopoverOpen}
+                  onOpenChange={handleNotificationOpenChange}
+                  content={renderNotificationContent()}
+                >
+                  <Badge count={unreadNotificationsCount} size="small" overflowCount={99}>
+                    <div style={{
+                      padding: '12px',
+                      borderRadius: '12px',
+                      background: 'rgba(102, 126, 234, 0.1)',
+                      color: '#667eea',
+                      fontSize: '18px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer'
+                    }}>
+                      <BellOutlined />
+                    </div>
+                  </Badge>
+                </Popover>
               </motion.div>
               <motion.div
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Avatar 
-                  icon={<BookOutlined />} 
+                <Avatar
+                  icon={<BookOutlined />}
                   size={48}
                   style={{
                     background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
@@ -373,9 +881,9 @@ function LecturerPortal({ user, onLogout }) {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Button 
+                <Button
                   type="primary"
-                  icon={<LogoutOutlined />} 
+                  icon={<LogoutOutlined />}
                   onClick={onLogout}
                   style={{
                     borderRadius: '12px',
@@ -392,11 +900,11 @@ function LecturerPortal({ user, onLogout }) {
             </Space>
           </Header>
         </motion.div>
-        
+
         {/* Content Area */}
-        <Content style={{ 
-          margin: '24px', 
-          padding: '32px', 
+        <Content style={{
+          margin: '24px',
+          padding: '32px',
           background: 'rgba(255, 255, 255, 0.95)',
           backdropFilter: 'blur(10px)',
           borderRadius: '20px',
@@ -404,7 +912,7 @@ function LecturerPortal({ user, onLogout }) {
           boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
           border: '1px solid rgba(255,255,255,0.2)'
         }}>
-          <Spin 
+          <Spin
             spinning={loading}
             tip="Loading data..."
             size="large"
@@ -426,13 +934,14 @@ function LecturerPortal({ user, onLogout }) {
                 variants={pageVariants}
                 transition={pageTransition}
               >
-                {selectedKey === 'dashboard' && <DashboardContent lecturerGroups={lecturerGroups} wallet={wallet} kits={kits} />}
+                {selectedKey === 'dashboard' && <DashboardContent lecturerGroups={lecturerGroups} wallet={wallet} kits={kits} penalties={penalties} penaltyDetails={penaltyDetails} />}
                 {selectedKey === 'groups' && <GroupsManagement lecturerGroups={lecturerGroups} onViewGroupDetails={handleViewGroupDetails} />}
-                {selectedKey === 'kits' && <KitRental kits={kits} user={user} onRent={handleRent} />}
-                {selectedKey === 'borrow-status' && <BorrowStatus borrowStatus={borrowStatus} />}
+                {selectedKey === 'kits' && <KitRental kits={kits} user={user} onRent={handleRent} onViewKitDetail={(kit) => handleViewKitDetail(kit, 'kit-rental')} />}
+                {selectedKey === 'kit-component-rental' && <KitComponentRental kits={kits} user={user} onViewKitDetail={(kit) => handleViewKitDetail(kit, 'component-rental')} onRentComponent={handleRentComponent} />}
+                {selectedKey === 'borrow-status' && <BorrowStatus borrowStatus={borrowStatus} onViewDetail={handleViewDetail} />}
                 {selectedKey === 'fines-refunds' && <FinesRefunds lecturerFines={lecturerFines} lecturerRefunds={lecturerRefunds} />}
-                {selectedKey === 'refunds' && <RefundRequests refundRequests={refundRequests} setRefundRequests={setRefundRequests} user={user} onNewRefund={handleNewRefund} />}
                 {selectedKey === 'wallet' && <WalletManagement wallet={wallet} setWallet={setWallet} onTopUp={handleTopUp} onPayPenalties={handlePayPenalties} />}
+                {selectedKey === 'profile' && <ProfileManagement profile={profile} setProfile={setProfile} loading={profileLoading} setLoading={setProfileLoading} user={user} />}
                 {selectedKey === 'settings' && <Settings />}
               </motion.div>
             </AnimatePresence>
@@ -440,55 +949,269 @@ function LecturerPortal({ user, onLogout }) {
         </Content>
       </Layout>
 
-      {/* New Refund Request Modal */}
+      {/* Rent Component Modal */}
       <Modal
-        title="New Refund Request"
-        open={newRefundModal}
-        onCancel={() => setNewRefundModal(false)}
-        footer={null}
-        width={600}
+        title="Rent Component"
+        open={rentComponentModalVisible}
+        onCancel={handleCloseRentComponentModal}
+        footer={[
+          <Button key="cancel" onClick={handleCloseRentComponentModal}>
+            Cancel
+          </Button>,
+          <Button key="confirm" type="primary" onClick={handleConfirmRentComponent}>
+            Confirm Rent
+          </Button>
+        ]}
       >
-        <Form
-          form={refundForm}
-          layout="vertical"
-          onFinish={handleRefundSubmit}
-        >
-          <Form.Item
-            name="kitName"
-            label="Kit Name"
-            rules={[{ required: true, message: 'Please select a kit' }]}
-          >
-            <Select placeholder="Select a kit">
-              <Option value="Arduino Starter Kit">Arduino Starter Kit</Option>
-              <Option value="Raspberry Pi Kit">Raspberry Pi Kit</Option>
-              <Option value="IoT Sensor Kit">IoT Sensor Kit</Option>
-              <Option value="ESP32 Development Kit">ESP32 Development Kit</Option>
-            </Select>
-          </Form.Item>
+        {selectedComponent && (
+          <Descriptions bordered column={1}>
+            <Descriptions.Item label="Component Name">
+              <Text strong>{selectedComponent.componentName}</Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="Type">
+              <Tag color="purple">{selectedComponent.componentType}</Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="Available">
+              {selectedComponent.quantityAvailable || 0}
+            </Descriptions.Item>
+            <Descriptions.Item label="Price per Unit">
+              <Text strong style={{ color: '#1890ff' }}>
+                {selectedComponent.pricePerCom?.toLocaleString() || '0'} VND
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="Quantity">
+              <Input
+                type="number"
+                min={1}
+                max={selectedComponent.quantityAvailable}
+                value={componentQuantity}
+                onChange={(e) => setComponentQuantity(parseInt(e.target.value) || 1)}
+              />
+            </Descriptions.Item>
+            <Descriptions.Item label="Total Price">
+              <Text strong style={{ color: '#52c41a', fontSize: '18px' }}>
+                {((selectedComponent.pricePerCom || 0) * componentQuantity).toLocaleString()} VND
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="Expected Return Date">
+              <DatePicker
+                style={{ width: '100%' }}
+                value={componentExpectReturnDate}
+                onChange={(date) => setComponentExpectReturnDate(date)}
+                disabledDate={(current) => current && current < dayjs().startOf('day')}
+                showTime
+              />
+            </Descriptions.Item>
+            <Descriptions.Item label="Reason">
+              <TextArea
+                rows={4}
+                placeholder="Please provide reason for renting this component..."
+                value={componentReason}
+                onChange={(e) => setComponentReason(e.target.value)}
+              />
+            </Descriptions.Item>
+          </Descriptions>
+        )}
+      </Modal>
 
-          <Form.Item
-            name="refundDate"
-            label="Refund Date"
-            rules={[{ required: true, message: 'Please select refund date' }]}
-          >
-            <DatePicker 
-              style={{ width: '100%' }}
-              placeholder="Select refund date"
-            />
-          </Form.Item>
+      {/* Kit Detail Modal */}
+      <Modal
+        title="Kit Details"
+        open={kitDetailModalVisible}
+        onCancel={handleCloseKitDetailModal}
+        footer={[
+          <Button key="close" onClick={handleCloseKitDetailModal}>
+            Close
+          </Button>
+        ]}
+        width={800}
+      >
+        {selectedKitDetail && (
+          <div>
+            <Descriptions bordered column={2} style={{ marginBottom: 24 }}>
+              <Descriptions.Item label="Kit Name" span={2}>
+                <Text strong style={{ fontSize: '18px' }}>{selectedKitDetail.name}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Type">
+                <Tag color="blue">{selectedKitDetail.type || 'N/A'}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="Status">
+                <Tag color={getStatusColor(selectedKitDetail.status)}>
+                  {selectedKitDetail.status || 'N/A'}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="Available">
+                {selectedKitDetail.quantityAvailable || 0} / {selectedKitDetail.quantityTotal || 0}
+              </Descriptions.Item>
+              <Descriptions.Item label="Amount">
+                <Text strong style={{ color: '#1890ff', fontSize: '16px' }}>
+                  {selectedKitDetail.amount?.toLocaleString() || '0'} VND
+                </Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Description" span={2}>
+                {selectedKitDetail.description || 'No description'}
+              </Descriptions.Item>
+            </Descriptions>
 
+            <Divider orientation="left">Kit Components</Divider>
 
-          <Form.Item>
-            <Space>
-              <Button type="primary" htmlType="submit">
-                Submit Request
-              </Button>
-              <Button onClick={() => setNewRefundModal(false)}>
-                Cancel
-              </Button>
-            </Space>
-          </Form.Item>
-        </Form>
+            {selectedKitDetail.components && selectedKitDetail.components.length > 0 ? (
+              <Table
+                dataSource={selectedKitDetail.components}
+                columns={[
+                  {
+                    title: 'Component Name',
+                    dataIndex: 'componentName',
+                    key: 'componentName',
+                  },
+                  {
+                    title: 'Amount',
+                    dataIndex: 'pricePerCom',
+                    key: 'pricePerCom',
+                    render: (pricePerCom) => (
+                      <Text strong style={{ color: '#1890ff' }}>
+                        {pricePerCom ? pricePerCom.toLocaleString() : '0'} VND
+                      </Text>
+                    )
+                  },
+                  {
+                    title: 'Type',
+                    dataIndex: 'componentType',
+                    key: 'componentType',
+                    render: (type) => <Tag color="purple">{type || 'N/A'}</Tag>
+                  },
+                  // Only show Available column for component-rental modal type
+                  ...(kitDetailModalType === 'component-rental' ? [
+                    {
+                      title: 'Available',
+                      dataIndex: 'quantityAvailable',
+                      key: 'quantityAvailable',
+                    }
+                  ] : []),
+                  {
+                    title: 'Description',
+                    dataIndex: 'description',
+                    key: 'description',
+                    ellipsis: true,
+                  },
+                  // Only show Quantity input and Actions column for component-rental modal type
+                  ...(kitDetailModalType === 'component-rental' ? [
+                    {
+                      title: 'Rent Quantity',
+                      key: 'rentQuantity',
+                      render: (_, record) => (
+                        <Input
+                          type="number"
+                          min={1}
+                          max={record.quantityAvailable || 0}
+                          value={componentQuantities[record.id] || 1}
+                          onChange={(e) => {
+                            const qty = parseInt(e.target.value) || 1;
+                            // Validate: ensure quantity doesn't exceed available
+                            const validQty = Math.min(qty, record.quantityAvailable || 0);
+                            handleComponentQuantityChange(record.id, validQty > 0 ? validQty : 1);
+                          }}
+                          onBlur={(e) => {
+                            const qty = parseInt(e.target.value) || 1;
+                            const available = record.quantityAvailable || 0;
+                            if (qty > available) {
+                              message.warning(`Quantity cannot exceed available amount (${available})`);
+                              handleComponentQuantityChange(record.id, available);
+                            }
+                          }}
+                          style={{ width: 80 }}
+                        />
+                      ),
+                    },
+                    {
+                      title: 'Actions',
+                      key: 'actions',
+                      render: (_, record) => {
+                        const qty = componentQuantities[record.id] || 1;
+                        const available = record.quantityAvailable || 0;
+                        const exceedsAvailable = qty > available;
+                        const isSoldOut = available === 0;
+                        return (
+                          <Button
+                            size="small"
+                            type="primary"
+                            onClick={() => {
+                              if (qty > available) {
+                                message.error(`Cannot rent ${qty} items. Only ${available} available.`);
+                                return;
+                              }
+                              const componentWithQty = { ...record, rentQuantity: qty };
+                              handleRentComponent(componentWithQty);
+                            }}
+                            disabled={!available || available === 0 || exceedsAvailable}
+                          >
+                            {isSoldOut ? 'Sold out' : 'Rent'}
+                          </Button>
+                        );
+                      },
+                    }
+                  ] : []),
+                ]}
+                rowKey={(record, index) => record.id || index}
+                pagination={false}
+                size="small"
+              />
+            ) : (
+              <Empty description="No components available" />
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* Rental Detail Modal */}
+      <Modal
+        title="Rental Details"
+        open={detailModalVisible}
+        onCancel={handleCloseDetailModal}
+        footer={[
+          <Button key="close" onClick={handleCloseDetailModal}>
+            Close
+          </Button>
+        ]}
+        width={700}
+      >
+        {selectedRentalDetail && (
+          <Descriptions bordered column={2}>
+            <Descriptions.Item label="Kit Name" span={2}>
+              {selectedRentalDetail.kitName}
+            </Descriptions.Item>
+            <Descriptions.Item label="Rental ID">
+              {selectedRentalDetail.rentalId}
+            </Descriptions.Item>
+            <Descriptions.Item label="Status">
+              <Tag color={getStatusColor(selectedRentalDetail.status)}>
+                {selectedRentalDetail.status?.toUpperCase()}
+              </Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="Borrow Date">
+              {formatDate(selectedRentalDetail.borrowDate)}
+            </Descriptions.Item>
+            <Descriptions.Item label="Due Date">
+              {formatDate(selectedRentalDetail.dueDate)}
+            </Descriptions.Item>
+            <Descriptions.Item label="Return Date">
+              {selectedRentalDetail.returnDate
+                ? formatDate(selectedRentalDetail.returnDate)
+                : 'Not returned'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Duration (days)">
+              {selectedRentalDetail.duration}
+            </Descriptions.Item>
+            <Descriptions.Item label="Total Cost" span={2}>
+              <Text strong style={{ color: '#1890ff' }}>
+                {selectedRentalDetail.totalCost?.toLocaleString()} VND
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="Group" span={2}>
+              {selectedRentalDetail.groupName}
+            </Descriptions.Item>
+          </Descriptions>
+        )}
       </Modal>
 
       {/* Group Detail Modal */}
@@ -496,13 +1219,21 @@ function LecturerPortal({ user, onLogout }) {
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <TeamOutlined style={{ color: '#1890ff' }} />
-            <span>Group Details</span>
+            <span>Group Details - {selectedGroup?.name}</span>
           </div>
         }
         open={groupDetailModal}
-        onCancel={() => setGroupDetailModal(false)}
+        onCancel={() => {
+          setGroupDetailModal(false);
+          setSelectedGroup(null);
+          setSelectedGroupMembers([]);
+        }}
         footer={[
-          <Button key="close" onClick={() => setGroupDetailModal(false)}>
+          <Button key="close" onClick={() => {
+            setGroupDetailModal(false);
+            setSelectedGroup(null);
+            setSelectedGroupMembers([]);
+          }}>
             Close
           </Button>
         ]}
@@ -512,7 +1243,7 @@ function LecturerPortal({ user, onLogout }) {
           <div>
             <Row gutter={[24, 24]}>
               <Col span={24}>
-                <Card 
+                <Card
                   title={
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontSize: '18px', fontWeight: 'bold' }}>{selectedGroup.name}</span>
@@ -526,12 +1257,12 @@ function LecturerPortal({ user, onLogout }) {
                       <Text strong>{selectedGroup.name}</Text>
                     </Descriptions.Item>
                     <Descriptions.Item label="Group Leader">
-                      <Tag color="blue" icon={<UserOutlined />}>
-                        {selectedGroup.leader}
+                      <Tag color="gold" icon={<UserOutlined />}>
+                        {selectedGroupMembers.find(m => m.roles === 'LEADER')?.accountName || 'N/A'}
                       </Tag>
                     </Descriptions.Item>
                     <Descriptions.Item label="Total Members">
-                      <Badge count={selectedGroup.members.length + 1} showZero color="#52c41a" />
+                      <Badge count={selectedGroupMembers.length} showZero color="#52c41a" />
                     </Descriptions.Item>
                     <Descriptions.Item label="Lecturer">
                       <Tag color="purple" icon={<UserOutlined />}>
@@ -551,37 +1282,53 @@ function LecturerPortal({ user, onLogout }) {
                     header={
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span>Members List</span>
-                        <Badge count={selectedGroup.members.length + 1} showZero color="#52c41a" />
+                        <Badge count={selectedGroupMembers.length} showZero color="#52c41a" />
                       </div>
                     }
-                    dataSource={[
-                      { 
-                        email: selectedGroup.leader, 
-                        role: 'Leader',
-                        avatar: <Avatar style={{ backgroundColor: '#1890ff' }} icon={<UserOutlined />} />
-                      },
-                      ...selectedGroup.members.map(member => ({
-                        email: member,
-                        role: 'Member',
-                        avatar: <Avatar style={{ backgroundColor: '#52c41a' }} icon={<UserOutlined />} />
-                      }))
-                    ]}
-                    renderItem={(item) => (
-                      <List.Item>
-                        <List.Item.Meta
-                          avatar={item.avatar}
-                          title={
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span>{item.email}</span>
-                              <Tag color={item.role === 'Leader' ? 'blue' : 'green'} size="small">
-                                {item.role}
-                              </Tag>
-                            </div>
-                          }
-                          description={`Email: ${item.email}`}
-                        />
-                      </List.Item>
-                    )}
+                    dataSource={selectedGroupMembers}
+                    renderItem={(member) => {
+                      const isLeader = member.roles === 'LEADER';
+                      return (
+                        <List.Item
+                          actions={[
+                            !isLeader ? (
+                              <Button
+                                size="small"
+                                type="primary"
+                                onClick={() => handlePromoteToLeader(selectedGroup.id, member.accountId)}
+                              >
+                                Promote to Leader
+                              </Button>
+                            ) : (
+                              <Button
+                                size="small"
+                                danger
+                                onClick={() => handleDemoteToMember(selectedGroup.id, member.accountId)}
+                              >
+                                Demote to Member
+                              </Button>
+                            )
+                          ]}
+                        >
+                          <List.Item.Meta
+                            avatar={
+                              <Avatar style={{ backgroundColor: isLeader ? '#1890ff' : '#52c41a' }}>
+                                {isLeader ? 'L' : 'M'}
+                              </Avatar>
+                            }
+                            title={
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span>{member.accountName || member.accountEmail}</span>
+                                <Tag color={isLeader ? 'gold' : 'blue'} size="small">
+                                  {member.roles}
+                                </Tag>
+                              </div>
+                            }
+                            description={`Email: ${member.accountEmail}`}
+                          />
+                        </List.Item>
+                      );
+                    }}
                   />
                 </Card>
               </Col>
@@ -592,15 +1339,15 @@ function LecturerPortal({ user, onLogout }) {
                     <Col span={8}>
                       <Statistic
                         title="Total Members"
-                        value={selectedGroup.members.length + 1}
+                        value={selectedGroupMembers.length || 0}
                         prefix={<UserOutlined />}
                         valueStyle={{ color: '#52c41a' }}
                       />
                     </Col>
                     <Col span={8}>
                       <Statistic
-                        title="Leader"
-                        value={1}
+                        title="Leaders"
+                        value={selectedGroupMembers.filter(m => m.roles === 'LEADER').length || 0}
                         prefix={<UserOutlined />}
                         valueStyle={{ color: '#1890ff' }}
                       />
@@ -608,7 +1355,7 @@ function LecturerPortal({ user, onLogout }) {
                     <Col span={8}>
                       <Statistic
                         title="Members"
-                        value={selectedGroup.members.length}
+                        value={selectedGroupMembers.filter(m => m.roles === 'MEMBER').length || 0}
                         prefix={<UserOutlined />}
                         valueStyle={{ color: '#fa8c16' }}
                       />
@@ -625,7 +1372,7 @@ function LecturerPortal({ user, onLogout }) {
 }
 
 // Dashboard Component
-const DashboardContent = ({ lecturerGroups, wallet, kits }) => (
+const DashboardContent = ({ lecturerGroups, wallet, kits, penalties, penaltyDetails }) => (
   <div>
     <Row gutter={[24, 24]}>
       <Col xs={24} sm={12} lg={6}>
@@ -640,20 +1387,20 @@ const DashboardContent = ({ lecturerGroups, wallet, kits }) => (
           </Card>
         </motion.div>
       </Col>
-      
+
       <Col xs={24} sm={12} lg={6}>
         <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
           <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
             <Statistic
               title="Total Students"
-              value={lecturerGroups.reduce((total, group) => total + group.members.length + 1, 0)}
+              value={lecturerGroups.reduce((total, group) => total + (group.members?.length || 0), 0)}
               prefix={<UserOutlined style={{ color: '#52c41a' }} />}
               valueStyle={{ color: '#52c41a', fontWeight: 'bold' }}
             />
           </Card>
         </motion.div>
       </Col>
-      
+
       <Col xs={24} sm={12} lg={6}>
         <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
           <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
@@ -666,7 +1413,7 @@ const DashboardContent = ({ lecturerGroups, wallet, kits }) => (
           </Card>
         </motion.div>
       </Col>
-      
+
       <Col xs={24} sm={12} lg={6}>
         <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
           <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
@@ -695,7 +1442,7 @@ const DashboardContent = ({ lecturerGroups, wallet, kits }) => (
                     <List.Item.Meta
                       avatar={<Avatar icon={<TeamOutlined />} />}
                       title={group.name}
-                      description={`Leader: ${group.leader} | Members: ${group.members.length + 1}`}
+                      description={`Leader: ${group.leader} | Members: ${group.members.length}`}
                     />
                   </List.Item>
                 )}
@@ -706,7 +1453,7 @@ const DashboardContent = ({ lecturerGroups, wallet, kits }) => (
           </Card>
         </motion.div>
       </Col>
-      
+
       <Col xs={24} lg={12}>
         <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
           <Card title="Recent Transactions" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
@@ -728,6 +1475,85 @@ const DashboardContent = ({ lecturerGroups, wallet, kits }) => (
         </motion.div>
       </Col>
     </Row>
+
+    {/* Penalties Section */}
+    {penalties && penalties.length > 0 && (
+      <Row gutter={[24, 24]} style={{ marginTop: '24px' }}>
+        <Col xs={24}>
+          <motion.div
+            variants={cardVariants}
+            initial="hidden"
+            animate="visible"
+            whileHover="hover"
+          >
+            <Card
+              title={
+                <Space>
+                  <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />
+                  <span>Penalties</span>
+                </Space>
+              }
+              style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+            >
+              <List
+                dataSource={penalties.filter(p => !p.resolved)}
+                renderItem={(penalty) => (
+                  <List.Item>
+                    <List.Item.Meta
+                      avatar={
+                        <Avatar
+                          icon={<ExclamationCircleOutlined />}
+                          style={{ backgroundColor: penalty.resolved ? '#52c41a' : '#fa8c16' }}
+                        />
+                      }
+                      title={
+                        <Space>
+                          <Text strong>
+                            {penalty.note || 'Penalty Fee'}
+                          </Text>
+                          {!penalty.resolved && (
+                            <Tag color="error">Unresolved</Tag>
+                          )}
+                          {penalty.resolved && (
+                            <Tag color="success">Resolved</Tag>
+                          )}
+                        </Space>
+                      }
+                      description={
+                        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                          <Text>
+                            Amount: <Text strong style={{ color: '#ff4d4f' }}>
+                              {penalty.totalAmount ? penalty.totalAmount.toLocaleString() : 0} VND
+                            </Text>
+                          </Text>
+                          {penalty.takeEffectDate && (
+                            <Text type="secondary">
+                              Date: {new Date(penalty.takeEffectDate).toLocaleString('vi-VN')}
+                            </Text>
+                          )}
+                          {penaltyDetails[penalty.id] && penaltyDetails[penalty.id].length > 0 && (
+                            <div style={{ marginTop: 8 }}>
+                              <Text strong style={{ fontSize: 12 }}>Penalty Details:</Text>
+                              {penaltyDetails[penalty.id].map((detail, idx) => (
+                                <div key={idx} style={{ marginLeft: 16, marginTop: 4 }}>
+                                  <Text type="secondary" style={{ fontSize: 12 }}>
+                                    • {detail.description || 'N/A'}: {detail.amount ? detail.amount.toLocaleString() : 0} VND
+                                  </Text>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </Space>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+            </Card>
+          </motion.div>
+        </Col>
+      </Row>
+    )}
   </div>
 );
 
@@ -744,16 +1570,16 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails }) => (
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                 >
-                  <Card 
-                    title={group.name} 
+                  <Card
+                    title={group.name}
                     size="small"
                     hoverable
                     onClick={() => onViewGroupDetails(group)}
                     style={{ cursor: 'pointer' }}
                     extra={
-                      <Button 
-                        type="link" 
-                        size="small" 
+                      <Button
+                        type="link"
+                        size="small"
                         icon={<EyeOutlined />}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -766,17 +1592,17 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails }) => (
                   >
                     <Descriptions column={1} size="small">
                       <Descriptions.Item label="Leader">
-                        <Tag color="blue">{group.leader}</Tag>
+                        <Tag color="gold">{group.members.find(m => m.role === 'LEADER')?.email || 'N/A'}</Tag>
                       </Descriptions.Item>
                       <Descriptions.Item label="Total Members">
-                        <Badge count={group.members.length + 1} showZero color="#52c41a" />
+                        <Badge count={group.members?.length || 0} showZero color="#52c41a" />
                       </Descriptions.Item>
                       <Descriptions.Item label="Members">
                         <div style={{ maxHeight: '60px', overflow: 'hidden' }}>
-                          {group.members.length > 0 ? (
-                            group.members.map((member, index) => (
-                              <Tag key={index} color="green" style={{ marginBottom: '4px' }}>
-                                {member}
+                          {group.members.filter(m => m.role === 'MEMBER').length > 0 ? (
+                            group.members.filter(m => m.role === 'MEMBER').map((member, index) => (
+                              <Tag key={index} color="blue" style={{ marginBottom: '4px' }}>
+                                {member.name || member.email}
                               </Tag>
                             ))
                           ) : (
@@ -799,237 +1625,486 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails }) => (
 );
 
 // Kit Rental Component
-const KitRental = ({ kits, user, onRent }) => (
+const KitRental = ({ kits, user, onRent, onViewKitDetail }) => (
   <div>
     <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
       <Card title="Available Kits" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
         <Table
-          dataSource={kits.filter(kit => kit.status === 'AVAILABLE')}
+          dataSource={kits.filter(kit => kit.quantityAvailable > 0)}
           columns={[
-            { title: 'Name', dataIndex: 'name', key: 'name' },
-            { title: 'Category', dataIndex: 'category', key: 'category' },
-            { title: 'Quantity', dataIndex: 'quantity', key: 'quantity' },
-            { 
-              title: 'Price', 
-              dataIndex: 'price', 
-              key: 'price',
-              render: (price) => price ? `${price.toLocaleString()} VND` : 'N/A'
+            {
+              title: 'Name',
+              dataIndex: 'name',
+              key: 'name',
             },
-            { 
-              title: 'Status', 
-              dataIndex: 'status', 
+            {
+              title: 'Type',
+              dataIndex: 'type',
+              key: 'type',
+              render: (type) => (
+                <Tag color="blue">{type || 'N/A'}</Tag>
+              ),
+            },
+            {
+              title: 'Available',
+              dataIndex: 'quantityAvailable',
+              key: 'quantityAvailable',
+              render: (available, record) => `${available}/${record.quantityTotal || 0}`,
+            },
+            {
+              title: 'Amount',
+              dataIndex: 'amount',
+              key: 'amount',
+              render: (amount) => (amount !== undefined && amount !== null) ? `${Number(amount).toLocaleString()} VND` : '0 VND',
+              align: 'right',
+            },
+            {
+              title: 'Status',
+              dataIndex: 'status',
               key: 'status',
-              render: (status) => <Tag color="success">{status}</Tag>
+              render: (status) => {
+                const colors = {
+                  'AVAILABLE': 'success',
+                  'BORROWED': 'warning',
+                  'DAMAGED': 'error',
+                  'MAINTENANCE': 'processing'
+                };
+                return <Tag color={colors[status] || 'default'}>{status}</Tag>;
+              },
+            },
+            {
+              title: 'Description',
+              dataIndex: 'description',
+              key: 'description',
+              ellipsis: true,
+              width: 200,
             },
             {
               title: 'Actions',
               key: 'actions',
               render: (_, record) => (
                 <Space>
-                  <Button type="primary" size="small" onClick={() => onRent(record)}>
+                  <Button
+                    type="primary"
+                    size="small"
+                    onClick={() => onRent(record)}
+                    disabled={record.quantityAvailable === 0}
+                  >
                     Rent
                   </Button>
-                  <Button size="small">Details</Button>
+                  <Button
+                    size="small"
+                    icon={<EyeOutlined />}
+                    onClick={() => onViewKitDetail(record)}
+                  >
+                    Details
+                  </Button>
                 </Space>
               ),
             },
           ]}
           rowKey="id"
+          pagination={{
+            pageSize: 10,
+            showSizeChanger: true,
+            showTotal: (total) => `Total ${total} kits`,
+          }}
         />
       </Card>
     </motion.div>
   </div>
 );
 
-// Refund Requests Component
-const RefundRequests = ({ refundRequests, setRefundRequests, user, onNewRefund }) => (
+// Kit Component Rental Component
+const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) => (
   <div>
     <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-      <Card 
-        title="Refund Requests" 
-        extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={onNewRefund}>
-            New Refund Request
-          </Button>
-        }
-        style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
-      >
+      <Card title="Available Kits for Component Rental" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
         <Table
-          dataSource={refundRequests}
+          dataSource={kits.filter(kit => kit.quantityAvailable > 0)}
           columns={[
-            { title: 'Kit Name', dataIndex: 'kitName', key: 'kitName' },
-            { 
-              title: 'Request Date', 
-              dataIndex: 'requestDate', 
-              key: 'requestDate',
-              render: (date) => formatDate(date)
+            {
+              title: 'Name',
+              dataIndex: 'name',
+              key: 'name',
             },
-            { 
-              title: 'Refund Date', 
-              dataIndex: 'refundDate', 
-              key: 'refundDate',
-              render: (date) => formatDate(date)
+            {
+              title: 'Type',
+              dataIndex: 'type',
+              key: 'type',
+              render: (type) => (
+                <Tag color="blue">{type || 'N/A'}</Tag>
+              ),
             },
-            { 
-              title: 'Status', 
-              dataIndex: 'status', 
+            {
+              title: 'Available',
+              dataIndex: 'quantityAvailable',
+              key: 'quantityAvailable',
+              render: (available, record) => `${available}/${record.quantityTotal || 0}`,
+            },
+            {
+              title: 'Amount',
+              dataIndex: 'amount',
+              key: 'amount',
+              render: (amount) => (amount !== undefined && amount !== null) ? `${Number(amount).toLocaleString()} VND` : '0 VND',
+              align: 'right',
+            },
+            {
+              title: 'Status',
+              dataIndex: 'status',
               key: 'status',
-              render: (status) => (
-                <Tag color={getStatusColor(status)}>
-                  {status.replace('_', ' ').toUpperCase()}
-                </Tag>
-              )
+              render: (status) => {
+                const colors = {
+                  'AVAILABLE': 'success',
+                  'BORROWED': 'warning',
+                  'DAMAGED': 'error',
+                  'MAINTENANCE': 'processing'
+                };
+                return <Tag color={colors[status] || 'default'}>{status}</Tag>;
+              },
+            },
+            {
+              title: 'Description',
+              dataIndex: 'description',
+              key: 'description',
+              ellipsis: true,
+              width: 200,
             },
             {
               title: 'Actions',
               key: 'actions',
-              render: () => <Button size="small">Details</Button>
+              render: (_, record) => (
+                <Button
+                  size="small"
+                  icon={<EyeOutlined />}
+                  onClick={() => onViewKitDetail(record)}
+                >
+                  Details
+                </Button>
+              ),
             },
           ]}
           rowKey="id"
+          pagination={{
+            pageSize: 10,
+            showSizeChanger: true,
+            showTotal: (total) => `Total ${total} kits`,
+          }}
         />
       </Card>
     </motion.div>
   </div>
 );
+
 
 // Wallet Management Component
-const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => (
-  <div>
-    <Row gutter={[24, 24]}>
-      <Col xs={24} md={8}>
-        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-          <Card 
-            style={{ 
-              borderRadius: '16px', 
-              boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              color: 'white'
-            }}
-          >
-            <Statistic
-              title="Current Balance"
-              value={wallet.balance}
-              prefix={<DollarOutlined />}
-              suffix="VND"
-              valueStyle={{ color: 'white', fontWeight: 'bold' }}
-            />
-            <Space direction="vertical" style={{ width: '100%', marginTop: '16px' }}>
-              <Button 
-                type="primary" 
-                onClick={onTopUp}
-                style={{ 
-                  width: '100%',
-                  background: 'rgba(255,255,255,0.2)',
-                  border: '1px solid rgba(255,255,255,0.3)'
-                }}
-              >
-                Top Up
-              </Button>
-              <Button 
-                onClick={onPayPenalties}
-                style={{ 
-                  width: '100%',
-                  background: 'rgba(255,255,255,0.1)',
-                  border: '1px solid rgba(255,255,255,0.3)',
-                  color: 'white'
-                }}
-              >
-                Pay Penalties
-              </Button>
-            </Space>
-          </Card>
-        </motion.div>
-      </Col>
-      
-      <Col xs={24} md={16}>
-        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-          <Card title="Transaction History" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            <Table
-              dataSource={wallet.transactions}
-              columns={[
-                {
-                  title: 'Type',
-                  dataIndex: 'type',
-                  key: 'type',
-                  render: (type) => <Tag color={type === 'Top-up' ? 'success' : 'primary'}>{type}</Tag>
-                },
-                {
-                  title: 'Amount',
-                  dataIndex: 'amount',
-                  key: 'amount',
-                  render: (amount) => `${amount.toLocaleString()} VND`
-                },
-                { title: 'Date', dataIndex: 'date', key: 'date' },
-              ]}
-              rowKey={(record, index) => index}
-              pagination={false}
-            />
-          </Card>
-        </motion.div>
-      </Col>
-    </Row>
-  </div>
-);
+const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    loadTransactionHistory();
+  }, []);
+
+  const loadTransactionHistory = async () => {
+    try {
+      setLoading(true);
+      const response = await walletTransactionAPI.getHistory();
+      console.log('Transaction history response:', response);
+
+      // Handle response format
+      let transactionsData = [];
+      if (Array.isArray(response)) {
+        transactionsData = response;
+      } else if (response && response.data && Array.isArray(response.data)) {
+        transactionsData = response.data;
+      }
+
+      setTransactions(transactionsData);
+    } catch (error) {
+      console.error('Error loading transaction history:', error);
+      setTransactions([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <Row gutter={[24, 24]}>
+        <Col xs={24} md={8}>
+          <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+            <Card
+              style={{
+                borderRadius: '16px',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                color: 'white'
+              }}
+            >
+              <Statistic
+                title="Current Balance"
+                value={wallet.balance || 0}
+                prefix={<DollarOutlined />}
+                suffix="VND"
+                valueStyle={{ color: 'white', fontWeight: 'bold' }}
+              />
+              <Space direction="vertical" style={{ width: '100%', marginTop: '16px' }}>
+                <Button
+                  type="primary"
+                  onClick={onTopUp}
+                  style={{
+                    width: '100%',
+                    background: 'rgba(255,255,255,0.2)',
+                    border: '1px solid rgba(255,255,255,0.3)'
+                  }}
+                >
+                  Top Up
+                </Button>
+                <Button
+                  onClick={onPayPenalties}
+                  style={{
+                    width: '100%',
+                    background: 'rgba(255,255,255,0.1)',
+                    border: '1px solid rgba(255,255,255,0.3)',
+                    color: 'white'
+                  }}
+                >
+                  Pay Penalties
+                </Button>
+              </Space>
+            </Card>
+          </motion.div>
+        </Col>
+
+        <Col xs={24} md={16}>
+          <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+            <Card
+              title="Transaction History"
+              extra={
+                <Button
+                  icon={<ReloadOutlined />}
+                  onClick={loadTransactionHistory}
+                  loading={loading}
+                >
+                  Refresh
+                </Button>
+              }
+              style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+            >
+              <Spin spinning={loading}>
+                <Table
+                  dataSource={transactions}
+                  columns={[
+                    {
+                      title: 'Type',
+                      dataIndex: 'type',
+                      key: 'type',
+                      render: (type) => {
+                        // Mapping type sang thông tin theme
+                        let config = {
+                          label: type || 'Khác',
+                          color: 'default',
+                          icon: null,
+                          bg: '#f6f6f6',
+                          border: '1.5px solid #e0e0e0',
+                          text: '#333'
+                        };
+                        switch ((type || '').toUpperCase()) {
+                          case 'TOP_UP':
+                          case 'TOPUP':
+                            config = { label: 'Nạp tiền', color: 'success', icon: <DollarOutlined />, bg: '#e8f8ee', border: '1.5px solid #52c41a', text: '#2a8731' }; break;
+                          case 'RENTAL_FEE':
+                            config = { label: 'Thuê kit', color: 'geekblue', icon: <ShoppingOutlined />, bg: '#e6f7ff', border: '1.5px solid #177ddc', text: '#177ddc' }; break;
+                          case 'PENALTY_PAYMENT':
+                          case 'PENALTY':
+                          case 'FINE':
+                            config = { label: 'Phí phạt', color: 'error', icon: <ExclamationCircleOutlined />, bg: '#fff1f0', border: '1.5px solid #ff4d4f', text: '#d4001a' }; break;
+                          case 'REFUND':
+                            config = { label: 'Hoàn tiền', color: 'purple', icon: <RollbackOutlined />, bg: '#f9f0ff', border: '1.5px solid #722ed1', text: '#722ed1' }; break;
+                          default:
+                            config = { label: type || 'Khác', color: 'default', icon: <InfoCircleOutlined />, bg: '#fafafa', border: '1.5px solid #bfbfbf', text: '#595959' };
+                        }
+                        return <Tag color={config.color} style={{ background: config.bg, border: config.border, color: config.text, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, letterSpacing: 1 }}>
+                          {config.icon} <span>{config.label}</span>
+                        </Tag>;
+                      }
+                    },
+                    {
+                      title: 'Amount',
+                      dataIndex: 'amount',
+                      key: 'amount',
+                      render: (amount) => (
+                        <Text strong style={{
+                          color: amount > 0 ? '#52c41a' : '#ff4d4f'
+                        }}>
+                          {amount ? amount.toLocaleString() : 0} VND
+                        </Text>
+                      ),
+                    },
+                    {
+                      title: 'Description',
+                      dataIndex: 'description',
+                      key: 'description',
+                      render: (description) => description || 'N/A',
+                    },
+                    {
+                      title: 'Date',
+                      dataIndex: 'createdAt',
+                      key: 'date',
+                      render: (date) => {
+                        if (!date) return 'N/A';
+                        return new Date(date).toLocaleString('vi-VN');
+                      },
+                    },
+                    {
+                      title: 'Status',
+                      dataIndex: 'status',
+                      key: 'status',
+                      render: (status) => {
+                        const statusColor = status === 'COMPLETED' || status === 'SUCCESS' ? 'success' :
+                          status === 'PENDING' ? 'processing' :
+                            status === 'FAILED' ? 'error' : 'default';
+                        return (
+                          <Tag color={statusColor}>
+                            {status || 'N/A'}
+                          </Tag>
+                        );
+                      },
+                    },
+                  ]}
+                  rowKey={(record, index) => record.id || record.transactionId || index}
+                  pagination={{
+                    pageSize: 10,
+                    showSizeChanger: true,
+                    showTotal: (total) => `Total ${total} transactions`,
+                  }}
+                  locale={{ emptyText: 'No transactions found' }}
+                />
+              </Spin>
+            </Card>
+          </motion.div>
+        </Col>
+      </Row>
+    </div>
+  );
+};
 
 // Borrow Status Component
-const BorrowStatus = ({ borrowStatus }) => (
-  <div>
-    <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-      <Card title="Borrow Status Tracking" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-        <Table
-          dataSource={borrowStatus}
-          columns={[
-            { title: 'Kit Name', dataIndex: 'kitName', key: 'kitName' },
-            { title: 'Rental ID', dataIndex: 'rentalId', key: 'rentalId' },
-            { 
-              title: 'Borrow Date', 
-              dataIndex: 'borrowDate', 
-              key: 'borrowDate',
-              render: (date) => formatDate(date)
-            },
-            { 
-              title: 'Due Date', 
-              dataIndex: 'dueDate', 
-              key: 'dueDate',
-              render: (date) => formatDate(date)
-            },
-            { 
-              title: 'Return Date', 
-              dataIndex: 'returnDate', 
-              key: 'returnDate',
-              render: (date) => date ? formatDate(date) : 'Not returned'
-            },
-            { 
-              title: 'Status', 
-              dataIndex: 'status', 
-              key: 'status',
-              render: (status) => {
-                const color = status === 'returned' ? 'success' : 
-                            status === 'borrowed' ? 'processing' : 'error';
-                return <Tag color={color}>{status.toUpperCase()}</Tag>;
-              }
-            },
-            { 
-              title: 'Duration (days)', 
-              dataIndex: 'duration', 
-              key: 'duration' 
-            },
-            { 
-              title: 'Total Cost', 
-              dataIndex: 'totalCost', 
-              key: 'totalCost',
-              render: (cost) => `${cost.toLocaleString()} VND`
-            },
-            { title: 'Group', dataIndex: 'groupName', key: 'groupName' },
-          ]}
-          rowKey="id"
-          pagination={{ pageSize: 10 }}
-        />
-      </Card>
-    </motion.div>
-  </div>
-);
+const BorrowStatus = ({ borrowStatus, onViewDetail }) => {
+  const statusColorMap = {
+    PENDING: 'orange',
+    WAITING_APPROVAL: 'orange',
+    APPROVED: 'green',
+    BORROWED: 'blue',
+    RETURNED: 'default',
+    COMPLETED: 'default',
+    REJECTED: 'red',
+    CANCELLED: 'red',
+    OVERDUE: 'magenta'
+  };
+
+  const requestTypeColors = {
+    BORROW_KIT: 'blue',
+    BORROW_COMPONENT: 'purple',
+    EXTEND_RENTAL: 'geekblue',
+    RETURN_KIT: 'cyan'
+  };
+
+  const renderStatusTag = (status) => {
+    const upperStatus = (status || 'PENDING').toUpperCase();
+    return (
+      <Tag color={statusColorMap[upperStatus] || 'default'}>
+        {upperStatus.replace(/_/g, ' ')}
+      </Tag>
+    );
+  };
+
+  const columns = [
+    {
+      title: 'Request ID',
+      dataIndex: 'rentalId',
+      key: 'rentalId',
+      render: (value, record) => {
+        const display = value || record?.id || 'N/A';
+        const displayString = display?.toString() || 'N/A';
+        return (
+          <Text code>
+            {displayString.length > 10 ? `${displayString.slice(0, 8)}...` : displayString}
+          </Text>
+        );
+      }
+    },
+    {
+      title: 'Kit Name',
+      dataIndex: 'kitName',
+      key: 'kitName',
+      render: (kitName) => <Text strong>{kitName || 'N/A'}</Text>
+    },
+    {
+      title: 'Request Type',
+      dataIndex: 'requestType',
+      key: 'requestType',
+      render: (type) => {
+        const upperType = (type || 'BORROW_KIT').toUpperCase();
+        return (
+          <Tag color={requestTypeColors[upperType] || 'geekblue'}>
+            {upperType.replace(/_/g, ' ')}
+          </Tag>
+        );
+      }
+    },
+    {
+      title: 'Expected Return Date',
+      dataIndex: 'dueDate',
+      key: 'dueDate',
+      render: (date) => formatDateTimeDisplay(date)
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status) => renderStatusTag(status)
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_, record) => (
+        <Space>
+          <Button
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => onViewDetail(record)}
+          >
+            View Details
+          </Button>
+        </Space>
+      )
+    }
+  ];
+
+  const dataSource = Array.isArray(borrowStatus) ? borrowStatus : [];
+
+  return (
+    <div>
+      <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+        <Card
+          title="Borrow Tracking"
+          style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+        >
+          <Table
+            dataSource={dataSource}
+            columns={columns}
+            rowKey={(record, index) => record.id || record.rentalId || index}
+            pagination={{ pageSize: 10 }}
+            size="middle"
+            scroll={{ x: 900 }}
+          />
+        </Card>
+      </motion.div>
+    </div>
+  );
+};
 
 // Fines & Refunds Component
 const FinesRefunds = ({ lecturerFines, lecturerRefunds }) => (
@@ -1044,21 +2119,21 @@ const FinesRefunds = ({ lecturerFines, lecturerRefunds }) => (
               columns={[
                 { title: 'Kit Name', dataIndex: 'kitName', key: 'kitName' },
                 { title: 'Rental ID', dataIndex: 'rentalId', key: 'rentalId' },
-                { 
-                  title: 'Fine Type', 
-                  dataIndex: 'fineType', 
+                {
+                  title: 'Fine Type',
+                  dataIndex: 'fineType',
                   key: 'fineType',
                   render: (type) => <Tag color="orange">{type.replace('_', ' ').toUpperCase()}</Tag>
                 },
-                { 
-                  title: 'Amount', 
-                  dataIndex: 'fineAmount', 
+                {
+                  title: 'Amount',
+                  dataIndex: 'fineAmount',
                   key: 'fineAmount',
                   render: (amount) => `${amount.toLocaleString()} VND`
                 },
-                { 
-                  title: 'Status', 
-                  dataIndex: 'status', 
+                {
+                  title: 'Status',
+                  dataIndex: 'status',
                   key: 'status',
                   render: (status) => (
                     <Tag color={status === 'paid' ? 'success' : 'warning'}>
@@ -1066,9 +2141,9 @@ const FinesRefunds = ({ lecturerFines, lecturerRefunds }) => (
                     </Tag>
                   )
                 },
-                { 
-                  title: 'Due Date', 
-                  dataIndex: 'dueDate', 
+                {
+                  title: 'Due Date',
+                  dataIndex: 'dueDate',
                   key: 'dueDate',
                   render: (date) => formatDate(date)
                 },
@@ -1090,27 +2165,27 @@ const FinesRefunds = ({ lecturerFines, lecturerRefunds }) => (
               columns={[
                 { title: 'Kit Name', dataIndex: 'kitName', key: 'kitName' },
                 { title: 'Rental ID', dataIndex: 'rentalId', key: 'rentalId' },
-                { 
-                  title: 'Refund Type', 
-                  dataIndex: 'refundType', 
+                {
+                  title: 'Refund Type',
+                  dataIndex: 'refundType',
                   key: 'refundType',
                   render: (type) => <Tag color="blue">{type.replace('_', ' ').toUpperCase()}</Tag>
                 },
-                { 
-                  title: 'Original Amount', 
-                  dataIndex: 'originalAmount', 
+                {
+                  title: 'Original Amount',
+                  dataIndex: 'originalAmount',
                   key: 'originalAmount',
                   render: (amount) => `${amount.toLocaleString()} VND`
                 },
-                { 
-                  title: 'Refund Amount', 
-                  dataIndex: 'refundAmount', 
+                {
+                  title: 'Refund Amount',
+                  dataIndex: 'refundAmount',
                   key: 'refundAmount',
                   render: (amount) => `${amount.toLocaleString()} VND`
                 },
-                { 
-                  title: 'Status', 
-                  dataIndex: 'status', 
+                {
+                  title: 'Status',
+                  dataIndex: 'status',
                   key: 'status',
                   render: (status) => (
                     <Tag color={status === 'approved' ? 'success' : 'warning'}>
@@ -1118,9 +2193,9 @@ const FinesRefunds = ({ lecturerFines, lecturerRefunds }) => (
                     </Tag>
                   )
                 },
-                { 
-                  title: 'Request Date', 
-                  dataIndex: 'requestDate', 
+                {
+                  title: 'Request Date',
+                  dataIndex: 'requestDate',
                   key: 'requestDate',
                   render: (date) => formatDate(date)
                 },
@@ -1149,7 +2224,7 @@ const FinesRefunds = ({ lecturerFines, lecturerRefunds }) => (
           </Card>
         </motion.div>
       </Col>
-      
+
       <Col xs={24} sm={8}>
         <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
           <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
@@ -1163,7 +2238,7 @@ const FinesRefunds = ({ lecturerFines, lecturerRefunds }) => (
           </Card>
         </motion.div>
       </Col>
-      
+
       <Col xs={24} sm={8}>
         <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
           <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
@@ -1208,5 +2283,380 @@ const Settings = () => (
     </motion.div>
   </div>
 );
+
+// Password validation helper
+const validatePassword = (password) => {
+  if (!password || password.length < 8) {
+    return 'Password must be at least 8 characters long';
+  }
+  if (!/[A-Z]/.test(password)) {
+    return 'Password must contain at least one uppercase letter';
+  }
+  if (!/[a-z]/.test(password)) {
+    return 'Password must contain at least one lowercase letter';
+  }
+  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+    return 'Password must contain at least one special character';
+  }
+  return null;
+};
+
+// Profile Management Component
+const ProfileManagement = ({ profile, setProfile, loading, setLoading, user }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [form] = Form.useForm();
+  const [saving, setSaving] = useState(false);
+  const [changePasswordModalVisible, setChangePasswordModalVisible] = useState(false);
+  const [passwordForm] = Form.useForm();
+  const [changingPassword, setChangingPassword] = useState(false);
+
+  useEffect(() => {
+    loadProfile();
+  }, []);
+
+  const loadProfile = async () => {
+    try {
+      setLoading(true);
+      const response = await authAPI.getProfile();
+      console.log('Profile response:', response);
+
+      const profileData = response?.data || response;
+      setProfile(profileData);
+
+      // Set form values when profile is loaded
+      if (profileData) {
+        form.setFieldsValue({
+          fullName: profileData.fullName || '',
+          phone: profileData.phone || '',
+          avatarUrl: profileData.avatarUrl || '',
+        });
+      }
+    } catch (error) {
+      console.error('Error loading profile:', error);
+      message.error('Failed to load profile');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEdit = () => {
+    setIsEditing(true);
+    if (profile) {
+      form.setFieldsValue({
+        fullName: profile.fullName || '',
+        phone: profile.phone || '',
+        avatarUrl: profile.avatarUrl || '',
+      });
+    }
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+    form.resetFields();
+  };
+
+  const handleSave = async (values) => {
+    try {
+      setSaving(true);
+      const updateData = {
+        fullName: values.fullName,
+        phone: values.phone,
+        avatarUrl: values.avatarUrl || null,
+      };
+
+      const response = await authAPI.updateProfile(updateData);
+      console.log('Update profile response:', response);
+
+      const updatedProfile = response?.data || response;
+      setProfile(updatedProfile);
+      setIsEditing(false);
+
+      message.success('Profile updated successfully');
+
+      // Reload profile to get latest data
+      await loadProfile();
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      message.error('Failed to update profile: ' + (error.message || 'Unknown error'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleChangePassword = async (values) => {
+    const { oldPassword, newPassword, confirmPassword } = values;
+
+    // Validate new password
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) {
+      message.error(passwordError);
+      return;
+    }
+
+    // Check if passwords match
+    if (newPassword !== confirmPassword) {
+      message.error('New password and confirm password do not match');
+      return;
+    }
+
+    // Check if new password is same as old password
+    if (oldPassword === newPassword) {
+      message.error('New password must be different from old password');
+      return;
+    }
+
+    try {
+      setChangingPassword(true);
+      await authAPI.changePassword(oldPassword, newPassword);
+      message.success('Password changed successfully');
+      setChangePasswordModalVisible(false);
+      passwordForm.resetFields();
+    } catch (error) {
+      console.error('Error changing password:', error);
+      message.error('Failed to change password: ' + (error.message || 'Unknown error'));
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
+  return (
+    <div>
+      <motion.div
+        variants={cardVariants}
+        initial="hidden"
+        animate="visible"
+        whileHover="hover"
+      >
+        <Card
+          title={
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>My Profile</span>
+              {!isEditing ? (
+                <Button
+                  type="primary"
+                  icon={<EditOutlined />}
+                  onClick={handleEdit}
+                >
+                  Edit Profile
+                </Button>
+              ) : (
+                <Space>
+                  <Button onClick={handleCancel}>
+                    Cancel
+                  </Button>
+                  <Button
+                    type="primary"
+                    icon={<CheckCircleOutlined />}
+                    onClick={() => form.submit()}
+                    loading={saving}
+                  >
+                    Save Changes
+                  </Button>
+                </Space>
+              )}
+            </div>
+          }
+          style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+        >
+          <Spin spinning={loading}>
+            {profile ? (
+              <Form
+                form={form}
+                layout="vertical"
+                onFinish={handleSave}
+                initialValues={{
+                  fullName: profile.fullName || '',
+                  phone: profile.phone || '',
+                  avatarUrl: profile.avatarUrl || '',
+                }}
+              >
+                <Row gutter={[24, 24]}>
+                  <Col xs={24} md={8}>
+                    <div style={{ textAlign: 'center', marginBottom: 24 }}>
+                      <Avatar
+                        size={120}
+                        src={profile.avatarUrl || null}
+                        icon={!profile.avatarUrl && <UserOutlined />}
+                        style={{
+                          background: profile.avatarUrl ? 'transparent' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                          border: '4px solid rgba(102, 126, 234, 0.2)',
+                        }}
+                      />
+                      {isEditing && (
+                        <Form.Item
+                          name="avatarUrl"
+                          style={{ marginTop: 16, marginBottom: 0 }}
+                        >
+                          <Input
+                            placeholder="Avatar URL"
+                            prefix={<UploadOutlined />}
+                          />
+                        </Form.Item>
+                      )}
+                    </div>
+                  </Col>
+
+                  <Col xs={24} md={16}>
+                    <Descriptions column={1} bordered>
+                      <Descriptions.Item label="Account ID">
+                        <Text code>{profile.id}</Text>
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Email">
+                        <Text strong>{profile.email || 'N/A'}</Text>
+                        <Tag color="blue" style={{ marginLeft: 8 }}>Cannot be changed</Tag>
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Full Name">
+                        {isEditing ? (
+                          <Form.Item
+                            name="fullName"
+                            rules={[{ required: true, message: 'Please enter your full name' }]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <Input placeholder="Enter your full name" />
+                          </Form.Item>
+                        ) : (
+                          <Text strong>{profile.fullName || 'N/A'}</Text>
+                        )}
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Phone">
+                        {isEditing ? (
+                          <Form.Item
+                            name="phone"
+                            rules={[
+                              { pattern: /^[0-9]{10,11}$/, message: 'Please enter a valid phone number' }
+                            ]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <Input placeholder="Enter your phone number" />
+                          </Form.Item>
+                        ) : (
+                          <Text>{profile.phone || 'N/A'}</Text>
+                        )}
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Student Code">
+                        <Text>{profile.studentCode || 'N/A'}</Text>
+                        <Tag color="orange" style={{ marginLeft: 8 }}>Cannot be changed</Tag>
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Role">
+                        <Tag color="purple">{profile.role || 'N/A'}</Tag>
+                        <Tag color="orange" style={{ marginLeft: 8 }}>Cannot be changed</Tag>
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Account Status">
+                        <Tag color={profile.isActive ? 'success' : 'error'}>
+                          {profile.isActive ? 'Active' : 'Inactive'}
+                        </Tag>
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Created At">
+                        <Text>{profile.createdAt ? formatDateTimeDisplay(profile.createdAt) : 'N/A'}</Text>
+                      </Descriptions.Item>
+                    </Descriptions>
+
+                    <Divider />
+
+                    <div style={{ marginTop: 16 }}>
+                      <Button
+                        type="default"
+                        icon={<SettingOutlined />}
+                        onClick={() => setChangePasswordModalVisible(true)}
+                        block
+                      >
+                        Change Password
+                      </Button>
+                    </div>
+                  </Col>
+                </Row>
+              </Form>
+            ) : (
+              <Empty description="Failed to load profile" />
+            )}
+          </Spin>
+        </Card>
+      </motion.div>
+
+      {/* Change Password Modal */}
+      <Modal
+        title="Change Password"
+        open={changePasswordModalVisible}
+        onCancel={() => {
+          setChangePasswordModalVisible(false);
+          passwordForm.resetFields();
+        }}
+        footer={null}
+        width={500}
+      >
+        <Form
+          form={passwordForm}
+          layout="vertical"
+          onFinish={handleChangePassword}
+        >
+          <Form.Item
+            name="oldPassword"
+            label="Current Password"
+            rules={[{ required: true, message: 'Please enter your current password' }]}
+          >
+            <Input.Password placeholder="Enter current password" />
+          </Form.Item>
+
+          <Form.Item
+            name="newPassword"
+            label="New Password"
+            rules={[
+              { required: true, message: 'Please enter a new password' },
+              {
+                validator: (_, value) => {
+                  const error = validatePassword(value);
+                  return error ? Promise.reject(new Error(error)) : Promise.resolve();
+                }
+              }
+            ]}
+            help="Password must be at least 8 characters, contain uppercase, lowercase, and special characters"
+          >
+            <Input.Password placeholder="Enter new password" />
+          </Form.Item>
+
+          <Form.Item
+            name="confirmPassword"
+            label="Confirm New Password"
+            dependencies={['newPassword']}
+            rules={[
+              { required: true, message: 'Please confirm your new password' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('newPassword') === value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('Passwords do not match'));
+                },
+              }),
+            ]}
+          >
+            <Input.Password placeholder="Confirm new password" />
+          </Form.Item>
+
+          <Form.Item>
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => {
+                setChangePasswordModalVisible(false);
+                passwordForm.resetFields();
+              }}>
+                Cancel
+              </Button>
+              <Button type="primary" htmlType="submit" loading={changingPassword}>
+                Change Password
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+    </div>
+  );
+};
 
 export default LecturerPortal; 
