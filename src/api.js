@@ -1,4 +1,5 @@
 const API_BASE_URL = 'https://iot-system-kit.azurewebsites.net';
+// const API_BASE_URL = 'http://localhost:8080';
 
 // Helper function to get JWT token from localStorage
 const getAuthToken = () => {
@@ -466,6 +467,12 @@ export const kitAPI = {
       console.error('API Error:', error);
       throw error;
     }
+  },
+
+  deleteKit: async (kitId) => {
+    return apiRequest(`/api/kits/${kitId}`, {
+      method: 'DELETE',
+    });
   }
 };
 
@@ -500,6 +507,36 @@ export const kitComponentAPI = {
     return apiRequest(`/api/kitComponent?id=${id}`, {
       method: 'DELETE',
     });
+  },
+
+  importComponents: async (file, kitId, sheetName = null) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('kitId', kitId);
+    if (sheetName) {
+      formData.append('sheetName', sheetName);
+    }
+
+    const url = `${API_BASE_URL}/api/kitComponent/import`;
+    const token = getAuthToken();
+
+    const headers = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || 'Import failed');
+    }
+
+    return await handleResponse(response);
   }
 };
 
@@ -546,8 +583,36 @@ export const walletTransactionAPI = {
   }
 };
 
-// Payment API (VNPay)
+// Payment API (PayPal)
 export const paymentAPI = {
+  // PayPal payment methods
+  createPayPalPayment: async (amount, description, returnUrl = null, cancelUrl = null) => {
+    const requestBody = {
+      amount: amount,
+      description: description
+    };
+
+    if (returnUrl) {
+      requestBody.returnUrl = returnUrl;
+    }
+    if (cancelUrl) {
+      requestBody.cancelUrl = cancelUrl;
+    }
+
+    return apiRequest('/api/payment/paypal/create', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+    });
+  },
+
+  executePayPalPayment: async (paymentId, payerId, transactionId = null) => {
+    const url = `/api/payment/paypal/execute?paymentId=${paymentId}&payerId=${payerId}${transactionId ? `&transactionId=${transactionId}` : ''}`;
+    return apiRequest(url, {
+      method: 'POST',
+    });
+  },
+
+  // Legacy VNPay methods (kept for backward compatibility)
   createPayment: async (amount, orderInfo, bankCode = null) => {
     return apiRequest('/api/payment/create-payment', {
       method: 'POST',
@@ -736,15 +801,36 @@ export const damageReportAPI = {
 
 // Excel Import API
 export const excelImportAPI = {
-  importAccounts: async (file, role) => {
+  importAccounts: async (file, role, sheetName = null) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('role', role);
+    if (sheetName) {
+      formData.append('sheetName', sheetName);
+    }
 
-    return apiRequest('/api/excel/import', {
+    // For FormData, we need to use fetch directly since apiRequest sets Content-Type to JSON
+    const url = `${API_BASE_URL}/api/excel/import`;
+    const token = getAuthToken();
+
+    const headers = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    // Don't set Content-Type for FormData - browser will set it with boundary
+
+    const response = await fetch(url, {
       method: 'POST',
+      headers: headers,
       body: formData,
     });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || 'Import failed');
+    }
+
+    return await handleResponse(response);
   },
 
   importAccountsBase64: async (fileContent, role, fileName) => {
@@ -963,7 +1049,9 @@ export const borrowingGroupAPI = {
 // Class Assignment API
 export const classAssignmentAPI = {
   getAll: async () => {
-    return apiRequest('/api/class-assignments');
+    const response = await apiRequest('/api/class-assignments');
+    // Handle different response formats
+    return extractArrayFromPayload(response);
   },
 
   getById: async (id) => {
