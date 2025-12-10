@@ -1,38 +1,38 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Layout, 
-  Menu, 
-  Card, 
-  Table, 
-  Button, 
-  Input, 
-  Select, 
-  Modal, 
-  Form, 
-  message, 
-  Tag, 
-  Row, 
-  Col, 
-  Statistic, 
-  Typography, 
-  Space, 
-  Avatar, 
-  Badge, 
-  Divider, 
-  List, 
-  Timeline, 
-  Switch, 
-  DatePicker, 
-  Upload, 
-  Tabs, 
-  Alert, 
-  Descriptions, 
-  Empty, 
-  Spin, 
+import {
+  Layout,
+  Menu,
+  Card,
+  Table,
+  Button,
+  Input,
+  Select,
+  Modal,
+  Form,
+  message,
+  Tag,
+  Row,
+  Col,
+  Statistic,
+  Typography,
+  Space,
+  Avatar,
+  Badge,
+  Divider,
+  List,
+  Timeline,
+  Switch,
+  DatePicker,
+  Upload,
+  Tabs,
+  Alert,
+  Descriptions,
+  Empty,
+  Spin,
   Popover,
-  notification, 
-  Transfer, 
-  Popconfirm, 
+  notification,
+  Transfer,
+  Popconfirm,
   Checkbox,
   InputNumber
 } from 'antd';
@@ -74,7 +74,7 @@ import {
   RollbackOutlined,
   LoadingOutlined
 } from '@ant-design/icons';
-import { kitAPI, kitComponentAPI, borrowingRequestAPI, walletTransactionAPI, userAPI, authAPI, classesAPI, studentGroupAPI, borrowingGroupAPI, penaltyPoliciesAPI, penaltiesAPI, penaltyDetailAPI, damageReportAPI, notificationAPI } from './api';
+import { kitAPI, kitComponentAPI, borrowingRequestAPI, walletTransactionAPI, userAPI, authAPI, classesAPI, studentGroupAPI, borrowingGroupAPI, penaltyPoliciesAPI, penaltiesAPI, penaltyDetailAPI, damageReportAPI, notificationAPI, excelImportAPI } from './api';
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
@@ -90,15 +90,15 @@ function AdminPortal({ onLogout }) {
   const [rentalRequests, setRentalRequests] = useState([]);
   const [refundRequests, setRefundRequests] = useState([]);
   const [systemStats, setSystemStats] = useState({});
-  
+
   // Modal states
-  
+
   // Import/Export states
   const [availableStudents, setAvailableStudents] = useState([]);
   const [selectedStudents, setSelectedStudents] = useState([]);
   const [groupMembersModalVisible, setGroupMembersModalVisible] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState(null);
-  
+
   // Kit Inspection and Fine Management states
   const [kitInspectionModalVisible, setKitInspectionModalVisible] = useState(false);
   const [selectedKit, setSelectedKit] = useState(null);
@@ -114,7 +114,7 @@ function AdminPortal({ onLogout }) {
   const [notifications, setNotifications] = useState([]);
   const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
   const [notificationLoading, setNotificationLoading] = useState(false);
-  
+
   // Form instances
 
   // Animation variants
@@ -132,9 +132,9 @@ function AdminPortal({ onLogout }) {
 
   const cardVariants = {
     hidden: { opacity: 0, y: 20, scale: 0.95 },
-    visible: { 
-      opacity: 1, 
-      y: 0, 
+    visible: {
+      opacity: 1,
+      y: 0,
       scale: 1,
       transition: {
         duration: 0.5,
@@ -199,12 +199,12 @@ function AdminPortal({ onLogout }) {
     try {
       // Fetch real data from API
       console.log('Loading data from API...');
-      
+
       // Fetch all kits from API
       try {
         const kitsResponse = await kitAPI.getAllKits();
         console.log('Raw kits response:', kitsResponse);
-        
+
         // Handle direct array response
         if (Array.isArray(kitsResponse)) {
           // Transform the data to handle null values and ensure proper format
@@ -217,12 +217,12 @@ function AdminPortal({ onLogout }) {
           setKits(transformedKits);
           console.log('Kits loaded successfully:', transformedKits.length);
           console.log('Transformed kits:', transformedKits);
-        } 
+        }
         // Handle wrapped response format
         else if (kitsResponse && kitsResponse.data && Array.isArray(kitsResponse.data)) {
           setKits(kitsResponse.data);
           console.log('Kits loaded successfully:', kitsResponse.data.length);
-        } 
+        }
         // Handle empty or invalid response
         else {
           setKits([]);
@@ -232,14 +232,14 @@ function AdminPortal({ onLogout }) {
         console.error('Error loading kits:', kitsError);
         setKits([]);
       }
-      
+
       // Groups are loaded from API
-      
+
       // Fetch users from API
       try {
         const usersData = await userAPI.getAllAccounts(0, 100); // Get first 100 users
         console.log('Users response:', usersData);
-        
+
         if (usersData && usersData.length > 0) {
           // Map ProfileResponse to user format for table
           const mappedUsers = usersData.map(profile => ({
@@ -252,7 +252,7 @@ function AdminPortal({ onLogout }) {
             status: 'Active', // Default status since ProfileResponse doesn't have status
             createdAt: new Date().toISOString()
           }));
-          
+
           setUsers(mappedUsers);
           console.log('Users loaded successfully:', mappedUsers.length);
         } else {
@@ -267,7 +267,7 @@ function AdminPortal({ onLogout }) {
       try {
         const rentalResponse = await borrowingRequestAPI.getAll();
         console.log('Raw rental requests response:', rentalResponse);
-        
+
         if (Array.isArray(rentalResponse)) {
           setRentalRequests(rentalResponse);
           console.log('Rental requests loaded successfully:', rentalResponse.length);
@@ -287,7 +287,7 @@ function AdminPortal({ onLogout }) {
       try {
         const approvedResponse = await borrowingRequestAPI.getApproved();
         console.log('Raw approved requests response:', approvedResponse);
-        
+
         if (Array.isArray(approvedResponse)) {
           // Transform approved requests to refund request format
           const refundRequestsData = approvedResponse.map(request => ({
@@ -306,7 +306,7 @@ function AdminPortal({ onLogout }) {
             depositAmount: request.depositAmount || 0,
             requestType: request.requestType // Add request type to distinguish kit vs component
           }));
-          
+
           setRefundRequests(refundRequestsData);
           console.log('Approved requests loaded successfully:', refundRequestsData.length);
         } else {
@@ -317,7 +317,7 @@ function AdminPortal({ onLogout }) {
         console.error('Error loading approved requests:', approvedError);
         setRefundRequests([]);
       }
-      
+
       // Fetch wallet transactions from API
       let transactionsData = [];
       try {
@@ -326,7 +326,7 @@ function AdminPortal({ onLogout }) {
         console.log('Raw wallet transactions response:', transactionsResponse);
         console.log('Response type:', typeof transactionsResponse);
         console.log('Is array:', Array.isArray(transactionsResponse));
-        
+
         if (Array.isArray(transactionsResponse)) {
           transactionsData = transactionsResponse;
           setTransactions(transactionsResponse);
@@ -344,17 +344,17 @@ function AdminPortal({ onLogout }) {
         console.error('Error loading wallet transactions:', transactionsError);
         setTransactions([]);
       }
-      
+
       setFines([]);
 
       // Fetch penalty policies from API
       try {
         const penaltyPoliciesResponse = await penaltyPoliciesAPI.getAll();
         console.log('Penalty policies response:', penaltyPoliciesResponse);
-        
+
         // Check if response has data property (ApiResponse wrapper)
         const policiesData = penaltyPoliciesResponse?.data || penaltyPoliciesResponse;
-        
+
         if (Array.isArray(policiesData)) {
           setPenaltyPolicies(policiesData);
           console.log('Penalty policies loaded successfully:', policiesData.length);
@@ -366,34 +366,34 @@ function AdminPortal({ onLogout }) {
         console.error('Error loading penalty policies:', penaltyPoliciesError);
         setPenaltyPolicies([]);
       }
-      
+
       // Load available students for group management
       const studentUsers = []; // TODO: Replace with real API call to get student users
       setAvailableStudents(studentUsers);
-      
+
       // Calculate system stats from loaded data (using response data directly)
       const availableKitsCount = kits.filter(kit => kit.status === 'AVAILABLE').length;
       const pendingRequestsCount = rentalRequests.filter(req => req.status === 'PENDING' || req.status === 'PENDING_APPROVAL').length;
-      
+
       // Calculate monthly revenue from transactions (current month) using response data
       const statsCurrentMonth = new Date().getMonth();
       const statsCurrentYear = new Date().getFullYear();
       const statsMonthlyRevenueAmount = transactionsData
         .filter(txn => {
           const txnDate = new Date(txn.createdAt || txn.transactionDate);
-          return txnDate.getMonth() === statsCurrentMonth && 
-                 txnDate.getFullYear() === statsCurrentYear &&
-                 (txn.type === 'RENTAL_FEE' || txn.type === 'PENALTY_PAYMENT');
+          return txnDate.getMonth() === statsCurrentMonth &&
+            txnDate.getFullYear() === statsCurrentYear &&
+            (txn.type === 'RENTAL_FEE' || txn.type === 'PENALTY_PAYMENT');
         })
         .reduce((sum, txn) => sum + (txn.amount || 0), 0);
-      
+
       setSystemStats({
         totalUsers: users.length,
         availableKits: availableKitsCount,
         pendingApprovals: pendingRequestsCount,
         monthlyRevenue: statsMonthlyRevenueAmount
       });
-      
+
       console.log('Data loaded successfully');
     } catch (error) {
       console.error('Error loading data:', error);
@@ -505,6 +505,55 @@ function AdminPortal({ onLogout }) {
     });
   };
 
+  // Helper function to read sheet names from Excel file
+  const getExcelSheetNames = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          resolve(workbook.SheetNames || []);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      reader.onerror = (error) => reject(error);
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
+  const handleImportKits = async (file, sheetName = null) => {
+    try {
+      const importedData = await importFromExcel(file, 'kits');
+      const newKits = importedData.map((kit, index) => ({
+        id: Date.now() + index,
+        name: kit.Name || kit.name,
+        category: kit.Category || kit.category || 'STUDENT_KIT',
+        quantity: parseInt(kit.Quantity || kit.quantity) || 1,
+        price: parseInt(kit.Price || kit.price) || 0,
+        status: 'AVAILABLE',
+        location: kit.Location || kit.location || 'Lab 1',
+        description: kit.Description || kit.description || '',
+        components: []
+      }));
+
+      setKits(prev => [...prev, ...newKits]);
+
+      notification.success({
+        message: 'Import Successful',
+        description: `${newKits.length} kits imported successfully`,
+        placement: 'topRight',
+      });
+    } catch (error) {
+      notification.error({
+        message: 'Import Failed',
+        description: 'Failed to import kits. Please check file format.',
+        placement: 'topRight',
+      });
+    }
+  };
+
 
 
   const handleExportKits = () => {
@@ -526,39 +575,6 @@ function AdminPortal({ onLogout }) {
     });
   };
 
-
-
-  const handleImportKits = async (file) => {
-    try {
-      const importedData = await importFromExcel(file, 'kits');
-      const newKits = importedData.map((kit, index) => ({
-        id: Date.now() + index,
-        name: kit.Name || kit.name,
-        category: kit.Category || kit.category || 'STUDENT_KIT',
-        quantity: parseInt(kit.Quantity || kit.quantity) || 1,
-        price: parseInt(kit.Price || kit.price) || 0,
-        status: 'AVAILABLE',
-        location: kit.Location || kit.location || 'Lab 1',
-        description: kit.Description || kit.description || '',
-        components: []
-      }));
-      
-      setKits(prev => [...prev, ...newKits]);
-      
-      notification.success({
-        message: 'Import Successful',
-        description: `${newKits.length} kits imported successfully`,
-        placement: 'topRight',
-      });
-    } catch (error) {
-      notification.error({
-        message: 'Import Failed',
-        description: 'Failed to import kits. Please check file format.',
-        placement: 'topRight',
-      });
-    }
-  };
-
   // Group Management Functions
 
   const adjustGroupMembers = (group) => {
@@ -572,21 +588,21 @@ function AdminPortal({ onLogout }) {
     console.log('Selected group:', selectedGroup);
     console.log('Current members (emails):', selectedGroup?.members);
     console.log('New members (emails):', selectedStudents);
-    
+
     // Get full student objects including IDs
     const allStudents = await userAPI.getStudents();
     const currentMembersEmails = selectedGroup?.members || [];
     const newMembersEmails = selectedStudents || [];
-    
+
     // Find members to remove (in current but not in new)
     const membersToRemove = currentMembersEmails.filter(email => !newMembersEmails.includes(email));
-    
+
     // Find members to add (in new but not in current)
     const membersToAdd = newMembersEmails.filter(email => !currentMembersEmails.includes(email));
-    
+
     console.log('Members to remove:', membersToRemove);
     console.log('Members to add:', membersToAdd);
-    
+
     try {
       // Remove members
       for (const email of membersToRemove) {
@@ -596,7 +612,7 @@ function AdminPortal({ onLogout }) {
           await borrowingGroupAPI.removeMemberFromGroup(selectedGroup.id, student.id);
         }
       }
-      
+
       // Add new members
       for (let i = 0; i < membersToAdd.length; i++) {
         const email = membersToAdd[i];
@@ -604,34 +620,34 @@ function AdminPortal({ onLogout }) {
         if (student) {
           // First new member becomes MEMBER (not LEADER to avoid conflict)
           const role = 'MEMBER';
-          
+
           const borrowingGroupData = {
             studentGroupId: selectedGroup.id,
             accountId: student.id,
             roles: role
           };
-          
+
           console.log(`Adding member: ${email} (ID: ${student.id})`);
           await borrowingGroupAPI.addMemberToGroup(borrowingGroupData);
         }
       }
-      
+
       // Update local state
-    setGroups(prev => prev.map(group => 
-      group.id === selectedGroup.id 
-        ? { ...group, members: selectedStudents }
-        : group
-    ));
-    
-    setGroupMembersModalVisible(false);
-    setSelectedGroup(null);
-    setSelectedStudents([]);
-    
-    notification.success({
-      message: 'Group Updated',
+      setGroups(prev => prev.map(group =>
+        group.id === selectedGroup.id
+          ? { ...group, members: selectedStudents }
+          : group
+      ));
+
+      setGroupMembersModalVisible(false);
+      setSelectedGroup(null);
+      setSelectedStudents([]);
+
+      notification.success({
+        message: 'Group Updated',
         description: `Successfully updated ${selectedGroup?.groupName || 'group'}. Removed ${membersToRemove.length}, added ${membersToAdd.length}.`,
-      placement: 'topRight',
-    });
+        placement: 'topRight',
+      });
     } catch (error) {
       console.error('Error updating group members:', error);
       notification.error({
@@ -648,19 +664,19 @@ function AdminPortal({ onLogout }) {
   const openRefundKitInspection = async (refundRequest) => {
     console.log('Opening kit inspection for:', refundRequest);
     console.log('Available kits:', kits);
-    
+
     // Check if this is a component rental or full kit rental
     const isComponentRental = refundRequest.requestType === 'BORROW_COMPONENT';
-    
+
     // For component rental, we still need to find the parent kit
-    const kit = kits.find(k => 
-      k.kitName === refundRequest.kitName || 
+    const kit = kits.find(k =>
+      k.kitName === refundRequest.kitName ||
       k.name === refundRequest.kitName
     );
-    
+
     console.log('Found kit:', kit);
     console.log('Is component rental:', isComponentRental);
-    
+
     if (!kit) {
       notification.error({
         message: 'Kit Not Found',
@@ -670,7 +686,7 @@ function AdminPortal({ onLogout }) {
       });
       return;
     }
-    
+
     // Create a rental-like object for the refund request
     const rentalObject = {
       id: refundRequest.id || refundRequest.rentalId,
@@ -682,23 +698,23 @@ function AdminPortal({ onLogout }) {
       totalCost: refundRequest.depositAmount || 0,
       requestType: refundRequest.requestType // Add request type for inspection logic
     };
-    
+
     console.log('Set rental object:', rentalObject);
     console.log('Set selected kit:', kit);
-    
+
     let kitToUse = kit;
-    
+
     // If component rental, fetch the rented components
     if (isComponentRental) {
       try {
         const rentedComponents = await borrowingRequestAPI.getRequestComponents(refundRequest.id);
         console.log('Fetched rented components:', rentedComponents);
-        
+
         // Update kit to show only the rented components
         if (rentedComponents && rentedComponents.length > 0) {
           // Find actual components from kits
           const actualComponents = rentedComponents.map(rc => {
-            const actualComp = kit.components?.find(c => 
+            const actualComp = kit.components?.find(c =>
               c.id === rc.kitComponentsId || c.componentName === rc.componentName
             );
             return actualComp ? {
@@ -712,13 +728,13 @@ function AdminPortal({ onLogout }) {
               rentedQuantity: rc.quantity
             };
           });
-          
+
           // Create a temporary kit object with only rented components
           kitToUse = {
             ...kit,
             components: actualComponents.length > 0 ? actualComponents : kit.components
           };
-          
+
           console.log('Set selected kit with rented components:', kitToUse);
         } else {
           console.log('No rented components found, using full kit');
@@ -730,17 +746,17 @@ function AdminPortal({ onLogout }) {
       // For full kit rental, use kit as is
       console.log('Full kit selected - components:', kit.components);
     }
-    
+
     console.log('Final kit to use:', kitToUse);
     console.log('Kit components:', kitToUse.components);
-    
+
     // Set all states before opening modal
     setSelectedRental(rentalObject);
     setSelectedKit(kitToUse);
     setDamageAssessment(refundRequest.damageAssessment || {});
     setFineAmount(0);
     setSelectedPenaltyPolicies([]);
-    
+
     // Open modal after setting all states
     setTimeout(() => {
       setKitInspectionModalVisible(true);
@@ -760,21 +776,21 @@ function AdminPortal({ onLogout }) {
 
   const calculateFineAmount = () => {
     let totalFine = 0;
-    
+
     // Calculate fine from component damage
     Object.values(damageAssessment).forEach(component => {
       if (component.damaged) {
         totalFine += component.value;
       }
     });
-    
+
     // Add penalty policies amount
     selectedPenaltyPolicies.forEach(policy => {
       if (policy.amount) {
         totalFine += policy.amount;
       }
     });
-    
+
     setFineAmount(totalFine);
     return totalFine;
   };
@@ -782,15 +798,15 @@ function AdminPortal({ onLogout }) {
   const submitKitInspection = async () => {
     setKitInspectionLoading(true);
     let totalFine = calculateFineAmount();
-    
+
     // Check if this is a refund request or rental request
     const isRefundRequest = selectedRental && (selectedRental.status === 'approved' || selectedRental.status === 'pending');
-    
+
     try {
       // Update borrowing request status to RETURNED when checkin
       if (selectedRental && selectedRental.id) {
         try {
-          await borrowingRequestAPI.update(selectedRental.id, { 
+          await borrowingRequestAPI.update(selectedRental.id, {
             status: 'RETURNED',
             actualReturnDate: new Date().toISOString()
           });
@@ -815,7 +831,7 @@ function AdminPortal({ onLogout }) {
     } catch (error) {
       console.error('Error during checkin process:', error);
     }
-    
+
     if (totalFine > 0 && (selectedPenaltyPolicies.length > 0 || Object.keys(damageAssessment).length > 0)) {
       try {
         // Compute 50% rental fee (remaining to pay). Prefer depositAmount; fallback to totalCost
@@ -840,18 +856,18 @@ function AdminPortal({ onLogout }) {
           accountId: users.find(u => u.email === selectedRental?.userEmail)?.id,
           policyId: null
         };
-        
+
         console.log('Creating penalty:', penaltyData);
         const penaltyResponse = await penaltiesAPI.create(penaltyData);
         console.log('Penalty created:', penaltyResponse);
         const penaltyId = penaltyResponse?.id || penaltyResponse?.data?.id;
-        
+
         if (penaltyId) {
           // Build penalty details from selected policies
           const penaltyDetailsData = (selectedPenaltyPolicies || []).map(policy => ({
             amount: policy.amount || 0,
-            description: policy.policyName ? 
-              `${policy.policyName}${policy.type ? ' - ' + policy.type : ''}` : 
+            description: policy.policyName ?
+              `${policy.policyName}${policy.type ? ' - ' + policy.type : ''}` :
               'Policy violation',
             policiesId: policy.id,
             penaltyId: penaltyId
@@ -873,13 +889,13 @@ function AdminPortal({ onLogout }) {
             console.log('Penalty details created:', penaltyDetailsResponse);
           }
         }
-        
+
         // Create damage report
         const damageDescriptions = Object.entries(damageAssessment)
           .filter(([_, assessment]) => assessment.damaged)
           .map(([component, assessment]) => `${component}: ${assessment.value} VND`)
           .join(', ');
-        
+
         const damageReportData = {
           description: damageDescriptions || 'No component damage',
           status: 'PENDING',
@@ -890,23 +906,23 @@ function AdminPortal({ onLogout }) {
             .filter(a => a.damaged)
             .reduce((sum, a) => sum + a.value, 0)
         };
-        
+
         console.log('Creating damage report:', damageReportData);
         const damageReportResponse = await damageReportAPI.create(damageReportData);
         console.log('Damage report created:', damageReportResponse);
       } catch (error) {
         console.error('Error creating penalty and damage report:', error);
       }
-      
+
       // Find the group leader for this rental
-      const group = groups.find(g => 
+      const group = groups.find(g =>
         g.members && g.members.includes(selectedRental.userEmail)
       );
-      
+
       if (group) {
         const leaderEmail = group.leader;
         const leader = users.find(u => u.email === leaderEmail);
-        
+
         const newFine = {
           id: Date.now(),
           rentalId: selectedRental.id,
@@ -922,9 +938,9 @@ function AdminPortal({ onLogout }) {
           createdAt: new Date().toISOString(),
           dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days from now
         };
-        
+
         setFines(prev => [...prev, newFine]);
-        
+
         notification.success({
           message: 'Kit Inspection Completed',
           description: `Fine of ${totalFine.toLocaleString()} VND sent to group leader ${leader ? leader.name : leaderEmail}`,
@@ -937,7 +953,7 @@ function AdminPortal({ onLogout }) {
           description: 'Student is not part of any group. Fine will be sent directly to student.',
           placement: 'topRight',
         });
-        
+
         const newFine = {
           id: Date.now(),
           rentalId: selectedRental.id,
@@ -953,7 +969,7 @@ function AdminPortal({ onLogout }) {
           createdAt: new Date().toISOString(),
           dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
         };
-        
+
         setFines(prev => [...prev, newFine]);
       }
 
@@ -986,7 +1002,7 @@ function AdminPortal({ onLogout }) {
       } catch (notifyError) {
         console.error('Error sending check-in notifications:', notifyError);
       }
-      
+
       // For refund requests with damage, add to log history and remove from refund requests
       if (isRefundRequest) {
         const logEntry = {
@@ -1012,12 +1028,12 @@ function AdminPortal({ onLogout }) {
           adminUser: 'admin@fpt.edu.vn',
           adminTimestamp: new Date().toISOString()
         };
-        
+
         setLogHistory(prev => [logEntry, ...prev]);
-        
+
         // Remove from refund requests
         setRefundRequests(prev => prev.filter(req => req.id !== selectedRental.id));
-        
+
         notification.success({
           message: 'Kit Checkin Completed',
           description: `Kit returned with damage. Fine of ${totalFine.toLocaleString()} VND has been created.`,
@@ -1037,20 +1053,20 @@ function AdminPortal({ onLogout }) {
       if (isRefundRequest) {
         // Calculate refund amount (assuming full refund for no damage)
         const refundAmount = selectedRental.totalCost || 0;
-        
+
         try {
           // TODO: Process refund to wallet via API
           // const refundResult = await refundAPI.create(...);
           const refundResult = { success: true };
-          
+
           if (refundResult.success) {
             // Update kit status to available
-            setKits(prev => prev.map(kit => 
-              kit.id === selectedKit.id 
+            setKits(prev => prev.map(kit =>
+              kit.id === selectedKit.id
                 ? { ...kit, status: 'AVAILABLE' }
                 : kit
             ));
-            
+
             // Add refund transaction to log history
             const logEntry = {
               id: Date.now(),
@@ -1076,12 +1092,12 @@ function AdminPortal({ onLogout }) {
               adminUser: 'admin@fpt.edu.vn',
               adminTimestamp: new Date().toISOString()
             };
-            
+
             setLogHistory(prev => [logEntry, ...prev]);
-            
+
             // Remove from refund requests
             setRefundRequests(prev => prev.filter(req => req.id !== selectedRental.id));
-            
+
             notification.success({
               message: 'Refund Processed Successfully',
               description: `Refund of ${refundAmount.toLocaleString()} VND has been sent to ${selectedRental.userName}'s wallet. Kit status changed to AVAILABLE.`,
@@ -1108,27 +1124,27 @@ function AdminPortal({ onLogout }) {
         }
       } else {
         // Update kit status to available for regular rental returns
-        setKits(prev => prev.map(kit => 
-          kit.id === selectedKit.id 
+        setKits(prev => prev.map(kit =>
+          kit.id === selectedKit.id
             ? { ...kit, status: 'AVAILABLE' }
             : kit
         ));
-        
+
         notification.success({
           message: 'Kit Inspection Completed',
           description: 'No damage detected. Kit returned successfully and status changed to AVAILABLE.',
           placement: 'topRight',
         });
-        
+
         // Update rental status to returned
-        setRentalRequests(prev => prev.map(rental => 
-          rental.id === selectedRental.id 
+        setRentalRequests(prev => prev.map(rental =>
+          rental.id === selectedRental.id
             ? { ...rental, status: 'RETURNED', returnDate: new Date().toISOString() }
             : rental
         ));
       }
     }
-    
+
     setKitInspectionModalVisible(false);
     setSelectedKit(null);
     setSelectedRental(null);
@@ -1235,9 +1251,9 @@ function AdminPortal({ onLogout }) {
   return (
     <Layout style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
       {/* Sidebar */}
-      <Sider 
-        trigger={null} 
-        collapsible 
+      <Sider
+        trigger={null}
+        collapsible
         collapsed={collapsed}
         theme="light"
         style={{
@@ -1253,11 +1269,11 @@ function AdminPortal({ onLogout }) {
         }}
       >
         {/* Logo Section */}
-        <motion.div 
-          style={{ 
-            height: 80, 
-            display: 'flex', 
-            alignItems: 'center', 
+        <motion.div
+          style={{
+            height: 80,
+            display: 'flex',
+            alignItems: 'center',
             justifyContent: 'center',
             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             margin: '16px',
@@ -1272,14 +1288,14 @@ function AdminPortal({ onLogout }) {
             {collapsed ? 'IoT' : 'IoT Kit Rental'}
           </Title>
         </motion.div>
-        
+
         {/* Navigation Menu */}
         <Menu
           mode="inline"
           selectedKeys={[selectedKey]}
           items={menuItems}
           onClick={handleMenuClick}
-          style={{ 
+          style={{
             borderRight: 0,
             background: 'transparent',
             padding: '0 16px'
@@ -1287,10 +1303,10 @@ function AdminPortal({ onLogout }) {
           className="custom-menu"
         />
       </Sider>
-      
+
       {/* Main Content Area */}
-      <Layout style={{ 
-        marginLeft: collapsed ? 80 : 200, 
+      <Layout style={{
+        marginLeft: collapsed ? 80 : 200,
         transition: 'margin-left 0.3s ease-in-out',
         background: 'transparent'
       }}>
@@ -1300,12 +1316,12 @@ function AdminPortal({ onLogout }) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.2 }}
         >
-          <Header style={{ 
-            padding: '0 32px', 
+          <Header style={{
+            padding: '0 32px',
             background: 'rgba(255, 255, 255, 0.95)',
             backdropFilter: 'blur(10px)',
-            display: 'flex', 
-            alignItems: 'center', 
+            display: 'flex',
+            alignItems: 'center',
             justifyContent: 'space-between',
             boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
             position: 'sticky',
@@ -1324,9 +1340,9 @@ function AdminPortal({ onLogout }) {
                   type="text"
                   icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
                   onClick={() => setCollapsed(!collapsed)}
-                  style={{ 
-                    fontSize: '18px', 
-                    width: 48, 
+                  style={{
+                    fontSize: '18px',
+                    width: 48,
                     height: 48,
                     borderRadius: '12px',
                     display: 'flex',
@@ -1348,7 +1364,7 @@ function AdminPortal({ onLogout }) {
                 </Title>
               </motion.div>
             </Space>
-            
+
             {/* Right Section */}
             <Space size="large">
               <motion.div
@@ -1383,8 +1399,8 @@ function AdminPortal({ onLogout }) {
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Avatar 
-                  icon={<UserOutlined />} 
+                <Avatar
+                  icon={<UserOutlined />}
                   size={48}
                   style={{
                     background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
@@ -1396,9 +1412,9 @@ function AdminPortal({ onLogout }) {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Button 
+                <Button
                   type="primary"
-                  icon={<LogoutOutlined />} 
+                  icon={<LogoutOutlined />}
                   onClick={onLogout}
                   style={{
                     borderRadius: '12px',
@@ -1415,11 +1431,11 @@ function AdminPortal({ onLogout }) {
             </Space>
           </Header>
         </motion.div>
-        
+
         {/* Content Area */}
-        <Content style={{ 
-          margin: '24px', 
-          padding: '32px', 
+        <Content style={{
+          margin: '24px',
+          padding: '32px',
           background: 'rgba(255, 255, 255, 0.95)',
           backdropFilter: 'blur(10px)',
           borderRadius: '20px',
@@ -1427,7 +1443,7 @@ function AdminPortal({ onLogout }) {
           boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
           border: '1px solid rgba(255,255,255,0.2)'
         }}>
-          <Spin 
+          <Spin
             spinning={loading}
             tip="Loading data..."
             size="large"
@@ -1465,7 +1481,7 @@ function AdminPortal({ onLogout }) {
           </Spin>
         </Content>
       </Layout>
-      
+
       {/* Group Members Modal */}
       <Modal
         title={`Adjust Members - ${selectedGroup?.name}`}
@@ -1486,7 +1502,7 @@ function AdminPortal({ onLogout }) {
             Select students to add to this group
           </Text>
         </div>
-        
+
         <Transfer
           dataSource={availableStudents.map(student => ({
             key: student.email,
@@ -1512,7 +1528,7 @@ function AdminPortal({ onLogout }) {
             item.title.indexOf(inputValue) !== -1 || item.description.indexOf(inputValue) !== -1
           }
         />
-        
+
         <div style={{ marginTop: 16, padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
           <Text strong>Current Group Members ({selectedStudents.length}):</Text>
           <div style={{ marginTop: 8 }}>
@@ -1531,7 +1547,7 @@ function AdminPortal({ onLogout }) {
           </div>
         </div>
       </Modal>
-      
+
       {/* Kit Inspection Modal */}
       <Modal
         title={`Kit Inspection - ${selectedKit?.kitName || selectedKit?.name || 'Unknown'}`}
@@ -1561,7 +1577,7 @@ function AdminPortal({ onLogout }) {
               showIcon
               style={{ marginBottom: 16 }}
             />
-            
+
             <Descriptions title="Rental Information" bordered column={2} style={{ marginBottom: 16 }}>
               <Descriptions.Item label="Student">{selectedRental.userName}</Descriptions.Item>
               <Descriptions.Item label="Email">{selectedRental.userEmail}</Descriptions.Item>
@@ -1578,18 +1594,18 @@ function AdminPortal({ onLogout }) {
                 </Descriptions.Item>
               )}
             </Descriptions>
-            
+
             <Divider>Component Inspection</Divider>
-            
+
             <div style={{ marginBottom: 16 }}>
               <Text strong>Check each component for damage:</Text>
             </div>
-            
+
             {(selectedKit.components && selectedKit.components.length > 0) ? (
               selectedKit.components.map((component, index) => (
-                <Card 
-                  key={index} 
-                  size="small" 
+                <Card
+                  key={index}
+                  size="small"
                   style={{ marginBottom: 8 }}
                   title={
                     <Space>
@@ -1609,29 +1625,29 @@ function AdminPortal({ onLogout }) {
                     <Col span={12}>
                       <Text>Quantity: {component.quantity || component.rentedQuantity}</Text>
                     </Col>
-                  <Col span={12}>
-                    <Space>
-                      <Checkbox
-                        checked={damageAssessment[component.componentName || component.name]?.damaged || false}
-                        onChange={(e) => handleComponentDamage(component.componentName || component.name, e.target.checked, e.target.checked ? 50000 : 0)}
-                      >
-                        Damaged
-                      </Checkbox>
-                      {damageAssessment[component.componentName || component.name]?.damaged && (
-                        <InputNumber
-                          placeholder="Damage Value (VND)"
-                          value={damageAssessment[component.componentName || component.name]?.value || 0}
-                          onChange={(value) => handleComponentDamage(component.componentName || component.name, true, value || 0)}
-                          style={{ width: 150 }}
-                          formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                          parser={value => value.replace(/\$\s?|(,*)/g, '')}
-                        />
-                      )}
-                    </Space>
-                  </Col>
-                </Row>
-              </Card>
-            ))
+                    <Col span={12}>
+                      <Space>
+                        <Checkbox
+                          checked={damageAssessment[component.componentName || component.name]?.damaged || false}
+                          onChange={(e) => handleComponentDamage(component.componentName || component.name, e.target.checked, e.target.checked ? 50000 : 0)}
+                        >
+                          Damaged
+                        </Checkbox>
+                        {damageAssessment[component.componentName || component.name]?.damaged && (
+                          <InputNumber
+                            placeholder="Damage Value (VND)"
+                            value={damageAssessment[component.componentName || component.name]?.value || 0}
+                            onChange={(value) => handleComponentDamage(component.componentName || component.name, true, value || 0)}
+                            style={{ width: 150 }}
+                            formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                            parser={value => value.replace(/\$\s?|(,*)/g, '')}
+                          />
+                        )}
+                      </Space>
+                    </Col>
+                  </Row>
+                </Card>
+              ))
             ) : (
               <Alert
                 message="No Components"
@@ -1640,17 +1656,17 @@ function AdminPortal({ onLogout }) {
                 showIcon
               />
             )}
-            
+
             <Divider orientation="left">
               <Space>
                 <SafetyCertificateOutlined style={{ color: '#722ed1' }} />
                 <Text strong style={{ fontSize: 16 }}>Chính Sách Phạt (Penalty Policies)</Text>
               </Space>
             </Divider>
-            
+
             {penaltyPolicies && penaltyPolicies.length > 0 ? (
               <List
-              dataSource={penaltyPolicies}
+                dataSource={penaltyPolicies}
                 renderItem={(policy) => (
                   <List.Item>
                     <Row style={{ width: '100%' }} align="middle" gutter={16}>
@@ -1677,11 +1693,11 @@ function AdminPortal({ onLogout }) {
                     </Row>
                   </List.Item>
                 )}
-                style={{ 
+                style={{
                   background: '#fafafa',
                   borderRadius: '8px',
                   padding: '8px 0',
-                  marginBottom: 16 
+                  marginBottom: 16
                 }}
               />
             ) : (
@@ -1691,16 +1707,16 @@ function AdminPortal({ onLogout }) {
                 type="info"
                 showIcon
                 icon={<InfoCircleOutlined />}
-              style={{ marginBottom: 16 }}
-            />
+                style={{ marginBottom: 16 }}
+              />
             )}
-            
+
             <Divider />
-            
+
             <Alert
               message={`Total Fine: ${fineAmount.toLocaleString()} VND`}
               description={
-                fineAmount > 0 
+                fineAmount > 0
                   ? "This fine will be sent to the group leader if the student is part of a group, otherwise to the student directly."
                   : "No damage detected. Kit will be returned successfully."
               }
@@ -1708,7 +1724,7 @@ function AdminPortal({ onLogout }) {
               showIcon
               style={{ marginBottom: 16 }}
             />
-            
+
             {fineAmount > 0 && (
               <Alert
                 message="Fine Details"
@@ -1854,8 +1870,8 @@ const DashboardContent = ({ systemStats }) => {
                   }
                   value={stat.value}
                   suffix={stat.suffix}
-                  valueStyle={{ 
-                    color: stat.color, 
+                  valueStyle={{
+                    color: stat.color,
                     fontSize: '28px',
                     fontWeight: 'bold'
                   }}
@@ -1866,7 +1882,7 @@ const DashboardContent = ({ systemStats }) => {
           </Col>
         ))}
       </Row>
-      
+
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} lg={12}>
           <motion.div
@@ -1874,8 +1890,8 @@ const DashboardContent = ({ systemStats }) => {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.8, duration: 0.5 }}
           >
-            <Card 
-              title="Recent Activity" 
+            <Card
+              title="Recent Activity"
               extra={<a href="#" style={{ color: '#667eea', fontWeight: 'bold' }}>View All</a>}
               style={{
                 borderRadius: '20px',
@@ -1908,7 +1924,7 @@ const DashboardContent = ({ systemStats }) => {
                       >
                         {activity.action}
                       </motion.p>
-                      <motion.p 
+                      <motion.p
                         style={{ fontSize: 12, color: '#999' }}
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
@@ -1929,8 +1945,8 @@ const DashboardContent = ({ systemStats }) => {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.9, duration: 0.5 }}
           >
-            <Card 
-              title="Popular Kits" 
+            <Card
+              title="Popular Kits"
               extra={<a href="#" style={{ color: '#667eea', fontWeight: 'bold' }}>View All</a>}
               style={{
                 borderRadius: '20px',
@@ -1988,6 +2004,178 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
   const [editingComponent, setEditingComponent] = useState(null);
   const [componentFormVisible, setComponentFormVisible] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [sheetSelectionModal, setSheetSelectionModal] = useState({ visible: false, sheets: [], selectedSheet: null, file: null, importType: null, importData: null });
+
+  // Helper function to read sheet names from Excel file
+  const getExcelSheetNames = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          resolve(workbook.SheetNames || []);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      reader.onerror = (error) => reject(error);
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
+  // Helper function to show sheet selection modal and proceed with import
+  const showSheetSelectionAndImport = async (file, importType, importData) => {
+    try {
+      const sheetNames = await getExcelSheetNames(file);
+
+      if (sheetNames.length === 0) {
+        notification.error({
+          message: 'Error',
+          description: 'No sheets found in Excel file',
+          placement: 'topRight',
+        });
+        return;
+      }
+
+      // If only one sheet, use it directly
+      if (sheetNames.length === 1) {
+        await proceedWithImport(file, sheetNames[0], importType, importData);
+        return;
+      }
+
+      // Show modal for sheet selection
+      setSheetSelectionModal({
+        visible: true,
+        sheets: sheetNames,
+        selectedSheet: sheetNames[0], // Default to first sheet
+        file: file,
+        importType: importType,
+        importData: importData
+      });
+    } catch (error) {
+      console.error('Error reading Excel file:', error);
+      notification.error({
+        message: 'Error',
+        description: 'Failed to read Excel file: ' + error.message,
+        placement: 'topRight',
+      });
+    }
+  };
+
+  // Proceed with import using selected sheet
+  const proceedWithImport = async (file, sheetName, importType, importData) => {
+    try {
+      if (importType === 'components') {
+        if (importData && importData.kitId) {
+          const response = await kitComponentAPI.importComponents(file, importData.kitId, sheetName);
+          handleImportComponentsResponse(response);
+        } else if (importData && importData.formValues) {
+          // For new kit - create kit first then import
+          await handleImportComponentsForNewKitWithSheet(file, importData.formValues, sheetName);
+        } else {
+          await handleImportComponents(file, sheetName);
+        }
+      } else if (importType === 'kits') {
+        await handleImportKits(file, sheetName);
+      } else if (importType === 'accounts') {
+        await handleImportAccounts(file, importData.role, sheetName);
+      }
+    } catch (error) {
+      console.error('Import error:', error);
+      notification.error({
+        message: 'Import Failed',
+        description: error.message || 'Failed to import data',
+        placement: 'topRight',
+        duration: 5,
+      });
+    }
+  };
+
+  const handleImportComponentsResponse = (response) => {
+    let message = 'Import completed';
+    let successCount = 0;
+    let errorCount = 0;
+
+    if (typeof response === 'string') {
+      message = response;
+    } else if (response) {
+      message = response.message || 'Import completed';
+      successCount = response.successCount || 0;
+      errorCount = response.errorCount || 0;
+
+      if (response.errors && response.errors.length > 0) {
+        console.warn('Import errors:', response.errors);
+      }
+    }
+
+    if (successCount > 0 || errorCount === 0) {
+      notification.success({
+        message: 'Import Successful',
+        description: `Successfully imported ${successCount} component(s). ${errorCount > 0 ? `${errorCount} error(s) occurred.` : ''}`,
+        placement: 'topRight',
+        duration: 5,
+      });
+    } else {
+      notification.warning({
+        message: 'Import Completed with Errors',
+        description: message,
+        placement: 'topRight',
+        duration: 5,
+      });
+    }
+
+    // Refresh components list
+    if (editingKit && editingKit.id) {
+      loadComponents();
+    }
+  };
+
+  const handleImportAccounts = async (file, role, sheetName) => {
+    try {
+      const response = await excelImportAPI.importAccounts(file, role, sheetName);
+
+      let message = 'Import completed';
+      let successCount = 0;
+      let errorCount = 0;
+
+      if (typeof response === 'string') {
+        message = response;
+      } else if (response) {
+        message = response.message || 'Import completed';
+        successCount = response.successCount || 0;
+        errorCount = response.errorCount || 0;
+
+        if (response.errors && response.errors.length > 0) {
+          console.warn('Import errors:', response.errors);
+        }
+      }
+
+      if (successCount > 0 || errorCount === 0) {
+        notification.success({
+          message: 'Import Successful',
+          description: `Successfully imported ${successCount} ${role.toLowerCase()}(s). ${errorCount > 0 ? `${errorCount} error(s) occurred.` : ''}`,
+          placement: 'topRight',
+          duration: 5,
+        });
+      } else {
+        notification.warning({
+          message: 'Import Completed with Errors',
+          description: message,
+          placement: 'topRight',
+          duration: 5,
+        });
+      }
+    } catch (error) {
+      console.error('Import error:', error);
+      notification.error({
+        message: 'Import Failed',
+        description: error.message || 'Failed to import accounts',
+        placement: 'topRight',
+        duration: 5,
+      });
+    }
+  };
 
   // Load kits from API - now handled by parent component
   const loadKits = async () => {
@@ -2002,21 +2190,21 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
       console.log('loadComponents: No editingKit.id, skipping');
       return;
     }
-    
+
     console.log('loadComponents: Starting refresh for kit:', editingKit.id);
-    
+
     try {
       setLoading(true);
       // Fetch fresh kit data with components from backend
       const response = await kitAPI.getKitById(editingKit.id);
       console.log('loadComponents: API response:', response);
-      
+
       if (response && response.data) {
         const kitData = response.data;
         const kitComponents = kitData.components || [];
         console.log('loadComponents: Fresh components from API:', kitComponents);
         setComponents(kitComponents);
-        
+
         // Update the editingKit with fresh data
         setEditingKit(prev => ({ ...prev, components: kitComponents }));
         console.log('loadComponents: Components refreshed successfully');
@@ -2094,9 +2282,9 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
         <div>
           <Text>{record.components?.length || 0} components</Text>
           <br />
-          <Button 
-            type="link" 
-            size="small" 
+          <Button
+            type="link"
+            size="small"
             onClick={() => manageComponents(record)}
             style={{ padding: 0, height: 'auto' }}
           >
@@ -2122,8 +2310,32 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
-            <Button type="default" size="small" icon={<EyeOutlined />} onClick={() => showKitDetails(record)}>
+            <Button
+              type="primary"
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={() => showKitDetails(record)}
+              style={{
+                background: 'linear-gradient(135deg, #1890ff 0%, #096dd9 100%)',
+                border: 'none',
+                color: '#fff'
+              }}
+            >
               Details
+            </Button>
+          </motion.div>
+          <motion.div
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <Button
+              type="primary"
+              danger
+              size="small"
+              icon={<DeleteOutlined />}
+              onClick={() => handleDeleteKit(record.id)}
+            >
+              Delete
             </Button>
           </motion.div>
         </Space>
@@ -2132,83 +2344,238 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
   ];
 
   const showKitDetails = (kit) => {
+    // Helper function to format date time
+    const formatKitDateTime = (dateTimeString) => {
+      if (!dateTimeString) return 'N/A';
+      return new Date(dateTimeString).toLocaleString('vi-VN');
+    };
+
     Modal.info({
-      title: 'Kit Details',
-      width: 700,
+      title: (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <InfoCircleOutlined style={{ color: '#1890ff', fontSize: '20px' }} />
+          <span style={{ fontSize: '18px', fontWeight: 'bold' }}>Kit Details</span>
+        </div>
+      ),
+      width: 900,
+      okText: 'Close',
+      okButtonProps: {
+        style: {
+          borderRadius: '8px',
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+          border: 'none'
+        }
+      },
       content: (
         <div>
           <Descriptions bordered column={2} style={{ marginBottom: 16 }}>
-            <Descriptions.Item label="ID">
-              <Text code>{kit.id}</Text>
+            <Descriptions.Item label="Kit ID" span={2}>
+              <Text code style={{ fontSize: '14px' }}>{kit.id}</Text>
             </Descriptions.Item>
-            <Descriptions.Item label="Kit Name">{kit.kitName}</Descriptions.Item>
+            <Descriptions.Item label="Kit Name">
+              <Text strong style={{ fontSize: '16px' }}>{kit.kitName || kit.name || 'N/A'}</Text>
+            </Descriptions.Item>
             <Descriptions.Item label="Type">
-              <Tag color={kit.type === 'LECTURER_KIT' ? 'red' : kit.type === 'STUDENT_KIT' ? 'blue' : 'default'}>
-                {kit.type}
+              <Tag
+                color={kit.type === 'LECTURER_KIT' ? 'red' : kit.type === 'STUDENT_KIT' ? 'blue' : 'default'}
+                style={{ fontSize: '13px', padding: '4px 12px' }}
+              >
+                {kit.type || 'N/A'}
               </Tag>
             </Descriptions.Item>
             <Descriptions.Item label="Status">
-              <Tag color={kit.status === 'AVAILABLE' ? 'green' : kit.status === 'IN_USE' ? 'orange' : 'red'}>
-                {kit.status}
+              <Tag
+                color={kit.status === 'AVAILABLE' ? 'green' : kit.status === 'IN_USE' ? 'orange' : 'red'}
+                style={{ fontSize: '13px', padding: '4px 12px' }}
+              >
+                {kit.status || 'N/A'}
               </Tag>
             </Descriptions.Item>
-            <Descriptions.Item label="Total Quantity">{kit.quantityTotal}</Descriptions.Item>
-            <Descriptions.Item label="Available Quantity">{kit.quantityAvailable}</Descriptions.Item>
-            <Descriptions.Item label="Description" span={2}>{kit.description || 'No description'}</Descriptions.Item>
+            <Descriptions.Item label="Total Quantity">
+              <Text strong style={{ fontSize: '15px', color: '#1890ff' }}>
+                {kit.quantityTotal || 0}
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="Available Quantity">
+              <Text strong style={{ fontSize: '15px', color: '#52c41a' }}>
+                {kit.quantityAvailable || 0}
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="In Use Quantity">
+              <Text strong style={{ fontSize: '15px', color: '#faad14' }}>
+                {(kit.quantityTotal || 0) - (kit.quantityAvailable || 0)}
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="Total Components">
+              <Text strong style={{ fontSize: '15px' }}>
+                {kit.components?.length || 0} components
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="Description" span={2}>
+              <Text>{kit.description || 'No description available'}</Text>
+            </Descriptions.Item>
             <Descriptions.Item label="Image URL" span={2}>
-              {kit.imageUrl && kit.imageUrl !== 'null' ? (
+              {kit.imageUrl && kit.imageUrl !== 'null' && kit.imageUrl !== 'undefined' ? (
                 <div>
-                  <Text code style={{ fontSize: '12px', wordBreak: 'break-all' }}>{kit.imageUrl}</Text>
-                  <br />
-                  <Button 
-                    type="link" 
-                    size="small" 
-                    onClick={() => window.open(kit.imageUrl, '_blank')}
-                    style={{ padding: 0, marginTop: 4 }}
-                  >
-                    Open Image
-                  </Button>
+                  <div style={{ marginBottom: 8 }}>
+                    <Text code style={{ fontSize: '12px', wordBreak: 'break-all' }}>
+                      {kit.imageUrl}
+                    </Text>
+                  </div>
+                  <Space>
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<EyeOutlined />}
+                      onClick={() => window.open(kit.imageUrl, '_blank')}
+                      style={{
+                        borderRadius: '6px',
+                        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                        border: 'none'
+                      }}
+                    >
+                      View Image
+                    </Button>
+                    {kit.imageUrl.startsWith('http') && (
+                      <img
+                        src={kit.imageUrl}
+                        alt="Kit"
+                        style={{
+                          maxWidth: '200px',
+                          maxHeight: '150px',
+                          borderRadius: '8px',
+                          border: '1px solid #d9d9d9',
+                          objectFit: 'cover'
+                        }}
+                        onError={(e) => {
+                          e.target.style.display = 'none';
+                        }}
+                      />
+                    )}
+                  </Space>
                 </div>
               ) : (
                 <Text type="secondary">No image available</Text>
               )}
             </Descriptions.Item>
+            {(kit.createdAt || kit.updatedAt) && (
+              <>
+                {kit.createdAt && (
+                  <Descriptions.Item label="Created At">
+                    <Text type="secondary">{formatKitDateTime(kit.createdAt)}</Text>
+                  </Descriptions.Item>
+                )}
+                {kit.updatedAt && (
+                  <Descriptions.Item label="Updated At">
+                    <Text type="secondary">{formatKitDateTime(kit.updatedAt)}</Text>
+                  </Descriptions.Item>
+                )}
+              </>
+            )}
           </Descriptions>
-          
-          <Divider>Components</Divider>
-          
+
+          <Divider orientation="left">
+            <Space>
+              <BuildOutlined style={{ color: '#1890ff' }} />
+              <Text strong style={{ fontSize: '16px' }}>Components ({kit.components?.length || 0})</Text>
+            </Space>
+          </Divider>
+
           {kit.components && kit.components.length > 0 ? (
             <Table
               dataSource={kit.components}
+              rowKey={(record, index) => record.id || record.componentName || index}
               columns={[
-                { title: 'Component Name', dataIndex: 'name', key: 'name' },
-                { 
-                  title: 'Amount', 
-                  dataIndex: 'amount', 
-                  key: 'amount',
-                  render: (amt) => (
+                {
+                  title: 'Component Name',
+                  dataIndex: 'componentName',
+                  key: 'componentName',
+                  render: (text, record) => text || record.name || 'N/A'
+                },
+                {
+                  title: 'Component Type',
+                  dataIndex: 'componentType',
+                  key: 'componentType',
+                  render: (type) => type ? (
+                    <Tag color="purple">{type}</Tag>
+                  ) : 'N/A'
+                },
+                {
+                  title: 'Price (VND)',
+                  dataIndex: 'pricePerCom',
+                  key: 'pricePerCom',
+                  render: (price) => (
                     <Text strong style={{ color: '#1890ff' }}>
-                      {amt ? Number(amt).toLocaleString() : 0} VND
+                      {price ? Number(price).toLocaleString() : 0} VND
                     </Text>
                   )
                 },
-                { title: 'Quantity', dataIndex: 'quantity', key: 'quantity' },
-                { 
-                  title: 'Condition', 
-                  dataIndex: 'condition', 
+                {
+                  title: 'Total Quantity',
+                  dataIndex: 'quantityTotal',
+                  key: 'quantityTotal',
+                  render: (qty, record) => (
+                    <Text strong>{qty || record.quantity || 0}</Text>
+                  )
+                },
+                {
+                  title: 'Available Quantity',
+                  dataIndex: 'quantityAvailable',
+                  key: 'quantityAvailable',
+                  render: (qty) => (
+                    <Text strong style={{ color: '#52c41a' }}>
+                      {qty || 0}
+                    </Text>
+                  )
+                },
+                {
+                  title: 'Status',
+                  dataIndex: 'status',
+                  key: 'status',
+                  render: (status) => (
+                    <Tag
+                      color={
+                        status === 'AVAILABLE' ? 'green' :
+                          status === 'IN_USE' ? 'orange' :
+                            status === 'MAINTENANCE' ? 'blue' :
+                              status === 'DAMAGED' ? 'red' : 'default'
+                      }
+                    >
+                      {status || 'N/A'}
+                    </Tag>
+                  )
+                },
+                {
+                  title: 'Link',
+                  dataIndex: 'link',
+                  key: 'link',
+                  render: (link) => link ? (
+                    <a href={link} target="_blank" rel="noopener noreferrer">
+                      {link.length > 30 ? link.substring(0, 30) + '...' : link}
+                    </a>
+                  ) : 'N/A'
+                },
+                {
+                  title: 'Condition',
+                  dataIndex: 'condition',
                   key: 'condition',
-                  render: (condition) => (
+                  render: (condition) => condition ? (
                     <Tag color={condition === 'New' ? 'green' : condition === 'Used' ? 'orange' : 'red'}>
                       {condition}
                     </Tag>
-                  )
+                  ) : 'N/A'
                 }
               ]}
-              pagination={false}
+              pagination={kit.components.length > 10 ? { pageSize: 10 } : false}
               size="small"
+              style={{ marginTop: 16 }}
             />
           ) : (
-            <Text type="secondary">No components available (0 components)</Text>
+            <Empty
+              description="No components available"
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              style={{ margin: '24px 0' }}
+            />
           )}
         </div>
       )
@@ -2217,7 +2584,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
 
   const editKit = (kit) => {
     setEditingKit(kit);
-    
+
     // Map API data to form field names
     const formData = {
       name: kit.kitName || kit.name, // Map kitName to name field
@@ -2228,10 +2595,10 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
       description: kit.description,
       imageUrl: kit.imageUrl
     };
-    
+
     console.log('Editing kit:', kit);
     console.log('Form data:', formData);
-    
+
     form.setFieldsValue(formData);
     setModalVisible(true);
   };
@@ -2248,6 +2615,136 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
     setComponentFormVisible(true);
   };
 
+  const handleImportComponents = async (file, sheetName = null) => {
+    if (!editingKit || !editingKit.id) {
+      notification.error({
+        message: 'Error',
+        description: 'Please select a kit first',
+        placement: 'topRight',
+      });
+      return;
+    }
+
+    try {
+      const response = await kitComponentAPI.importComponents(file, editingKit.id, sheetName);
+      handleImportComponentsResponse(response);
+      await loadComponents();
+    } catch (error) {
+      console.error('Import error:', error);
+      notification.error({
+        message: 'Import Failed',
+        description: error.message || 'Failed to import components. Please check file format. Expected Excel format with columns: index, name, link, quantity.',
+        placement: 'topRight',
+        duration: 5,
+      });
+    }
+  };
+
+  const handleImportComponentsForNewKit = async (file, formValues) => {
+    // Validate form values first
+    if (!formValues.name || !formValues.category || !formValues.quantityTotal) {
+      notification.error({
+        message: 'Error',
+        description: 'Please fill in Kit Name, Kit Type, and Total Quantity first before importing components',
+        placement: 'topRight',
+        duration: 5,
+      });
+      return;
+    }
+
+    // Show sheet selection first
+    await showSheetSelectionAndImport(file, 'components', { formValues });
+  };
+
+  const handleImportComponentsForNewKitWithSheet = async (file, formValues, sheetName) => {
+    try {
+      // Create kit first using form values
+      const kitData = {
+        kitName: formValues.name,
+        type: formValues.category?.toUpperCase() || 'STUDENT_KIT',
+        status: 'AVAILABLE',
+        description: formValues.description || '',
+        imageUrl: formValues.imageUrl || '',
+        quantityTotal: formValues.quantityTotal || 1,
+        quantityAvailable: formValues.quantityAvailable || formValues.quantityTotal || 1,
+        components: []
+      };
+
+      notification.info({
+        message: 'Creating Kit...',
+        description: 'Creating kit first, then importing components...',
+        placement: 'topRight',
+        duration: 3,
+      });
+
+      const kitResponse = await kitAPI.createSingleKit(kitData);
+
+      if (kitResponse && kitResponse.data && kitResponse.data.id) {
+        const newKitId = kitResponse.data.id;
+
+        // Now import components for the newly created kit with selected sheet
+        const response = await kitComponentAPI.importComponents(file, newKitId, sheetName);
+
+        let message = 'Import completed';
+        let successCount = 0;
+        let errorCount = 0;
+
+        if (typeof response === 'string') {
+          message = response;
+        } else if (response) {
+          message = response.message || 'Import completed';
+          successCount = response.successCount || 0;
+          errorCount = response.errorCount || 0;
+
+          if (response.errors && response.errors.length > 0) {
+            console.warn('Import errors:', response.errors);
+          }
+        }
+
+        // Refresh kits list
+        const updatedKitsResponse = await kitAPI.getAllKits();
+        if (Array.isArray(updatedKitsResponse)) {
+          setKits(updatedKitsResponse);
+        }
+
+        if (successCount > 0 || errorCount === 0) {
+          notification.success({
+            message: 'Kit Created & Components Imported',
+            description: `Kit created successfully. ${successCount} component(s) imported from sheet "${sheetName}". ${errorCount > 0 ? `${errorCount} error(s) occurred.` : ''}`,
+            placement: 'topRight',
+            duration: 5,
+          });
+
+          // Close modal and reset form
+          setModalVisible(false);
+          form.resetFields();
+        } else {
+          notification.warning({
+            message: 'Kit Created, Import Completed with Errors',
+            description: `Kit created successfully. ${message}`,
+            placement: 'topRight',
+            duration: 5,
+          });
+        }
+      } else {
+        notification.error({
+          message: 'Error',
+          description: 'Failed to create kit. Please try again.',
+          placement: 'topRight',
+          duration: 5,
+        });
+      }
+    } catch (error) {
+      console.error('Import error:', error);
+      notification.error({
+        message: 'Import Failed',
+        description: error.message || 'Failed to create kit or import components. Please check file format. Expected Excel format with columns: index, name, link, quantity.',
+        placement: 'topRight',
+        duration: 5,
+      });
+    }
+  };
+
   const editComponent = (component) => {
     // Map the component data to match form field names
     const mappedComponent = {
@@ -2259,10 +2756,11 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
       quantityAvailable: component.quantityAvailable,
       pricePerCom: component.pricePerCom,
       status: component.status,
-      imageUrl: component.imageUrl
+      imageUrl: component.imageUrl,
+      link: component.link
     };
     setEditingComponent(mappedComponent);
-    
+
     // Populate form with component data
     form.setFieldsValue({
       componentName: mappedComponent.componentName,
@@ -2272,9 +2770,10 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
       quantityAvailable: mappedComponent.quantityAvailable,
       pricePerCom: mappedComponent.pricePerCom,
       status: mappedComponent.status,
-      imageUrl: mappedComponent.imageUrl
+      imageUrl: mappedComponent.imageUrl,
+      link: mappedComponent.link
     });
-    
+
     setComponentFormVisible(true);
   };
 
@@ -2292,22 +2791,23 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           quantityAvailable: values.quantityAvailable,
           pricePerCom: values.pricePerCom || 0,
           status: values.status,
-          imageUrl: values.imageUrl || ''
+          imageUrl: values.imageUrl || '',
+          link: values.link || ''
         };
 
         console.log('Updating component with data:', componentData);
         const response = await kitComponentAPI.updateComponent(editingComponent.id, componentData);
         console.log('Update response:', response);
-        
+
         // The backend returns the component data directly
         if (response && response.id) {
           // Refresh components from backend to get the latest data
           await loadComponents();
-          
+
           // Close the form modal after successful update
           setComponentFormVisible(false);
           setEditingComponent(null);
-          
+
           notification.success({
             message: 'Success',
             description: 'Component updated successfully',
@@ -2333,21 +2833,22 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           quantityAvailable: values.quantityAvailable,
           pricePerCom: values.pricePerCom || 0,
           status: values.status,
-          imageUrl: values.imageUrl || ''
+          imageUrl: values.imageUrl || '',
+          link: values.link || ''
         };
 
         const response = await kitComponentAPI.createComponent(componentData);
-        
+
         // The backend returns the component data directly
         if (response && response.id) {
           console.log('Create component: Success, calling loadComponents()');
           // Refresh components from backend to get the latest data
           await loadComponents();
-          
+
           // Close the form modal after successful creation
           setComponentFormVisible(false);
           setEditingComponent(null);
-          
+
           notification.success({
             message: 'Success',
             description: 'Component created successfully',
@@ -2372,13 +2873,13 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
     try {
       const response = await kitComponentAPI.deleteComponent(componentId);
       console.log('Delete component response:', response);
-      
+
       // The backend returns "Your KitComponent is Delete successfully" string
       if (response !== undefined && response !== null) {
         console.log('Delete component: Success, calling loadComponents()');
         // Refresh components from backend to get the latest data
         await loadComponents();
-        
+
         notification.success({
           message: 'Success',
           description: 'Component deleted successfully',
@@ -2398,7 +2899,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
   };
 
   const saveComponents = () => {
-    setKits(prev => prev.map(kit => 
+    setKits(prev => prev.map(kit =>
       kit.id === editingKit.id ? { ...kit, components: components } : kit
     ));
     setComponentModalVisible(false);
@@ -2412,10 +2913,49 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
     });
   };
 
+  const handleDeleteKit = async (kitId) => {
+    Modal.confirm({
+      title: 'Delete Kit',
+      content: 'Are you sure you want to delete this kit? This action cannot be undone and will also delete all associated components.',
+      okText: 'Delete',
+      okType: 'danger',
+      cancelText: 'Cancel',
+      onOk: async () => {
+        try {
+          setLoading(true);
+          await kitAPI.deleteKit(kitId);
+
+          // Refresh kits from backend
+          const updatedKitsResponse = await kitAPI.getAllKits();
+          if (Array.isArray(updatedKitsResponse)) {
+            setKits(updatedKitsResponse);
+          }
+
+          notification.success({
+            message: 'Success',
+            description: 'Kit deleted successfully',
+            placement: 'topRight',
+            duration: 4,
+          });
+        } catch (error) {
+          console.error('Error deleting kit:', error);
+          notification.error({
+            message: 'Error',
+            description: 'Failed to delete kit: ' + error.message,
+            placement: 'topRight',
+            duration: 4,
+          });
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
+  };
+
   const handleSubmit = async (values) => {
     setLoading(true);
     try {
-    if (editingKit) {
+      if (editingKit) {
         // Update existing kit using backend API
         const kitData = {
           kitName: values.name, // Map name back to kitName
@@ -2430,25 +2970,25 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
         console.log('Updating kit with data:', kitData);
         const response = await kitAPI.updateKit(editingKit.id, kitData);
         console.log('Update kit response:', response);
-        
+
         if (response) {
           // Refresh kits from backend to get the latest data
           const updatedKitsResponse = await kitAPI.getAllKits();
           if (Array.isArray(updatedKitsResponse)) {
             setKits(updatedKitsResponse);
           }
-          
+
           // Close modal and reset form
           setModalVisible(false);
           setEditingKit(null);
           form.resetFields();
-          
-      notification.success({
-        message: 'Success',
-        description: 'Kit updated successfully',
-        placement: 'topRight',
-          duration: 4,
-      });
+
+          notification.success({
+            message: 'Success',
+            description: 'Kit updated successfully',
+            placement: 'topRight',
+            duration: 4,
+          });
         } else {
           notification.error({
             message: 'Error',
@@ -2457,12 +2997,12 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
             duration: 4,
           });
         }
-    } else {
+      } else {
         // Create new kit using backend API
         const kitData = {
           kitName: values.name,
           type: values.category?.toUpperCase() || 'STUDENT_KIT',
-        status: 'AVAILABLE',
+          status: 'AVAILABLE',
           description: values.description || '',
           imageUrl: values.imageUrl || '',
           quantityTotal: values.quantityTotal || 1,
@@ -2471,25 +3011,25 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
         };
 
         const response = await kitAPI.createSingleKit(kitData);
-        
+
         if (response.data) {
           const newKit = {
             id: response.data.id,
             ...response.data
-      };
-      setKits(prev => [...prev, newKit]);
-      notification.success({
-        message: 'Success',
+          };
+          setKits(prev => [...prev, newKit]);
+          notification.success({
+            message: 'Success',
             description: response.message || 'Kit created successfully',
-        placement: 'topRight',
+            placement: 'topRight',
             duration: 4,
-      });
-    }
+          });
+        }
       }
-      
-    setModalVisible(false);
-    setEditingKit(null);
-    form.resetFields();
+
+      setModalVisible(false);
+      setEditingKit(null);
+      form.resetFields();
     } catch (error) {
       notification.error({
         message: 'Error',
@@ -2517,33 +3057,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Upload
-                  accept=".xlsx,.xls"
-                  showUploadList={false}
-                  beforeUpload={(file) => {
-                    handleImportKits(file);
-                    return false;
-                  }}
-                >
-                  <Button 
-                    icon={<ImportOutlined />}
-                    style={{
-                      borderRadius: '12px',
-                      background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-                      border: 'none',
-                      fontWeight: 'bold',
-                      color: '#fff'
-                    }}
-                  >
-                    Import Kits
-                  </Button>
-                </Upload>
-              </motion.div>
-              <motion.div
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                <Button 
+                <Button
                   icon={<ExportOutlined />}
                   onClick={handleExportKits}
                   style={{
@@ -2561,10 +3075,14 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Button 
-                  type="primary" 
-                  icon={<PlusOutlined />} 
-                  onClick={() => setModalVisible(true)}
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={() => {
+                    setEditingKit(null);
+                    form.resetFields();
+                    setModalVisible(true);
+                  }}
                   style={{
                     borderRadius: '12px',
                     background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
@@ -2592,9 +3110,9 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
             borderRadius: '20px 20px 0 0'
           }}
         >
-          <Table 
-            columns={columns} 
-            dataSource={kits} 
+          <Table
+            columns={columns}
+            dataSource={kits}
             rowKey="id"
             pagination={{
               showSizeChanger: true,
@@ -2649,6 +3167,82 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           <Form.Item name="imageUrl" label="Image URL">
             <Input />
           </Form.Item>
+          {!editingKit && (
+            <Form.Item label="Import Kit Components">
+              <Upload
+                accept=".xlsx,.xls"
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  const formValues = form.getFieldsValue();
+                  if (!formValues.name || !formValues.category || !formValues.quantityTotal) {
+                    notification.error({
+                      message: 'Error',
+                      description: 'Please fill in Kit Name, Kit Type, and Total Quantity first before importing components',
+                      placement: 'topRight',
+                      duration: 5,
+                    });
+                    return false;
+                  }
+                  showSheetSelectionAndImport(file, 'components', { formValues });
+                  return false;
+                }}
+              >
+                <Button
+                  icon={<ImportOutlined />}
+                  block
+                  style={{
+                    borderRadius: '8px',
+                    background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+                    border: 'none',
+                    fontWeight: 'bold',
+                    color: '#fff'
+                  }}
+                >
+                  Import Components from Excel
+                </Button>
+              </Upload>
+              <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginTop: 4 }}>
+                Excel format: index, name, link, quantity. Kit will be created first, then components will be imported.
+              </Text>
+            </Form.Item>
+          )}
+          {editingKit && (
+            <Form.Item label="Import Kit Components">
+              <Upload
+                accept=".xlsx,.xls"
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  if (!editingKit || !editingKit.id) {
+                    notification.error({
+                      message: 'Error',
+                      description: 'Please select a kit first',
+                      placement: 'topRight',
+                    });
+                    return false;
+                  }
+                  showSheetSelectionAndImport(file, 'components', { kitId: editingKit.id });
+                  return false;
+                }}
+              >
+                <Button
+                  icon={<ImportOutlined />}
+                  block
+                  style={{
+                    borderRadius: '8px',
+                    background: 'linear-gradient(135deg, #1890ff 0%, #096dd9 100%)',
+                    border: 'none',
+                    fontWeight: 'bold',
+                    color: '#fff'
+                  }}
+                >
+                  Import Components from Excel
+                </Button>
+              </Upload>
+              <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginTop: 4 }}>
+                Excel format: index, name, link, quantity
+              </Text>
+            </Form.Item>
+          )}
           <Form.Item>
             <Space>
               <motion.div
@@ -2656,7 +3250,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
                 whileTap={{ scale: 0.95 }}
               >
                 <Button type="primary" htmlType="submit">
-                  {editingKit ? 'Update' : 'Add'}
+                  {editingKit ? 'Update' : 'Create Kit'}
                 </Button>
               </motion.div>
               <motion.div
@@ -2704,19 +3298,53 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
         style={{ top: 20 }}
       >
         <div style={{ marginBottom: 16 }}>
-          <Button 
-            type="primary" 
-            icon={<PlusOutlined />} 
-            onClick={addComponent}
-            style={{
-              borderRadius: '8px',
-              background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-              border: 'none',
-              fontWeight: 'bold'
-            }}
-          >
-            Add Component
-          </Button>
+          <Space>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={addComponent}
+              style={{
+                borderRadius: '8px',
+                background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+                border: 'none',
+                fontWeight: 'bold'
+              }}
+            >
+              Add Component
+            </Button>
+            <Upload
+              accept=".xlsx,.xls"
+              showUploadList={false}
+              beforeUpload={(file) => {
+                if (!editingKit || !editingKit.id) {
+                  notification.error({
+                    message: 'Error',
+                    description: 'Please select a kit first',
+                    placement: 'topRight',
+                  });
+                  return false;
+                }
+                showSheetSelectionAndImport(file, 'components', { kitId: editingKit.id });
+                return false;
+              }}
+            >
+              <Button
+                icon={<ImportOutlined />}
+                style={{
+                  borderRadius: '8px',
+                  background: 'linear-gradient(135deg, #1890ff 0%, #096dd9 100%)',
+                  border: 'none',
+                  fontWeight: 'bold',
+                  color: '#fff'
+                }}
+              >
+                Import Components
+              </Button>
+            </Upload>
+          </Space>
+          <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginTop: 8 }}>
+            Excel format: index, name, link, quantity
+          </Text>
         </div>
 
         <Table
@@ -2724,12 +3352,27 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           columns={[
             { title: 'Component Name', dataIndex: 'componentName', key: 'componentName' },
             { title: 'Type', dataIndex: 'componentType', key: 'componentType' },
+            {
+              title: 'Link',
+              dataIndex: 'link',
+              key: 'link',
+              render: (link) => link ? (
+                <a href={link} target="_blank" rel="noopener noreferrer">
+                  {link.length > 30 ? link.substring(0, 30) + '...' : link}
+                </a>
+              ) : '-'
+            },
             { title: 'Total Quantity', dataIndex: 'quantityTotal', key: 'quantityTotal' },
             { title: 'Available Quantity', dataIndex: 'quantityAvailable', key: 'quantityAvailable' },
-            { title: 'Price (VND)', dataIndex: 'pricePerCom', key: 'pricePerCom' },
-            { 
-              title: 'Status', 
-              dataIndex: 'status', 
+            {
+              title: 'Price (VND)',
+              dataIndex: 'pricePerCom',
+              key: 'pricePerCom',
+              render: (price) => price ? price.toLocaleString() : '0'
+            },
+            {
+              title: 'Status',
+              dataIndex: 'status',
               key: 'status',
               render: (status) => (
                 <Tag color={status === 'AVAILABLE' ? 'green' : status === 'IN_USE' ? 'orange' : status === 'MAINTENANCE' ? 'blue' : 'red'}>
@@ -2742,10 +3385,10 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
               key: 'actions',
               render: (_, record) => (
                 <Space>
-                  <Button 
-                    type="default" 
-                    size="small" 
-                    icon={<EditOutlined />} 
+                  <Button
+                    type="default"
+                    size="small"
+                    icon={<EditOutlined />}
                     onClick={() => editComponent(record)}
                   >
                     Edit
@@ -2756,10 +3399,10 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
                     okText="Yes"
                     cancelText="No"
                   >
-                    <Button 
-                      type="default" 
-                      size="small" 
-                      danger 
+                    <Button
+                      type="default"
+                      size="small"
+                      danger
                       icon={<DeleteOutlined />}
                     >
                       Delete
@@ -2787,21 +3430,21 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           destroyOnClose
           maskClosable={false}
         >
-          <Form 
-            layout="vertical" 
+          <Form
+            layout="vertical"
             onFinish={handleComponentSubmit}
             initialValues={editingComponent || {}}
           >
-            <Form.Item 
-              name="componentName" 
-              label="Component Name" 
+            <Form.Item
+              name="componentName"
+              label="Component Name"
               rules={[{ required: true, message: 'Please enter component name' }]}
             >
               <Input />
             </Form.Item>
-            <Form.Item 
-              name="componentType" 
-              label="Component Type" 
+            <Form.Item
+              name="componentType"
+              label="Component Type"
               rules={[{ required: true, message: 'Please select component type' }]}
             >
               <Select>
@@ -2810,29 +3453,29 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
                 <Option value="WHITE">White</Option>
               </Select>
             </Form.Item>
-            <Form.Item 
-              name="quantityTotal" 
-              label="Total Quantity" 
+            <Form.Item
+              name="quantityTotal"
+              label="Total Quantity"
               rules={[{ required: true, message: 'Please enter total quantity' }]}
             >
               <InputNumber min={1} style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item 
-              name="quantityAvailable" 
-              label="Available Quantity" 
+            <Form.Item
+              name="quantityAvailable"
+              label="Available Quantity"
               rules={[{ required: true, message: 'Please enter available quantity' }]}
             >
               <InputNumber min={0} style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item 
-              name="pricePerCom" 
+            <Form.Item
+              name="pricePerCom"
               label="Price Per Component (VND)"
             >
               <InputNumber min={0} style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item 
-              name="status" 
-              label="Status" 
+            <Form.Item
+              name="status"
+              label="Status"
               rules={[{ required: true, message: 'Please select status' }]}
             >
               <Select>
@@ -2842,17 +3485,24 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
                 <Option value="DAMAGED">Damaged</Option>
               </Select>
             </Form.Item>
-            <Form.Item 
-              name="description" 
+            <Form.Item
+              name="description"
               label="Description"
             >
               <Input.TextArea />
             </Form.Item>
-            <Form.Item 
-              name="imageUrl" 
+            <Form.Item
+              name="imageUrl"
               label="Image URL"
             >
               <Input />
+            </Form.Item>
+            <Form.Item
+              name="link"
+              label="Link"
+              help="Optional: Add a link to the component (e.g., product page, documentation)"
+            >
+              <Input placeholder="https://..." />
             </Form.Item>
             <Form.Item>
               <Space>
@@ -2870,6 +3520,50 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
             </Form.Item>
           </Form>
         </Modal>
+      </Modal>
+
+      {/* Sheet Selection Modal */}
+      <Modal
+        title="Select Sheet to Import"
+        open={sheetSelectionModal.visible}
+        onOk={() => {
+          if (sheetSelectionModal.selectedSheet) {
+            proceedWithImport(
+              sheetSelectionModal.file,
+              sheetSelectionModal.selectedSheet,
+              sheetSelectionModal.importType,
+              sheetSelectionModal.importData
+            );
+          }
+          setSheetSelectionModal({ visible: false, sheets: [], selectedSheet: null, file: null, importType: null, importData: null });
+        }}
+        onCancel={() => {
+          setSheetSelectionModal({ visible: false, sheets: [], selectedSheet: null, file: null, importType: null, importData: null });
+        }}
+        okText="Import"
+        cancelText="Cancel"
+      >
+        <div style={{ marginBottom: 16 }}>
+          <Text strong>Please select which sheet to import from:</Text>
+        </div>
+        <Select
+          style={{ width: '100%' }}
+          value={sheetSelectionModal.selectedSheet}
+          onChange={(value) => {
+            setSheetSelectionModal(prev => ({ ...prev, selectedSheet: value }));
+          }}
+        >
+          {sheetSelectionModal.sheets.map((sheetName) => (
+            <Select.Option key={sheetName} value={sheetName}>
+              {sheetName}
+            </Select.Option>
+          ))}
+        </Select>
+        <div style={{ marginTop: 12 }}>
+          <Text type="secondary" style={{ fontSize: '12px' }}>
+            Found {sheetSelectionModal.sheets.length} sheet(s) in the Excel file
+          </Text>
+        </div>
       </Modal>
     </div>
   );
@@ -2925,19 +3619,19 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
       render: (status, record) => {
         const isEditing = selectedStatuses[record.id]?.editing || false;
         const selectedStatus = selectedStatuses[record.id]?.value || status;
-        
+
         return (
           <Space>
             {isEditing ? (
               <>
                 <Select
                   value={selectedStatus}
-                  onChange={(newStatus) => setSelectedStatuses(prev => ({ 
-                    ...prev, 
-                    [record.id]: { 
-                      ...prev[record.id], 
-                      value: newStatus 
-                    } 
+                  onChange={(newStatus) => setSelectedStatuses(prev => ({
+                    ...prev,
+                    [record.id]: {
+                      ...prev[record.id],
+                      value: newStatus
+                    }
                   }))}
                   style={{ width: 120 }}
                   size="small"
@@ -2980,13 +3674,13 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
               </>
             ) : (
               <>
-                <Tag 
+                <Tag
                   color={
-                    status === 'PENDING' ? 'orange' : 
-                    status === 'APPROVED' ? 'green' : 
-                    status === 'REJECTED' ? 'red' : 
-                    status === 'BORROWED' ? 'blue' : 
-                    status === 'RETURNED' ? 'green' : 'default'
+                    status === 'PENDING' ? 'orange' :
+                      status === 'APPROVED' ? 'green' :
+                        status === 'REJECTED' ? 'red' :
+                          status === 'BORROWED' ? 'blue' :
+                            status === 'RETURNED' ? 'green' : 'default'
                   }
                   style={{ minWidth: 80, textAlign: 'center' }}
                 >
@@ -2997,12 +3691,12 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
                     type="default"
                     size="small"
                     icon={<EditOutlined />}
-                    onClick={() => setSelectedStatuses(prev => ({ 
-                      ...prev, 
-                      [record.id]: { 
-                        editing: true, 
-                        value: status 
-                      } 
+                    onClick={() => setSelectedStatuses(prev => ({
+                      ...prev,
+                      [record.id]: {
+                        editing: true,
+                        value: status
+                      }
                     }))}
                     style={{
                       border: '1px solid #d9d9d9',
@@ -3050,7 +3744,7 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
 
   const handleStatusChange = (id, newStatus) => {
     const request = rentalRequests.find(req => req.id === id);
-    
+
     // If status is changing to BORROWED, add to log history and remove from rental requests
     if (newStatus === 'BORROWED') {
       // Add to log history
@@ -3075,12 +3769,12 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
         adminUser: 'admin@fpt.edu.vn',
         adminTimestamp: new Date().toISOString()
       };
-      
+
       setLogHistory(prev => [logEntry, ...prev]);
-      
+
       // Remove from rental requests
       setRentalRequests(prev => prev.filter(req => req.id !== id));
-      
+
       notification.success({
         message: 'Kit Borrowed',
         description: `Kit has been marked as borrowed and moved to log history`,
@@ -3089,15 +3783,15 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
       });
     } else {
       // Normal status update
-      setRentalRequests(prev => prev.map(req => 
-        req.id === id ? { 
-          ...req, 
+      setRentalRequests(prev => prev.map(req =>
+        req.id === id ? {
+          ...req,
           status: newStatus,
           updatedBy: 'admin@fpt.edu.vn',
           updatedDate: new Date().toISOString()
         } : req
       ));
-      
+
       notification.success({
         message: 'Status Updated',
         description: `Rental request status changed to ${newStatus.replace('_', ' ')}`,
@@ -3105,7 +3799,7 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
         duration: 3,
       });
     }
-    
+
     // Clear the editing state for this record
     setSelectedStatuses(prev => {
       const newState = { ...prev };
@@ -3118,29 +3812,29 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
   const handleApproval = async (id, action) => {
     try {
       const request = rentalRequests.find(req => req.id === id);
-      
+
       // Determine the status based on action
       const newStatus = action === 'approve' ? 'APPROVED' : 'REJECTED';
-      
+
       // Prepare request body for update
       const updateData = {
         status: newStatus,
         note: action === 'reject' ? 'Request rejected by admin' : 'Request approved by admin'
       };
-      
+
       // Call API to update the borrowing request
       await borrowingRequestAPI.update(id, updateData);
-      
+
       // Update local state
-      setRentalRequests(prev => prev.map(req => 
-        req.id === id ? { 
-          ...req, 
+      setRentalRequests(prev => prev.map(req =>
+        req.id === id ? {
+          ...req,
           status: newStatus,
           approvedDate: action === 'approve' ? new Date().toISOString() : req.approvedDate,
           note: updateData.note
         } : req
       ));
-      
+
       // Reload transaction history when approved
       if (action === 'approve') {
         try {
@@ -3165,7 +3859,7 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
           console.error('Error reloading transactions:', error);
         }
       }
-      
+
       // Add to log history when rejected
       if (action === 'reject') {
         const logEntry = {
@@ -3189,9 +3883,9 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
           adminUser: 'admin@fpt.edu.vn',
           adminTimestamp: new Date().toISOString()
         };
-        
+
         setLogHistory(prev => [logEntry, ...prev]);
-        
+
         // Send rejection notification to user
         try {
           await notificationAPI.createNotifications([
@@ -3213,26 +3907,26 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
         try {
           const approvedResponse = await borrowingRequestAPI.getApproved();
           console.log('Refreshed approved requests:', approvedResponse);
-          
-        if (Array.isArray(approvedResponse)) {
-          // Transform approved requests to refund request format
-          const refundRequestsData = approvedResponse.map(req => ({
-            id: req.id,
-            rentalId: req.id,
-            kitId: req.kit?.id || 'N/A',
-            kitName: req.kit?.kitName || 'N/A',
-            userEmail: req.requestedBy?.email || 'N/A',
-            userName: req.requestedBy?.fullName || 'N/A',
-            status: 'pending',
-            requestDate: req.createdAt || new Date().toISOString(),
-            approvedDate: req.approvedDate || new Date().toISOString(),
-            totalCost: req.depositAmount || 0,
-            damageAssessment: {},
-            reason: req.reason || 'Course project',
-            depositAmount: req.depositAmount || 0,
-            requestType: req.requestType // Add request type
-          }));
-            
+
+          if (Array.isArray(approvedResponse)) {
+            // Transform approved requests to refund request format
+            const refundRequestsData = approvedResponse.map(req => ({
+              id: req.id,
+              rentalId: req.id,
+              kitId: req.kit?.id || 'N/A',
+              kitName: req.kit?.kitName || 'N/A',
+              userEmail: req.requestedBy?.email || 'N/A',
+              userName: req.requestedBy?.fullName || 'N/A',
+              status: 'pending',
+              requestDate: req.createdAt || new Date().toISOString(),
+              approvedDate: req.approvedDate || new Date().toISOString(),
+              totalCost: req.depositAmount || 0,
+              damageAssessment: {},
+              reason: req.reason || 'Course project',
+              depositAmount: req.depositAmount || 0,
+              requestType: req.requestType // Add request type
+            }));
+
             setRefundRequests(refundRequestsData);
             console.log('Refund requests updated from backend:', refundRequestsData.length);
           }
@@ -3247,10 +3941,10 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
           }
         }, 1000);
       }
-      
+
       notification.success({
         message: action === 'approve' ? 'Request Approved' : 'Request Rejected',
-        description: action === 'approve' 
+        description: action === 'approve'
           ? 'Request approved successfully! Navigate to Refund Checking to monitor refund status.'
           : 'Request rejected successfully',
         placement: 'topRight',
@@ -3275,7 +3969,7 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
     >
-      <Card 
+      <Card
         title="Rental Request Management"
         style={{
           borderRadius: '20px',
@@ -3292,9 +3986,9 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
           borderRadius: '20px 20px 0 0'
         }}
       >
-        <Table 
-          columns={columns} 
-          dataSource={rentalRequests} 
+        <Table
+          columns={columns}
+          dataSource={rentalRequests}
           rowKey="id"
           pagination={{
             showSizeChanger: true,
@@ -3362,17 +4056,17 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
-              <Button 
-                type="primary" 
-                size="small" 
-                icon={<BuildOutlined />} 
-                onClick={() => {
-                  console.log('Checkin Kit button clicked, record:', record);
-                  openRefundKitInspection(record);
-                }}
-              >
-                Checkin Kit
-              </Button>
+            <Button
+              type="primary"
+              size="small"
+              icon={<BuildOutlined />}
+              onClick={() => {
+                console.log('Checkin Kit button clicked, record:', record);
+                openRefundKitInspection(record);
+              }}
+            >
+              Checkin Kit
+            </Button>
           </motion.div>
         </Space>
       )
@@ -3382,7 +4076,7 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
   // Removed unused handleRefundStatusChange function
   const _handleRefundStatusChange = (id, newStatus) => {
     const request = refundRequests.find(req => req.id === id);
-    
+
     // If status is changing to REJECTED, add to log history and remove from refund requests
     if (newStatus === 'REJECTED') {
       // Add to log history
@@ -3409,12 +4103,12 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
         adminUser: 'admin@fpt.edu.vn',
         adminTimestamp: new Date().toISOString()
       };
-      
+
       setLogHistory(prev => [logEntry, ...prev]);
-      
+
       // Remove from refund requests
       setRefundRequests(prev => prev.filter(req => req.id !== id));
-      
+
       notification.success({
         message: 'Refund Rejected',
         description: `Refund request has been rejected and moved to log history`,
@@ -3445,12 +4139,12 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
         adminUser: 'admin@fpt.edu.vn',
         adminTimestamp: new Date().toISOString()
       };
-      
+
       setLogHistory(prev => [logEntry, ...prev]);
-      
+
       // Remove from refund requests
       setRefundRequests(prev => prev.filter(req => req.id !== id));
-      
+
       notification.success({
         message: 'Kit Returned',
         description: `Kit has been returned successfully and moved to log history`,
@@ -3459,15 +4153,15 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
       });
     } else {
       // Normal status update
-      setRefundRequests(prev => prev.map(req => 
-        req.id === id ? { 
-          ...req, 
+      setRefundRequests(prev => prev.map(req =>
+        req.id === id ? {
+          ...req,
           status: newStatus,
           updatedBy: 'admin@fpt.edu.vn',
           updatedDate: new Date().toISOString()
         } : req
       ));
-      
+
       notification.success({
         message: 'Status Updated',
         description: `Refund request status changed to ${newStatus.replace('_', ' ')}`,
@@ -3475,7 +4169,7 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
         duration: 3,
       });
     }
-    
+
     // Clear the editing state for this record
     setSelectedStatuses(prev => {
       const newState = { ...prev };
@@ -3487,17 +4181,17 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
   // Removed unused handleRefundApproval function
   const _handleRefundApproval = (id, action) => {
     const request = refundRequests.find(req => req.id === id);
-    
+
     if (action === 'approve') {
-      setRefundRequests(prev => prev.map(req => 
-        req.id === id ? { 
-          ...req, 
+      setRefundRequests(prev => prev.map(req =>
+        req.id === id ? {
+          ...req,
           status: 'approved',
           approvedBy: 'admin@fpt.edu.vn',
           approvalDate: new Date().toISOString()
         } : req
       ));
-      
+
       notification.success({
         message: 'Success',
         description: `Refund request approved successfully`,
@@ -3529,12 +4223,12 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
         adminUser: 'admin@fpt.edu.vn',
         adminTimestamp: new Date().toISOString()
       };
-      
+
       setLogHistory(prev => [logEntry, ...prev]);
-      
+
       // Remove from refund requests
       setRefundRequests(prev => prev.filter(req => req.id !== id));
-      
+
       notification.success({
         message: 'Refund Rejected',
         description: `Refund request has been rejected and moved to log history`,
@@ -3552,7 +4246,7 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
     >
-      <Card 
+      <Card
         title="Refund Checking Management"
         style={{
           borderRadius: '20px',
@@ -3569,9 +4263,9 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
           borderRadius: '20px 20px 0 0'
         }}
       >
-        <Table 
-          columns={columns} 
-          dataSource={refundRequests} 
+        <Table
+          columns={columns}
+          dataSource={refundRequests}
           rowKey="id"
           pagination={{
             showSizeChanger: true,
@@ -3653,9 +4347,9 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
-            <Button 
-              type="primary" 
-              size="small" 
+            <Button
+              type="primary"
+              size="small"
               icon={<EyeOutlined />}
               onClick={() => showFineDetails(record)}
             >
@@ -3678,7 +4372,7 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
     >
-      <Card 
+      <Card
         title="Fine Management"
         style={{
           borderRadius: '20px',
@@ -3695,9 +4389,9 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
           borderRadius: '20px 20px 0 0'
         }}
       >
-        <Table 
-          columns={columns} 
-          dataSource={fines} 
+        <Table
+          columns={columns}
+          dataSource={fines}
           rowKey="id"
           pagination={{
             showSizeChanger: true,
@@ -3747,9 +4441,9 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
               <Descriptions.Item label="Created">{new Date(selectedFine.createdAt).toLocaleString()}</Descriptions.Item>
               <Descriptions.Item label="Due Date">{new Date(selectedFine.dueDate).toLocaleString()}</Descriptions.Item>
             </Descriptions>
-            
+
             <Divider>Damage Assessment</Divider>
-            
+
             {selectedFine.damageAssessment && Object.keys(selectedFine.damageAssessment).length > 0 ? (
               Object.entries(selectedFine.damageAssessment).map(([component, assessment]) => (
                 assessment.damaged && (
@@ -3788,7 +4482,7 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
   const [loadingLecturers, setLoadingLecturers] = useState(false);
   const [classes, setClasses] = useState([]);
   const [loadingClasses, setLoadingClasses] = useState(false);
-  
+
   // Add student modal state
   const [addStudentModalVisible, setAddStudentModalVisible] = useState(false);
   const [selectedGroupRecord, setSelectedGroupRecord] = useState(null);
@@ -3806,12 +4500,12 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
   const loadGroups = async () => {
     try {
       const studentGroups = await studentGroupAPI.getAll();
-      
+
       // Get all borrowing groups for each student group
       const groupsWithMembers = await Promise.all(
         studentGroups.map(async (group) => {
           const borrowingGroups = await borrowingGroupAPI.getByStudentGroupId(group.id);
-          
+
           // Map borrowing groups to members list
           const members = borrowingGroups.map(bg => {
             return {
@@ -3824,7 +4518,7 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
 
           // Find leader
           const leader = borrowingGroups.find(bg => bg.roles === 'LEADER');
-          
+
           return {
             id: group.id,
             groupName: group.groupName || group.name, // Support both field names
@@ -3946,9 +4640,9 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
-            <Button 
-              type="primary" 
-              size="small" 
+            <Button
+              type="primary"
+              size="small"
               icon={<UserOutlined />}
               onClick={() => handleAddStudentToGroup(record)}
               style={{
@@ -3963,9 +4657,9 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
-            <Button 
-              type="default" 
-              size="small" 
+            <Button
+              type="default"
+              size="small"
               icon={<EditOutlined />}
               onClick={() => adjustGroupMembers(record)}
             >
@@ -3984,10 +4678,10 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
               cancelText="No"
               okType="danger"
             >
-              <Button 
-                type="primary" 
-                danger 
-                size="small" 
+              <Button
+                type="primary"
+                danger
+                size="small"
                 icon={<DeleteOutlined />}
               >
                 Delete
@@ -4003,16 +4697,16 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
     console.log('handleAddStudentToGroup called with:', groupRecord);
     setSelectedGroupRecord(groupRecord);
     setAddingLoading(true);
-    
+
     try {
       // Get all students
       const allStudents = await userAPI.getStudents();
       console.log('All students:', allStudents);
-      
+
       // Get all existing borrowing groups to check which students are already in groups
       const allBorrowingGroups = await borrowingGroupAPI.getAll();
       console.log('All borrowing groups:', allBorrowingGroups);
-      
+
       // Filter available students (not in any group)
       const availableStudents = allStudents.filter(student => {
         const isInAnyGroup = allBorrowingGroups.some(bg => {
@@ -4022,11 +4716,11 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
         });
         return !isInAnyGroup;
       });
-      
+
       console.log('Total students:', allStudents.length);
       console.log('Students in groups:', allStudents.length - availableStudents.length);
       console.log('Available students:', availableStudents.length);
-      
+
       if (availableStudents.length === 0) {
         notification.warning({
           message: 'No Available Students',
@@ -4045,10 +4739,10 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
       const maxStudents = 4;
       const availableCount = availableStudents.length;
       const numberOfStudentsToAdd = Math.min(maxStudents, Math.max(minStudents, availableCount));
-      
+
       console.log('Available students:', availableCount);
       console.log('Number of students to add (calculated):', numberOfStudentsToAdd);
-      
+
       if (availableCount < minStudents) {
         notification.warning({
           message: 'Insufficient Students',
@@ -4057,25 +4751,25 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
         });
         return;
       }
-      
+
       const shuffledStudents = [...availableStudents].sort(() => 0.5 - Math.random());
       const selectedStudents = shuffledStudents.slice(0, numberOfStudentsToAdd);
 
       console.log('Selected students to add:', selectedStudents);
       console.log('Is first member:', firstMember);
       console.log('Number of students to add:', numberOfStudentsToAdd);
-      
+
       // Set state and show modal
       setStudentsToAdd(selectedStudents);
       setIsFirstMember(firstMember);
       setAddStudentModalVisible(true);
     } catch (error) {
       console.error('Error loading students:', error);
-        notification.error({
-          message: 'Error',
+      notification.error({
+        message: 'Error',
         description: 'Failed to load students',
-          placement: 'topRight',
-        });
+        placement: 'topRight',
+      });
     } finally {
       setAddingLoading(false);
     }
@@ -4087,61 +4781,61 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
     console.log('Selected students:', studentsToAdd);
     console.log('Is first member:', isFirstMember);
     console.log('Group ID:', selectedGroupRecord?.id);
-    
+
     setAddingLoading(true);
-    
+
     try {
-            const addedStudents = [];
-            
-            // Add each student to the group
+      const addedStudents = [];
+
+      // Add each student to the group
       console.log(`Starting loop to add ${studentsToAdd.length} students`);
       for (let i = 0; i < studentsToAdd.length; i++) {
         const student = studentsToAdd[i];
-              
-              // First student becomes LEADER, others become MEMBERS
-              const role = (isFirstMember && i === 0) ? 'LEADER' : 'MEMBER';
-              
-              const borrowingGroupData = {
+
+        // First student becomes LEADER, others become MEMBERS
+        const role = (isFirstMember && i === 0) ? 'LEADER' : 'MEMBER';
+
+        const borrowingGroupData = {
           studentGroupId: selectedGroupRecord.id,
-                accountId: student.id,
-                roles: role
-              };
+          accountId: student.id,
+          roles: role
+        };
 
         console.log(`Adding student ${i + 1}/${studentsToAdd.length}:`, {
-                student: student.fullName,
-                role: role,
-                data: borrowingGroupData
-              });
+          student: student.fullName,
+          role: role,
+          data: borrowingGroupData
+        });
 
-              const response = await borrowingGroupAPI.addMemberToGroup(borrowingGroupData);
-              console.log('API Response:', response);
-              
-              addedStudents.push({
-                name: student.fullName,
-                email: student.email,
-                role: role
-              });
-            }
+        const response = await borrowingGroupAPI.addMemberToGroup(borrowingGroupData);
+        console.log('API Response:', response);
 
-            // Refresh group data
-            await loadGroups();
+        addedStudents.push({
+          name: student.fullName,
+          email: student.email,
+          role: role
+        });
+      }
 
-            notification.success({
+      // Refresh group data
+      await loadGroups();
+
+      notification.success({
         message: `${studentsToAdd.length} Students Added`,
         description: `Successfully added ${studentsToAdd.length} students to the group`,
-              placement: 'topRight',
-              duration: 4,
-            });
-      
+        placement: 'topRight',
+        duration: 4,
+      });
+
       // Close modal
       setAddStudentModalVisible(false);
-          } catch (error) {
-            console.error('Error adding students to group:', error);
-            notification.error({
-              message: 'Error',
+    } catch (error) {
+      console.error('Error adding students to group:', error);
+      notification.error({
+        message: 'Error',
         description: error.response?.data?.message || error.message || 'Failed to add students to group',
-              placement: 'topRight',
-            });
+        placement: 'topRight',
+      });
     } finally {
       setAddingLoading(false);
     }
@@ -4150,10 +4844,10 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
   const handleDeleteGroup = async (groupId) => {
     try {
       await studentGroupAPI.delete(groupId);
-      
+
       // Reload groups after deletion
       await loadGroups();
-      
+
       notification.success({
         message: 'Group Deleted Successfully',
         description: 'The group and all associated members have been deleted.',
@@ -4182,9 +4876,9 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
         status: true,
         roles: null // No role initially (lecturer is not a group role)
       };
-      
+
       const response = await studentGroupAPI.create(groupData);
-      
+
       if (response) {
         // Create local group object for UI
         const newGroup = {
@@ -4197,7 +4891,7 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
           status: 'active',
           createdAt: new Date().toISOString()
         };
-        
+
         setGroups(prev => [...prev, newGroup]);
         notification.success({
           message: 'Group Created Successfully',
@@ -4206,7 +4900,7 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
           duration: 4,
         });
       }
-      
+
       setModalVisible(false);
       form.resetFields();
     } catch (error) {
@@ -4234,9 +4928,9 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              <Button 
-                type="primary" 
-                icon={<PlusOutlined />} 
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
                 onClick={() => setModalVisible(true)}
                 style={{
                   borderRadius: '12px',
@@ -4264,9 +4958,9 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
             borderRadius: '20px 20px 0 0'
           }}
         >
-          <Table 
-            columns={columns} 
-            dataSource={groups} 
+          <Table
+            columns={columns}
+            dataSource={groups}
             rowKey="id"
             pagination={{
               showSizeChanger: true,
@@ -4384,6 +5078,7 @@ const UserManagement = ({ users, setUsers }) => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
   const [selectedRole, setSelectedRole] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   const columns = [
     {
@@ -4457,7 +5152,7 @@ const UserManagement = ({ users, setUsers }) => {
   const editUser = (user) => {
     setEditingUser(user);
     setSelectedRole(user.role);
-    
+
     // Map user data to form field names
     const formData = {
       name: user.name || user.fullName || '',
@@ -4466,33 +5161,65 @@ const UserManagement = ({ users, setUsers }) => {
       role: user.role || '',
       studentCode: user.studentCode || ''
     };
-    
+
     form.setFieldsValue(formData);
     setModalVisible(true);
   };
 
-  const deleteUser = (id) => {
+  const deleteUser = async (id) => {
     Modal.confirm({
       title: 'Are you sure you want to delete this user?',
       content: 'This action cannot be undone.',
       okText: 'Yes',
       okType: 'danger',
       cancelText: 'No',
-      onOk() {
-        setUsers(prev => prev.filter(user => user.id !== id));
-        notification.success({
-          message: 'Success',
-          description: 'User deleted successfully',
-          placement: 'topRight',
-          duration: 3,
-        });
+      onOk: async () => {
+        try {
+          setLoading(true);
+          await userAPI.deleteUser(id);
+
+          // Refresh users list from API
+          const usersData = await userAPI.getAllAccounts(0, 100);
+
+          if (usersData && usersData.length > 0) {
+            const mappedUsers = usersData.map(profile => ({
+              id: profile.id,
+              name: profile.fullName || profile.email || 'Unknown',
+              email: profile.email,
+              phone: profile.phone,
+              studentCode: profile.studentCode,
+              role: profile.role?.toLowerCase() || 'member',
+              status: profile.isActive ? 'Active' : 'Inactive'
+            }));
+            setUsers(mappedUsers);
+          } else {
+            setUsers([]);
+          }
+
+          notification.success({
+            message: 'Success',
+            description: 'User deleted successfully',
+            placement: 'topRight',
+            duration: 3,
+          });
+        } catch (error) {
+          console.error('Error deleting user:', error);
+          notification.error({
+            message: 'Error',
+            description: 'Failed to delete user: ' + error.message,
+            placement: 'topRight',
+            duration: 4,
+          });
+        } finally {
+          setLoading(false);
+        }
       }
     });
   };
 
   const handleSubmit = async (values) => {
     try {
-    if (editingUser) {
+      if (editingUser) {
         // Update existing user using backend API
         try {
           const updateData = {
@@ -4507,12 +5234,12 @@ const UserManagement = ({ users, setUsers }) => {
           console.log('Updating user with data:', updateData);
           const response = await authAPI.updateUser(editingUser.id, updateData);
           console.log('Update user response:', response);
-          
+
           if (response && response.email) {
             // Refresh users list from API
             try {
               const usersData = await userAPI.getAllAccounts(0, 100);
-              
+
               if (usersData && usersData.length > 0) {
                 const mappedUsers = usersData.map(profile => ({
                   id: profile.id,
@@ -4535,14 +5262,14 @@ const UserManagement = ({ users, setUsers }) => {
                 duration: 4,
               });
             }
-            
-      notification.success({
-        message: 'Success',
+
+            notification.success({
+              message: 'Success',
               description: `User updated successfully: ${response.email}`,
-        placement: 'topRight',
-        duration: 3,
-      });
-    } else {
+              placement: 'topRight',
+              duration: 3,
+            });
+          } else {
             notification.error({
               message: 'Error',
               description: 'Failed to update user - Invalid response',
@@ -4572,20 +5299,20 @@ const UserManagement = ({ users, setUsers }) => {
 
         console.log('Creating user with data:', userData);
         const response = await authAPI.register(
-          userData.username, 
-          userData.password, 
-          userData.studentCode, 
+          userData.username,
+          userData.password,
+          userData.studentCode,
           userData.roles,
           userData.phoneNumber,
           userData.fullName
         );
         console.log('Create user response:', response);
-        
+
         if (response && response.email) {
           // Backend returns RegisterResponse object, refresh users list from API
           try {
             const usersData = await userAPI.getAllAccounts(0, 100);
-            
+
             if (usersData && usersData.length > 0) {
               const mappedUsers = usersData.map(profile => ({
                 id: profile.id,
@@ -4609,9 +5336,9 @@ const UserManagement = ({ users, setUsers }) => {
               duration: 4,
             });
           }
-          
-      notification.success({
-        message: 'Success',
+
+          notification.success({
+            message: 'Success',
             description: `User created successfully: ${response.email}`,
             placement: 'topRight',
             duration: 3,
@@ -4620,16 +5347,16 @@ const UserManagement = ({ users, setUsers }) => {
           notification.error({
             message: 'Error',
             description: 'Failed to create user - Invalid response',
-        placement: 'topRight',
-        duration: 3,
-      });
-    }
+            placement: 'topRight',
+            duration: 3,
+          });
+        }
       }
-      
-    setModalVisible(false);
-    setEditingUser(null);
+
+      setModalVisible(false);
+      setEditingUser(null);
       setSelectedRole(null);
-    form.resetFields();
+      form.resetFields();
     } catch (error) {
       console.error('Error handling user submission:', error);
       notification.error({
@@ -4650,29 +5377,29 @@ const UserManagement = ({ users, setUsers }) => {
       >
         <Card
           title="User Management"
-                  extra={
-          <motion.div
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-          >
-            <Button 
-              type="primary" 
-              icon={<PlusOutlined />} 
-              onClick={() => {
-                setSelectedRole(null);
-                setModalVisible(true);
-              }}
-              style={{
-                borderRadius: '12px',
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                border: 'none',
-                fontWeight: 'bold'
-              }}
+          extra={
+            <motion.div
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
             >
-              Add User
-            </Button>
-          </motion.div>
-        }
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => {
+                  setSelectedRole(null);
+                  setModalVisible(true);
+                }}
+                style={{
+                  borderRadius: '12px',
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  border: 'none',
+                  fontWeight: 'bold'
+                }}
+              >
+                Add User
+              </Button>
+            </motion.div>
+          }
           style={{
             borderRadius: '20px',
             background: 'rgba(255, 255, 255, 0.95)',
@@ -4688,9 +5415,9 @@ const UserManagement = ({ users, setUsers }) => {
             borderRadius: '20px 20px 0 0'
           }}
         >
-          <Table 
-            columns={columns} 
-            dataSource={users} 
+          <Table
+            columns={columns}
+            dataSource={users}
             rowKey="id"
             pagination={{
               showSizeChanger: true,
@@ -4780,9 +5507,9 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
   // Animation variants for this component
   const cardVariants = {
     hidden: { opacity: 0, y: 20, scale: 0.95 },
-    visible: { 
-      opacity: 1, 
-      y: 0, 
+    visible: {
+      opacity: 1,
+      y: 0,
       scale: 1,
       transition: {
         duration: 0.5,
@@ -4883,7 +5610,7 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
     const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     const dataBlob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     saveAs(dataBlob, 'transaction_history.xlsx');
-    
+
     notification.success({
       message: 'Export Successful',
       description: 'Transaction history exported to Excel file',
@@ -4892,7 +5619,7 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
   };
 
   const filteredTransactions = transactions.filter(transaction => {
-    const matchesSearch = 
+    const matchesSearch =
       (transaction.id || '').toString().toLowerCase().includes(searchText.toLowerCase()) ||
       (transaction.description || '').toLowerCase().includes(searchText.toLowerCase()) ||
       (transaction.paymentMethod || '').toLowerCase().includes(searchText.toLowerCase());
@@ -4915,11 +5642,11 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
   return (
     <div>
       <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-        <Card 
-          title="Transaction History" 
+        <Card
+          title="Transaction History"
           extra={
-            <Button 
-              type="primary" 
+            <Button
+              type="primary"
               icon={<DownloadOutlined />}
               onClick={handleExportTransactions}
               style={{
@@ -5020,7 +5747,7 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
                   return (
                     <Tag color={getTransactionTypeColor(transactionType)} icon={getTransactionTypeIcon(transactionType)}>
                       {transactionType ? transactionType.replace(/_/g, ' ') : 'N/A'}
-                  </Tag>
+                    </Tag>
                   );
                 }
               },
@@ -5043,7 +5770,7 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
                   return (
                     <Tag color={getStatusColor(transactionStatus)}>
                       {transactionStatus || 'N/A'}
-                  </Tag>
+                    </Tag>
                   );
                 }
               },
@@ -5064,10 +5791,10 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
                 key: 'actions',
                 render: (_, record) => (
                   <Space>
-                    <Button 
-                      type="primary" 
-                      size="small" 
-                      icon={<EyeOutlined />} 
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<EyeOutlined />}
                       onClick={() => showTransactionDetails(record)}
                     >
                       View Details
@@ -5133,8 +5860,8 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
               {selectedTransaction.description || 'N/A'}
             </Descriptions.Item>
             <Descriptions.Item label="Transaction Date">
-              {selectedTransaction.transactionDate ? formatDateTime(selectedTransaction.transactionDate) : 
-               selectedTransaction.createdAt ? formatDateTime(selectedTransaction.createdAt) : 'N/A'}
+              {selectedTransaction.transactionDate ? formatDateTime(selectedTransaction.transactionDate) :
+                selectedTransaction.createdAt ? formatDateTime(selectedTransaction.createdAt) : 'N/A'}
             </Descriptions.Item>
           </Descriptions>
         )}
@@ -5151,7 +5878,7 @@ const Settings = () => {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
     >
-      <Card 
+      <Card
         title="System Settings"
         style={{
           borderRadius: '20px',
@@ -5175,8 +5902,8 @@ const Settings = () => {
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.2, duration: 0.5 }}
             >
-              <Card 
-                title="General Settings" 
+              <Card
+                title="General Settings"
                 size="small"
                 style={{
                   borderRadius: '16px',
@@ -5213,8 +5940,8 @@ const Settings = () => {
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.4, duration: 0.5 }}
             >
-              <Card 
-                title="Security Settings" 
+              <Card
+                title="Security Settings"
                 size="small"
                 style={{
                   borderRadius: '16px',
@@ -5275,14 +6002,14 @@ const LogHistory = ({ logHistory, setLogHistory }) => {
     try {
       const requests = await borrowingRequestAPI.getByStatuses(['REJECTED', 'RETURNED']);
       console.log('Fetched borrowing requests:', requests);
-      
+
       // Map borrowing requests to log history format
       const mappedLogs = requests.map(request => {
         const status = request.status || 'UNKNOWN';
-        const action = status === 'REJECTED' ? 'RENTAL_REQUEST_REJECTED' : 
-                       status === 'RETURNED' ? 'RENTAL_REQUEST_RETURNED' : 
-                       'RENTAL_REQUEST_OTHER';
-        
+        const action = status === 'REJECTED' ? 'RENTAL_REQUEST_REJECTED' :
+          status === 'RETURNED' ? 'RENTAL_REQUEST_RETURNED' :
+            'RENTAL_REQUEST_OTHER';
+
         return {
           id: request.id,
           timestamp: request.actualReturnDate || request.approvedDate || request.createdAt || new Date().toISOString(),
@@ -5306,7 +6033,7 @@ const LogHistory = ({ logHistory, setLogHistory }) => {
           adminTimestamp: request.actualReturnDate || request.approvedDate || request.createdAt || new Date().toISOString()
         };
       });
-      
+
       setLogHistory(mappedLogs);
     } catch (error) {
       console.error('Error loading borrowing requests:', error);
@@ -5320,9 +6047,9 @@ const LogHistory = ({ logHistory, setLogHistory }) => {
   // Animation variants for the component
   const cardVariants = {
     hidden: { opacity: 0, y: 20, scale: 0.95 },
-    visible: { 
-      opacity: 1, 
-      y: 0, 
+    visible: {
+      opacity: 1,
+      y: 0,
       scale: 1,
       transition: {
         duration: 0.5,
@@ -5398,12 +6125,12 @@ const LogHistory = ({ logHistory, setLogHistory }) => {
 
   const filteredLogs = logHistory.filter(log => {
     const matchesSearch = (log.userName || '').toLowerCase().includes(searchText.toLowerCase()) ||
-                         (log.details?.kitName || '').toLowerCase().includes(searchText.toLowerCase()) ||
-                         (log.details?.requestId || '').toLowerCase().includes(searchText.toLowerCase());
-    
+      (log.details?.kitName || '').toLowerCase().includes(searchText.toLowerCase()) ||
+      (log.details?.requestId || '').toLowerCase().includes(searchText.toLowerCase());
+
     const matchesStatus = statusFilter === 'all' || log.status === statusFilter;
     const matchesType = typeFilter === 'all' || log.type === typeFilter;
-    
+
     let matchesDate = true;
     if (dateRange && dateRange[0] && dateRange[1]) {
       const logDate = new Date(log.timestamp);
@@ -5411,7 +6138,7 @@ const LogHistory = ({ logHistory, setLogHistory }) => {
       const endDate = dateRange[1].endOf('day').toDate();
       matchesDate = logDate >= startDate && logDate <= endDate;
     }
-    
+
     return matchesSearch && matchesStatus && matchesType && matchesDate;
   });
 
@@ -5541,14 +6268,14 @@ const LogHistory = ({ logHistory, setLogHistory }) => {
                     'Admin Action': log.adminAction || 'N/A',
                     'Admin User': log.adminUser || 'N/A'
                   }));
-                  
+
                   const ws = XLSX.utils.json_to_sheet(data);
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, 'Log History');
                   const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
                   const dataBlob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                   saveAs(dataBlob, 'log_history.xlsx');
-                  
+
                   notification.success({
                     message: 'Export Successful',
                     description: 'Log history exported to Excel file',
@@ -5566,108 +6293,108 @@ const LogHistory = ({ logHistory, setLogHistory }) => {
             <Tabs.TabPane tab="Request History" key="requests">
               {/* Filters */}
               <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-            <Col xs={24} sm={12} md={6}>
-              <Input
-                placeholder="Search by user, kit, or request ID"
-                prefix={<SearchOutlined />}
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                allowClear
-              />
-            </Col>
-            <Col xs={24} sm={12} md={6}>
-                              <Select
-                  placeholder="Filter by status"
-                  value={statusFilter}
-                  onChange={setStatusFilter}
-                  style={{ width: '100%' }}
-                  allowClear
-                >
-                  <Option value="all">All Status</Option>
-                  <Option value="BORROWED">Borrowed</Option>
-                  <Option value="RETURNED">Returned</Option>
-                  <Option value="REJECTED">Rejected</Option>
-                  <Option value="PAID">Paid</Option>
-                </Select>
-            </Col>
-            <Col xs={24} sm={12} md={6}>
-              <Select
-                placeholder="Filter by type"
-                value={typeFilter}
-                onChange={setTypeFilter}
-                style={{ width: '100%' }}
-                allowClear
-              >
-                <Option value="all">All Types</Option>
-                <Option value="rental">Rental</Option>
-                <Option value="refund">Refund</Option>
-              </Select>
-            </Col>
-            <Col xs={24} sm={12} md={6}>
-              <DatePicker.RangePicker
-                value={dateRange}
-                onChange={setDateRange}
-                style={{ width: '100%' }}
-                placeholder={['Start Date', 'End Date']}
-              />
-            </Col>
-          </Row>
+                <Col xs={24} sm={12} md={6}>
+                  <Input
+                    placeholder="Search by user, kit, or request ID"
+                    prefix={<SearchOutlined />}
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    allowClear
+                  />
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                  <Select
+                    placeholder="Filter by status"
+                    value={statusFilter}
+                    onChange={setStatusFilter}
+                    style={{ width: '100%' }}
+                    allowClear
+                  >
+                    <Option value="all">All Status</Option>
+                    <Option value="BORROWED">Borrowed</Option>
+                    <Option value="RETURNED">Returned</Option>
+                    <Option value="REJECTED">Rejected</Option>
+                    <Option value="PAID">Paid</Option>
+                  </Select>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                  <Select
+                    placeholder="Filter by type"
+                    value={typeFilter}
+                    onChange={setTypeFilter}
+                    style={{ width: '100%' }}
+                    allowClear
+                  >
+                    <Option value="all">All Types</Option>
+                    <Option value="rental">Rental</Option>
+                    <Option value="refund">Refund</Option>
+                  </Select>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                  <DatePicker.RangePicker
+                    value={dateRange}
+                    onChange={setDateRange}
+                    style={{ width: '100%' }}
+                    placeholder={['Start Date', 'End Date']}
+                  />
+                </Col>
+              </Row>
 
-          {/* Statistics */}
-          <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-            <Col xs={24} sm={6}>
-              <Card size="small">
-                <Statistic
-                  title="Total Logs"
-                  value={filteredLogs.length}
-                  prefix={<HistoryOutlined />}
-                  valueStyle={{ color: '#1890ff' }}
-                />
-              </Card>
-            </Col>
-            <Col xs={24} sm={6}>
-              <Card size="small">
-                <Statistic
-                  title="Rental Requests"
-                  value={filteredLogs.filter(log => log.type === 'rental').length}
-                  prefix={<ShoppingOutlined />}
-                  valueStyle={{ color: '#52c41a' }}
-                />
-              </Card>
-            </Col>
-            <Col xs={24} sm={6}>
-              <Card size="small">
-                <Statistic
-                  title="Returned Items"
-                  value={filteredLogs.filter(log => log.status === 'RETURNED').length}
-                  prefix={<CheckCircleOutlined />}
-                  valueStyle={{ color: '#52c41a' }}
-                />
-              </Card>
-            </Col>
+              {/* Statistics */}
+              <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
                 <Col xs={24} sm={6}>
                   <Card size="small">
                     <Statistic
-                  title="Rejected Items"
-                  value={filteredLogs.filter(log => log.status === 'REJECTED').length}
-                  prefix={<CloseCircleOutlined />}
+                      title="Total Logs"
+                      value={filteredLogs.length}
+                      prefix={<HistoryOutlined />}
+                      valueStyle={{ color: '#1890ff' }}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Card size="small">
+                    <Statistic
+                      title="Rental Requests"
+                      value={filteredLogs.filter(log => log.type === 'rental').length}
+                      prefix={<ShoppingOutlined />}
+                      valueStyle={{ color: '#52c41a' }}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Card size="small">
+                    <Statistic
+                      title="Returned Items"
+                      value={filteredLogs.filter(log => log.status === 'RETURNED').length}
+                      prefix={<CheckCircleOutlined />}
+                      valueStyle={{ color: '#52c41a' }}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Card size="small">
+                    <Statistic
+                      title="Rejected Items"
+                      value={filteredLogs.filter(log => log.status === 'REJECTED').length}
+                      prefix={<CloseCircleOutlined />}
                       valueStyle={{ color: '#f5222d' }}
                     />
                   </Card>
                 </Col>
               </Row>
 
-          {/* Log Table */}
+              {/* Log Table */}
               <Table
-            dataSource={filteredLogs}
-            columns={columns}
+                dataSource={filteredLogs}
+                columns={columns}
                 rowKey="id"
-            loading={loading}
+                loading={loading}
                 pagination={{
                   pageSize: 10,
                   showSizeChanger: true,
                   showQuickJumper: true,
-              showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} logs`,
+                  showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} logs`,
                 }}
                 scroll={{ x: 1200 }}
               />
@@ -5698,53 +6425,53 @@ const LogHistory = ({ logHistory, setLogHistory }) => {
         {selectedLog && (
           <div>
             <Descriptions bordered column={2}>
-                  <Descriptions.Item label="Action" span={2}>
-                    <Space>
-                      {getActionIcon(selectedLog.action)}
-                      <span style={{ fontWeight: 'bold' }}>
-                        {selectedLog.action.replace(/_/g, ' ')}
-                      </span>
-                    </Space>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Type">
-                    <Tag color={selectedLog.type === 'rental' ? 'blue' : 'orange'}>
-                      {selectedLog.type.toUpperCase()}
-                    </Tag>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Status">
-                    <Tag color={getStatusColor(selectedLog.status)}>
-                      {selectedLog.status.toUpperCase()}
-                    </Tag>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="User">
-                    {selectedLog.userName} ({selectedLog.user})
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Timestamp">
-                    {formatTimestamp(selectedLog.timestamp)}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Kit Name" span={2}>
+              <Descriptions.Item label="Action" span={2}>
+                <Space>
+                  {getActionIcon(selectedLog.action)}
+                  <span style={{ fontWeight: 'bold' }}>
+                    {selectedLog.action.replace(/_/g, ' ')}
+                  </span>
+                </Space>
+              </Descriptions.Item>
+              <Descriptions.Item label="Type">
+                <Tag color={selectedLog.type === 'rental' ? 'blue' : 'orange'}>
+                  {selectedLog.type.toUpperCase()}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="Status">
+                <Tag color={getStatusColor(selectedLog.status)}>
+                  {selectedLog.status.toUpperCase()}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="User">
+                {selectedLog.userName} ({selectedLog.user})
+              </Descriptions.Item>
+              <Descriptions.Item label="Timestamp">
+                {formatTimestamp(selectedLog.timestamp)}
+              </Descriptions.Item>
+              <Descriptions.Item label="Kit Name" span={2}>
                 {selectedLog.details?.kitName || 'N/A'} (ID: {selectedLog.details?.kitId || 'N/A'})
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Request ID" span={2}>
+              </Descriptions.Item>
+              <Descriptions.Item label="Request ID" span={2}>
                 {selectedLog.details?.requestId || 'N/A'}
-                  </Descriptions.Item>
+              </Descriptions.Item>
               <Descriptions.Item label="Reason" span={2}>
                 {selectedLog.details?.reason || 'N/A'}
-                  </Descriptions.Item>
+              </Descriptions.Item>
               <Descriptions.Item label="Request Type" span={2}>
                 <Tag color={selectedLog.details?.requestType === 'BORROW_COMPONENT' ? 'orange' : 'blue'}>
                   {selectedLog.details?.requestType || 'N/A'}
-                    </Tag>
-                  </Descriptions.Item>
+                </Tag>
+              </Descriptions.Item>
               <Descriptions.Item label="Deposit Amount" span={2}>
                 {selectedLog.details?.depositAmount ? selectedLog.details.depositAmount.toLocaleString() + ' VND' : 'N/A'}
-                  </Descriptions.Item>
+              </Descriptions.Item>
               <Descriptions.Item label="Expected Return Date">
                 {selectedLog.details?.expectReturnDate ? formatTimestamp(selectedLog.details.expectReturnDate) : 'N/A'}
-                  </Descriptions.Item>
+              </Descriptions.Item>
               <Descriptions.Item label="Actual Return Date">
                 {selectedLog.details?.actualReturnDate ? formatTimestamp(selectedLog.details.actualReturnDate) : 'N/A'}
-                  </Descriptions.Item>
+              </Descriptions.Item>
               {selectedLog.adminAction && (
                 <>
                   <Descriptions.Item label="Admin Action">
@@ -5791,10 +6518,10 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
     try {
       const response = await penaltyPoliciesAPI.getAll();
       console.log('Penalty policies response:', response);
-      
+
       // Handle ApiResponse wrapper
       const policiesData = response?.data || response;
-      
+
       if (Array.isArray(policiesData)) {
         setPenaltyPolicies(policiesData);
         console.log('Penalty policies loaded successfully:', policiesData.length);
@@ -5875,10 +6602,10 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
-            <Button 
-              type="primary" 
-              size="small" 
-              icon={<EditOutlined />} 
+            <Button
+              type="primary"
+              size="small"
+              icon={<EditOutlined />}
               onClick={() => editPolicy(record)}
             >
               Edit
@@ -5896,10 +6623,10 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
               cancelText="No"
               okType="danger"
             >
-              <Button 
-                type="primary" 
-                danger 
-                size="small" 
+              <Button
+                type="primary"
+                danger
+                size="small"
                 icon={<DeleteOutlined />}
               >
                 Delete
@@ -5913,7 +6640,7 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
 
   const editPolicy = (policy) => {
     setEditingPolicy(policy);
-    
+
     // Format dates for DatePicker
     const formData = {
       policyName: policy.policyName || '',
@@ -5923,7 +6650,7 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
       resolved: policy.resolved ? dayjs(policy.resolved) : null,
       penaltyId: policy.penaltyId || null
     };
-    
+
     form.setFieldsValue(formData);
     setModalVisible(true);
   };
@@ -5931,10 +6658,10 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
   const deletePolicy = async (id) => {
     try {
       await penaltyPoliciesAPI.delete(id);
-      
+
       // Reload policies after deletion
       await loadPenaltyPolicies();
-      
+
       notification.success({
         message: 'Policy Deleted Successfully',
         description: 'The penalty policy has been deleted.',
@@ -5971,7 +6698,7 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
         console.log('Updating policy with data:', policyData);
         const response = await penaltyPoliciesAPI.update(editingPolicy.id, policyData);
         console.log('Update policy response:', response);
-        
+
         notification.success({
           message: 'Success',
           description: 'Penalty policy updated successfully',
@@ -5983,7 +6710,7 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
         console.log('Creating policy with data:', policyData);
         const response = await penaltyPoliciesAPI.create(policyData);
         console.log('Create policy response:', response);
-        
+
         notification.success({
           message: 'Success',
           description: 'Penalty policy created successfully',
@@ -5991,10 +6718,10 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
           duration: 3,
         });
       }
-      
+
       // Reload policies after create/update
       await loadPenaltyPolicies();
-      
+
       // Close modal and reset form
       setModalVisible(false);
       setEditingPolicy(null);
@@ -6026,9 +6753,9 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              <Button 
-                type="primary" 
-                icon={<PlusOutlined />} 
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
                 onClick={() => {
                   setEditingPolicy(null);
                   form.resetFields();
@@ -6060,9 +6787,9 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
             borderRadius: '20px 20px 0 0'
           }}
         >
-          <Table 
-            columns={columns} 
-            dataSource={penaltyPolicies} 
+          <Table
+            columns={columns}
+            dataSource={penaltyPolicies}
             rowKey="id"
             loading={loading}
             pagination={{
@@ -6089,22 +6816,22 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
         destroyOnClose
         maskClosable={false}
       >
-        <Form 
-          form={form} 
-          layout="vertical" 
+        <Form
+          form={form}
+          layout="vertical"
           onFinish={handleSubmit}
         >
-          <Form.Item 
-            name="policyName" 
-            label="Policy Name" 
+          <Form.Item
+            name="policyName"
+            label="Policy Name"
             rules={[{ required: true, message: 'Please enter policy name' }]}
           >
             <Input placeholder="Enter policy name" />
           </Form.Item>
-          
-          <Form.Item 
-            name="type" 
-            label="Type" 
+
+          <Form.Item
+            name="type"
+            label="Type"
             rules={[{ required: true, message: 'Please select type' }]}
           >
             <Select placeholder="Select policy type">
@@ -6113,10 +6840,10 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
               <Option value="lated">Late Return</Option>
             </Select>
           </Form.Item>
-          
-          <Form.Item 
-            name="amount" 
-            label="Amount (VND)" 
+
+          <Form.Item
+            name="amount"
+            label="Amount (VND)"
             rules={[
               { required: true, message: 'Please enter amount' },
               { type: 'number', min: 0, message: 'Amount must be greater than or equal to 0' }
@@ -6130,9 +6857,9 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
               placeholder="Enter penalty amount"
             />
           </Form.Item>
-          
-          <Form.Item 
-            name="issuedDate" 
+
+          <Form.Item
+            name="issuedDate"
             label="Issued Date"
           >
             <DatePicker
@@ -6141,9 +6868,9 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
               placeholder="Select issued date"
             />
           </Form.Item>
-          
-          <Form.Item 
-            name="resolved" 
+
+          <Form.Item
+            name="resolved"
             label="Resolved Date"
           >
             <DatePicker
@@ -6152,15 +6879,15 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
               placeholder="Select resolved date"
             />
           </Form.Item>
-          
+
           <Form.Item>
             <Space>
               <motion.div
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Button 
-                  type="primary" 
+                <Button
+                  type="primary"
                   htmlType="submit"
                   loading={loading}
                 >
@@ -6171,7 +6898,7 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Button 
+                <Button
                   onClick={() => {
                     setModalVisible(false);
                     setEditingPolicy(null);
