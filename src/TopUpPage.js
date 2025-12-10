@@ -6,7 +6,6 @@ import {
   Col,
   Form,
   Input,
-  Select,
   Button,
   Steps,
   message,
@@ -25,28 +24,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeftOutlined,
   WalletOutlined,
-  BankOutlined,
   SafetyCertificateOutlined,
   DollarOutlined,
   CreditCardOutlined,
   LoadingOutlined
 } from '@ant-design/icons';
-import { walletAPI } from './api';
+import { walletAPI, paymentAPI } from './api';
 
-// Vietnamese banks supported by VNPay
-const vnPayBanks = [
-  { id: 'NCB', code: 'NCB', name: 'Ngân hàng Quốc Dân', shortName: 'NCB' },
-  { id: 'VIETCOMBANK', code: 'VIETCOMBANK', name: 'Ngân hàng Ngoại Thương Việt Nam', shortName: 'Vietcombank' },
-  { id: 'VIETINBANK', code: 'VIETINBANK', name: 'Ngân hàng Công Thương Việt Nam', shortName: 'Vietinbank' },
-  { id: 'TECHCOMBANK', code: 'TECHCOMBANK', name: 'Ngân hàng Kỹ Thương Việt Nam', shortName: 'Techcombank' },
-  { id: 'ACB', code: 'ACB', name: 'Ngân hàng Á Châu', shortName: 'ACB' },
-  { id: 'TPBANK', code: 'TPBANK', name: 'Ngân hàng Tiên Phong', shortName: 'TPBank' },
-  { id: 'MBBANK', code: 'MBBANK', name: 'Ngân hàng Quân Đội', shortName: 'MB Bank' },
-  { id: 'VPBANK', code: 'VPBANK', name: 'Ngân hàng Việt Nam Thịnh Vượng', shortName: 'VPBank' },
-];
 
 const { Title, Text } = Typography;
-const { Option } = Select;
 const { Step } = Steps;
 
 // Animation variants
@@ -84,7 +70,6 @@ function TopUpPage({ user, onLogout }) {
   // State management
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [selectedBank, setSelectedBank] = useState(null);
   const [topUpAmount, setTopUpAmount] = useState(0);
   const [transactionResult, setTransactionResult] = useState(null);
 
@@ -97,6 +82,67 @@ function TopUpPage({ user, onLogout }) {
     { label: '1,000,000 VND', value: 1000000 },
     { label: '2,000,000 VND', value: 2000000 }
   ];
+
+  // Handle PayPal return callback
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const paymentId = urlParams.get('paymentId');
+    const payerId = urlParams.get('PayerID');
+
+    // Check if this is a PayPal return
+    if (paymentId && payerId) {
+      handlePayPalReturn(paymentId, payerId);
+    } else if (urlParams.get('cancel') === 'true') {
+      handlePayPalCancel();
+    }
+  }, []);
+
+  const handlePayPalReturn = async (paymentId, payerId) => {
+    try {
+      // Get stored payment info
+      const storedPayment = sessionStorage.getItem('pendingPayPalPayment');
+      if (!storedPayment) {
+        message.error('Payment information not found');
+        return;
+      }
+
+      const paymentInfo = JSON.parse(storedPayment);
+
+      // Execute PayPal payment
+      const response = await paymentAPI.executePayPalPayment(
+        paymentId,
+        payerId,
+        paymentInfo.transactionId
+      );
+
+      if (response && response.data) {
+        message.success('Payment successful! Wallet balance has been updated.');
+
+        // Clear stored payment info
+        sessionStorage.removeItem('pendingPayPalPayment');
+
+        // Clean URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+
+        // Redirect to portal after 1 second
+        setTimeout(() => {
+          handleBackToPortal();
+        }, 1000);
+      } else {
+        message.error('Payment execution failed. Please try again.');
+      }
+    } catch (error) {
+      console.error('PayPal payment execution error:', error);
+      message.error(error.message || 'Payment execution failed. Please try again.');
+      sessionStorage.removeItem('pendingPayPalPayment');
+    }
+  };
+
+  const handlePayPalCancel = () => {
+    message.warning('Payment was cancelled');
+    sessionStorage.removeItem('pendingPayPalPayment');
+    window.history.replaceState({}, document.title, window.location.pathname);
+  };
 
   const handleBackToPortal = () => {
     const userRole = user?.role?.toLowerCase();
@@ -121,16 +167,6 @@ function TopUpPage({ user, onLogout }) {
     }
   };
 
-  const handleBankSelect = (bankId) => {
-    const bank = vnPayBanks.find(b => b.id === bankId);
-    setSelectedBank(bank);
-    setCurrentStep(1);
-  };
-
-  const handleSkipBank = () => {
-    setSelectedBank(null);
-    setCurrentStep(1);
-  };
 
   const handleAmountSelect = (amount) => {
     setTopUpAmount(amount);
@@ -153,33 +189,71 @@ function TopUpPage({ user, onLogout }) {
 
     setLoading(true);
     try {
-      const description = `Nạp tiền IoT Wallet - ${topUpAmount.toLocaleString()} VND`;
+      const description = `Top-up IoT Wallet - ${topUpAmount.toLocaleString()} VND`;
 
-      // Call API to create top-up transaction
-      const response = await walletAPI.topUp(topUpAmount, description);
+      // Convert VND to USD (approximate rate: 1 USD = 24,000 VND)
+      const exchangeRate = 24000;
+      const amountUSD = (topUpAmount / exchangeRate).toFixed(2);
+
+      // Get return URL based on user role
+      const userRole = user?.role?.toLowerCase();
+      let returnPath = '/member'; // default
+      switch (userRole) {
+        case 'leader':
+          returnPath = '/leader';
+          break;
+        case 'lecturer':
+          returnPath = '/lecturer';
+          break;
+        case 'admin':
+          returnPath = '/admin';
+          break;
+        case 'member':
+          returnPath = '/member';
+          break;
+        case 'academic':
+          returnPath = '/academic';
+          break;
+        default:
+          returnPath = '/';
+      }
+
+      const baseUrl = window.location.origin;
+      const returnUrl = `${baseUrl}${returnPath}`;
+      const cancelUrl = `${baseUrl}${returnPath}`;
+
+      // Create PayPal payment with role-specific return URLs
+      const response = await paymentAPI.createPayPalPayment(
+        parseFloat(amountUSD),
+        description,
+        returnUrl,
+        cancelUrl
+      );
 
       if (response && response.data) {
-        // Store transaction info
-        setTransactionResult({
-          transactionId: response.data.id,
-          orderId: response.data.id,
-          amount: topUpAmount,
-          bank: selectedBank?.shortName || 'N/A'
-        });
+        const { approvalUrl, paymentId, transactionId } = response.data;
 
-        message.success('Nạp tiền thành công! Số dư ví đã được cập nhật.');
+        if (approvalUrl) {
+          // Store transaction info in sessionStorage for callback handling
+          sessionStorage.setItem('pendingPayPalPayment', JSON.stringify({
+            paymentId,
+            transactionId,
+            amount: parseFloat(amountUSD),
+            originalAmountVND: topUpAmount
+          }));
 
-        // Redirect to previous page after 1 second
-        setTimeout(() => {
-          handleComplete();
-        }, 1000);
+          // Redirect to PayPal approval page
+          window.location.href = approvalUrl;
+        } else {
+          message.error('Không thể tạo PayPal payment. Vui lòng thử lại.');
+        }
       } else {
-        message.error('Không thể nạp tiền. Vui lòng thử lại.');
+        message.error('Không thể tạo PayPal payment. Vui lòng thử lại.');
       }
 
     } catch (error) {
-      console.error('Top-up error:', error);
-      message.error(error.response?.data?.message || 'Không thể nạp tiền. Vui lòng thử lại.');
+      console.error('PayPal payment creation error:', error);
+      message.error(error.message || 'Không thể tạo PayPal payment. Vui lòng thử lại.');
     } finally {
       setLoading(false);
     }
@@ -189,7 +263,6 @@ function TopUpPage({ user, onLogout }) {
     // Clear form and state
     form.resetFields();
     setTopUpAmount(0);
-    setSelectedBank(null);
     setTransactionResult(null);
     setCurrentStep(0);
 
@@ -197,82 +270,6 @@ function TopUpPage({ user, onLogout }) {
     handleBackToPortal();
   };
 
-  const renderBankSelection = () => (
-    <motion.div
-      variants={cardVariants}
-      initial="hidden"
-      animate="visible"
-      whileHover="hover"
-    >
-      <Card
-        title={
-          <Space>
-            <BankOutlined style={{ color: '#1890ff' }} />
-            <span>Chọn Ngân Hàng</span>
-          </Space>
-        }
-        style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
-      >
-        <Row gutter={[16, 16]}>
-          {vnPayBanks.map((bank) => (
-            <Col xs={24} sm={12} md={8} lg={6} key={bank.id}>
-              <motion.div
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                <Card
-                  hoverable
-                  onClick={() => handleBankSelect(bank.id)}
-                  style={{
-                    borderRadius: '12px',
-                    border: selectedBank?.id === bank.id ? '2px solid #1890ff' : '2px solid #f0f0f0',
-                    cursor: 'pointer',
-                    transition: 'all 0.3s ease',
-                    background: selectedBank?.id === bank.id ? '#f6ffed' : 'white'
-                  }}
-                  bodyStyle={{ padding: '16px', textAlign: 'center' }}
-                >
-                  <Avatar
-                    size={48}
-                    style={{
-                      marginBottom: '12px',
-                      background: selectedBank?.id === bank.id ? '#1890ff' : '#f0f0f0',
-                      color: selectedBank?.id === bank.id ? 'white' : '#1890ff'
-                    }}
-                  >
-                    {bank.shortName.charAt(0)}
-                  </Avatar>
-                  <div>
-                    <Text strong style={{ fontSize: '14px' }}>
-                      {bank.shortName}
-                    </Text>
-                    <br />
-                    <Text type="secondary" style={{ fontSize: '12px' }}>
-                      {bank.name}
-                    </Text>
-                  </div>
-                </Card>
-              </motion.div>
-            </Col>
-          ))}
-        </Row>
-        <div style={{ textAlign: 'center', marginTop: '16px' }}>
-          <Button
-            type="default"
-            size="large"
-            onClick={handleSkipBank}
-            style={{
-              borderRadius: '12px',
-              height: 48,
-              padding: '0 32px'
-            }}
-          >
-            Bỏ qua - Thanh toán trực tiếp
-          </Button>
-        </div>
-      </Card>
-    </motion.div>
-  );
 
   const renderAmountSelection = () => (
     <motion.div
@@ -340,35 +337,22 @@ function TopUpPage({ user, onLogout }) {
           </Form.Item>
 
           <div style={{ textAlign: 'center', marginTop: '24px' }}>
-            <Space size="large">
-              <Button
-                size="large"
-                onClick={() => setCurrentStep(0)}
-                style={{
-                  borderRadius: '12px',
-                  height: 48,
-                  padding: '0 24px'
-                }}
-              >
-                Quay lại
-              </Button>
-              <Button
-                type="primary"
-                size="large"
-                onClick={() => setCurrentStep(2)}
-                disabled={!topUpAmount}
-                style={{
-                  borderRadius: '12px',
-                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  border: 'none',
-                  height: 48,
-                  padding: '0 32px',
-                  fontWeight: 'bold'
-                }}
-              >
-                Tiếp tục
-              </Button>
-            </Space>
+            <Button
+              type="primary"
+              size="large"
+              onClick={() => setCurrentStep(1)}
+              disabled={!topUpAmount}
+              style={{
+                borderRadius: '12px',
+                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                border: 'none',
+                height: 48,
+                padding: '0 32px',
+                fontWeight: 'bold'
+              }}
+            >
+              Tiếp tục
+            </Button>
           </div>
         </Form>
       </Card>
@@ -402,21 +386,11 @@ function TopUpPage({ user, onLogout }) {
                   {topUpAmount.toLocaleString()} VND
                 </Text>
               </Col>
-              {selectedBank && (
-                <>
-                  <Col span={8}>
-                    <Text type="secondary">Ngân hàng:</Text>
-                  </Col>
-                  <Col span={16}>
-                    <Text strong>{selectedBank.shortName}</Text>
-                  </Col>
-                </>
-              )}
               <Col span={8}>
                 <Text type="secondary">Phương thức:</Text>
               </Col>
               <Col span={16}>
-                <Text strong>Trực tiếp</Text>
+                <Text strong>PayPal</Text>
               </Col>
             </Row>
           </Card>
@@ -432,7 +406,7 @@ function TopUpPage({ user, onLogout }) {
           <Space size="large">
             <Button
               size="large"
-              onClick={() => setCurrentStep(1)}
+              onClick={() => setCurrentStep(0)}
               style={{
                 borderRadius: '12px',
                 height: 48,
@@ -509,10 +483,10 @@ function TopUpPage({ user, onLogout }) {
                 <Text strong>{transactionResult?.amount?.toLocaleString()} VND</Text>
               </Col>
               <Col span={8}>
-                <Text type="secondary">Bank:</Text>
+                <Text type="secondary">Payment Method:</Text>
               </Col>
               <Col span={16}>
-                <Text strong>{transactionResult?.bank || 'N/A'}</Text>
+                <Text strong>PayPal</Text>
               </Col>
               <Col span={8}>
                 <Text type="secondary">Status:</Text>
@@ -530,23 +504,19 @@ function TopUpPage({ user, onLogout }) {
   const getStepContent = () => {
     switch (currentStep) {
       case 0:
-        return renderBankSelection();
-      case 1:
         return renderAmountSelection();
-      case 2:
+      case 1:
         return renderPaymentInfo();
       default:
-        return renderBankSelection();
+        return renderAmountSelection();
     }
   };
 
   const getStepTitle = () => {
     switch (currentStep) {
       case 0:
-        return 'Chọn Ngân Hàng';
-      case 1:
         return 'Nhập Số Tiền';
-      case 2:
+      case 1:
         return 'Thanh Toán';
       default:
         return 'Nạp Tiền Ví';
@@ -591,7 +561,7 @@ function TopUpPage({ user, onLogout }) {
                       Nạp Tiền Ví
                     </Title>
                     <Text type="secondary">
-                      Nạp tiền an toàn và tiện lợi qua VNPay
+                      Nạp tiền an toàn và tiện lợi qua PayPal
                     </Text>
                   </div>
                 </Space>
@@ -631,7 +601,6 @@ function TopUpPage({ user, onLogout }) {
               size="small"
               style={{ padding: '16px 0' }}
             >
-              <Step title="Ngân Hàng" icon={<BankOutlined />} />
               <Step title="Số Tiền" icon={<DollarOutlined />} />
               <Step title="Thanh Toán" icon={<SafetyCertificateOutlined />} />
             </Steps>

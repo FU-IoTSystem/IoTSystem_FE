@@ -22,6 +22,7 @@ import {
   Modal,
   Form,
   Input,
+  InputNumber,
   Select,
   Divider
 } from 'antd';
@@ -41,9 +42,14 @@ import {
   UserAddOutlined,
   EditOutlined,
   CheckCircleOutlined,
-  UploadOutlined
+  UploadOutlined,
+  ReloadOutlined,
+  ExclamationCircleOutlined,
+  ShoppingOutlined,
+  InfoCircleOutlined,
+  RollbackOutlined
 } from '@ant-design/icons';
-import { authAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, walletTransactionAPI, classesAPI, userAPI } from './api';
+import { authAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, walletTransactionAPI, classesAPI, userAPI, penaltiesAPI, penaltyDetailAPI, paymentAPI } from './api';
 import dayjs from 'dayjs';
 
 // Default wallet structure
@@ -624,7 +630,7 @@ function MemberPortal({ user, onLogout }) {
                   onJoinGroup={() => setJoinGroupModalVisible(true)}
                   availableGroups={availableGroups}
                 />}
-                {selectedKey === 'wallet' && <WalletManagement wallet={wallet} />}
+                {selectedKey === 'wallet' && <WalletManagement wallet={wallet} setWallet={setWallet} loadData={loadData} />}
                 {selectedKey === 'profile' && <ProfileManagement profile={profile} setProfile={setProfile} loading={profileLoading} setLoading={setProfileLoading} user={user} />}
               </motion.div>
             </AnimatePresence>
@@ -1096,60 +1102,726 @@ const GroupInfo = ({ group, onCreateGroup, onJoinGroup, availableGroups }) => (
 
 
 // Wallet Management Component
-const WalletManagement = ({ wallet }) => (
-  <div>
-    <Row gutter={[24, 24]}>
-      <Col xs={24} md={8}>
-        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-          <Card
+const WalletManagement = ({ wallet, setWallet, loadData }) => {
+  const [topUpModalVisible, setTopUpModalVisible] = useState(false);
+  const [penaltyModalVisible, setPenaltyModalVisible] = useState(false);
+  const [topUpForm] = Form.useForm();
+  const [topUpLoading, setTopUpLoading] = useState(false);
+  const [penalties, setPenalties] = useState([]);
+  const [penaltyLoading, setPenaltyLoading] = useState(false);
+  const [selectedPenalty, setSelectedPenalty] = useState(null);
+  const [penaltyDetails, setPenaltyDetails] = useState([]);
+  const [payingPenalty, setPayingPenalty] = useState(false);
+  const [transactions, setTransactions] = useState([]);
+  const [transactionsLoading, setTransactionsLoading] = useState(false);
+
+  // Predefined amount options for topup
+  const amountOptions = [
+    { label: '50,000 VND', value: 50000 },
+    { label: '100,000 VND', value: 100000 },
+    { label: '200,000 VND', value: 200000 },
+    { label: '500,000 VND', value: 500000 },
+    { label: '1,000,000 VND', value: 1000000 },
+    { label: '2,000,000 VND', value: 2000000 }
+  ];
+
+  const handlePayPalReturn = async (paymentId, payerId) => {
+    try {
+      // Get stored payment info
+      const storedPayment = sessionStorage.getItem('pendingPayPalPayment');
+      if (!storedPayment) {
+        message.error('Payment information not found');
+        return;
+      }
+
+      const paymentInfo = JSON.parse(storedPayment);
+
+      // Execute PayPal payment
+      const response = await paymentAPI.executePayPalPayment(
+        paymentId,
+        payerId,
+        paymentInfo.transactionId
+      );
+
+      if (response && response.data) {
+        message.success('Payment successful! Wallet balance has been updated.');
+
+        // Clear stored payment info
+        sessionStorage.removeItem('pendingPayPalPayment');
+
+        // Clean URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+
+        // Wait a moment for backend to process the payment
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Reload wallet directly to ensure balance is updated
+        try {
+          const walletResponse = await walletAPI.getMyWallet();
+          console.log('Wallet API response after payment:', walletResponse);
+
+          const walletData = walletResponse?.data || walletResponse || {};
+          console.log('Parsed wallet data:', walletData);
+          console.log('Wallet balance value:', walletData.balance, 'Type:', typeof walletData.balance);
+
+          // Parse balance - handle both number and string formats
+          let balance = 0;
+          if (walletData.balance !== undefined && walletData.balance !== null) {
+            balance = typeof walletData.balance === 'string'
+              ? parseFloat(walletData.balance)
+              : Number(walletData.balance);
+          }
+
+          console.log('Final balance to set:', balance);
+
+          // Update wallet state using setWallet prop
+          if (setWallet) {
+            setWallet(prevWallet => {
+              const updatedWallet = {
+                ...prevWallet,
+                balance: balance || 0
+              };
+              console.log('Updated wallet state:', updatedWallet);
+              return updatedWallet;
+            });
+          }
+        } catch (walletError) {
+          console.error('Error reloading wallet:', walletError);
+          message.warning('Payment successful but failed to refresh wallet. Please refresh the page.');
+        }
+
+        // Reload all data (this will also update wallet)
+        await loadData();
+        await loadTransactionHistory();
+
+        // Close modal if open
+        setTopUpModalVisible(false);
+        topUpForm.resetFields();
+      } else {
+        message.error('Payment execution failed. Please try again.');
+      }
+    } catch (error) {
+      console.error('PayPal payment execution error:', error);
+      message.error(error.message || 'Payment execution failed. Please try again.');
+      sessionStorage.removeItem('pendingPayPalPayment');
+    }
+  };
+
+  const handlePayPalCancel = () => {
+    message.warning('Payment was cancelled');
+    sessionStorage.removeItem('pendingPayPalPayment');
+    window.history.replaceState({}, document.title, window.location.pathname);
+    setTopUpModalVisible(false);
+    topUpForm.resetFields();
+  };
+
+  useEffect(() => {
+    loadTransactionHistory();
+
+    // Handle PayPal return callback
+    const urlParams = new URLSearchParams(window.location.search);
+    const paymentId = urlParams.get('paymentId');
+    const payerId = urlParams.get('PayerID');
+
+    // Check if this is a PayPal return
+    if (paymentId && payerId) {
+      handlePayPalReturn(paymentId, payerId);
+    } else if (urlParams.get('cancel') === 'true' || window.location.pathname.includes('paypal-cancel')) {
+      handlePayPalCancel();
+    }
+  }, []);
+
+  const loadTransactionHistory = async () => {
+    try {
+      setTransactionsLoading(true);
+      const response = await walletTransactionAPI.getHistory();
+      console.log('Transaction history response:', response);
+
+      let transactionsData = [];
+      if (Array.isArray(response)) {
+        transactionsData = response;
+      } else if (response && response.data && Array.isArray(response.data)) {
+        transactionsData = response.data;
+      }
+
+      // Map transactions to expected format
+      const mappedTransactions = transactionsData.map(txn => ({
+        type: txn.type || txn.transactionType || 'UNKNOWN',
+        amount: txn.amount || 0,
+        date: txn.createdAt ? formatDateTimeDisplay(txn.createdAt) : 'N/A',
+        description: txn.description || '',
+        status: txn.status || txn.transactionStatus || 'COMPLETED',
+        id: txn.id,
+        createdAt: txn.createdAt
+      }));
+
+      setTransactions(mappedTransactions);
+    } catch (error) {
+      console.error('Error loading transaction history:', error);
+      setTransactions([]);
+    } finally {
+      setTransactionsLoading(false);
+    }
+  };
+
+  const loadPenalties = async () => {
+    try {
+      setPenaltyLoading(true);
+      const response = await penaltiesAPI.getPenByAccount();
+      console.log('Penalties by account response:', response);
+
+      let penaltiesData = [];
+      if (Array.isArray(response)) {
+        penaltiesData = response;
+      } else if (response && response.data && Array.isArray(response.data)) {
+        penaltiesData = response.data;
+      }
+
+      // Map to expected format, filter only unresolved penalties
+      const mappedPenalties = penaltiesData
+        .filter(p => !p.resolved)
+        .map(penalty => ({
+          id: penalty.id,
+          penaltyId: penalty.id,
+          kitName: penalty.kitName || 'Unknown Kit',
+          rentalId: penalty.borrowRequestId || 'N/A',
+          amount: penalty.totalAmount || 0,
+          penaltyType: penalty.type || 'other',
+          dueDate: penalty.takeEffectDate || new Date().toISOString(),
+          reason: penalty.note || 'Penalty fee',
+          status: penalty.resolved ? 'resolved' : 'pending',
+          originalData: penalty
+        }));
+
+      setPenalties(mappedPenalties);
+    } catch (error) {
+      console.error('Error loading penalties:', error);
+      message.error('Failed to load penalties');
+      setPenalties([]);
+    } finally {
+      setPenaltyLoading(false);
+    }
+  };
+
+  const loadPenaltyDetails = async (penaltyId) => {
+    if (!penaltyId) {
+      setPenaltyDetails([]);
+      return;
+    }
+
+    try {
+      const response = await penaltyDetailAPI.findByPenaltyId(penaltyId);
+      let detailsData = [];
+      if (Array.isArray(response)) {
+        detailsData = response;
+      } else if (response && response.data && Array.isArray(response.data)) {
+        detailsData = response.data;
+      }
+      setPenaltyDetails(detailsData);
+    } catch (error) {
+      console.error('Error loading penalty details:', error);
+      setPenaltyDetails([]);
+    }
+  };
+
+  const handleTopUp = async (values) => {
+    const amount = values.amount;
+    if (!amount || amount < 10000) {
+      message.error('Số tiền nạp tối thiểu là 10,000 VND');
+      return;
+    }
+    if (amount > 10000000) {
+      message.error('Số tiền nạp tối đa là 10,000,000 VND');
+      return;
+    }
+
+    setTopUpLoading(true);
+    try {
+      const description = `Top-up IoT Wallet - ${amount.toLocaleString()} VND`;
+
+      // Convert VND to USD (approximate rate: 1 USD = 24,000 VND)
+      // You may want to use a real-time exchange rate API
+      const exchangeRate = 24000;
+      const amountUSD = (amount / exchangeRate).toFixed(2);
+
+      // Get current portal path for return/cancel URLs
+      const currentPath = window.location.pathname; // e.g., /member, /leader, /lecturer
+      const baseUrl = window.location.origin;
+      const returnUrl = `${baseUrl}${currentPath}`;
+      const cancelUrl = `${baseUrl}${currentPath}`;
+
+      // Create PayPal payment with portal-specific return URLs
+      const response = await paymentAPI.createPayPalPayment(
+        parseFloat(amountUSD),
+        description,
+        returnUrl,
+        cancelUrl
+      );
+
+      if (response && response.data) {
+        const { approvalUrl, paymentId, transactionId } = response.data;
+
+        if (approvalUrl) {
+          // Store transaction info in sessionStorage for callback handling
+          sessionStorage.setItem('pendingPayPalPayment', JSON.stringify({
+            paymentId,
+            transactionId,
+            amount: parseFloat(amountUSD),
+            originalAmountVND: amount
+          }));
+
+          // Redirect to PayPal approval page
+          window.location.href = approvalUrl;
+        } else {
+          message.error('Không thể tạo PayPal payment. Vui lòng thử lại.');
+        }
+      } else {
+        message.error('Không thể tạo PayPal payment. Vui lòng thử lại.');
+      }
+    } catch (error) {
+      console.error('PayPal payment creation error:', error);
+      message.error(error.message || 'Không thể tạo PayPal payment. Vui lòng thử lại.');
+    } finally {
+      setTopUpLoading(false);
+    }
+  };
+
+  const handleOpenPenaltyModal = () => {
+    setPenaltyModalVisible(true);
+    loadPenalties();
+  };
+
+  const handleSelectPenalty = (penalty) => {
+    setSelectedPenalty(penalty);
+    loadPenaltyDetails(penalty.id);
+  };
+
+  const handlePayPenalty = async () => {
+    if (!selectedPenalty) {
+      message.error('Vui lòng chọn penalty để thanh toán');
+      return;
+    }
+
+    // Check wallet balance
+    if (wallet.balance < selectedPenalty.amount) {
+      message.error('Số dư ví không đủ để thanh toán penalty! Vui lòng nạp thêm tiền.');
+      return;
+    }
+
+    setPayingPenalty(true);
+    try {
+      await penaltiesAPI.confirmPenaltyPayment(selectedPenalty.id);
+      message.success('Thanh toán penalty thành công!');
+      setPenaltyModalVisible(false);
+      setSelectedPenalty(null);
+      setPenaltyDetails([]);
+
+      // Reload wallet, transactions and penalties
+      await loadData();
+      await loadTransactionHistory();
+      await loadPenalties();
+    } catch (error) {
+      console.error('Error paying penalty:', error);
+      message.error(error.message || 'Payment failed. Please try again.');
+    } finally {
+      setPayingPenalty(false);
+    }
+  };
+
+  const getTransactionTypeConfig = (type) => {
+    const typeUpper = (type || '').toUpperCase();
+    switch (typeUpper) {
+      case 'TOP_UP':
+      case 'TOPUP':
+        return { label: 'Nạp tiền', color: 'success', icon: <DollarOutlined />, bg: '#e8f8ee', border: '1.5px solid #52c41a', text: '#2a8731' };
+      case 'RENTAL_FEE':
+        return { label: 'Thuê kit', color: 'geekblue', icon: <ShoppingOutlined />, bg: '#e6f7ff', border: '1.5px solid #177ddc', text: '#177ddc' };
+      case 'PENALTY_PAYMENT':
+      case 'PENALTY':
+      case 'FINE':
+        return { label: 'Phí phạt', color: 'error', icon: <ExclamationCircleOutlined />, bg: '#fff1f0', border: '1.5px solid #ff4d4f', text: '#d4001a' };
+      case 'REFUND':
+        return { label: 'Hoàn tiền', color: 'purple', icon: <RollbackOutlined />, bg: '#f9f0ff', border: '1.5px solid #722ed1', text: '#722ed1' };
+      default:
+        return { label: type || 'Khác', color: 'default', icon: <InfoCircleOutlined />, bg: '#fafafa', border: '1.5px solid #bfbfbf', text: '#595959' };
+    }
+  };
+
+  return (
+    <div>
+      <Row gutter={[24, 24]}>
+        <Col xs={24} md={8}>
+          <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+            <Card
+              style={{
+                borderRadius: '16px',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                color: 'white'
+              }}
+            >
+              <Statistic
+                title="Current Balance"
+                value={wallet.balance || 0}
+                prefix={<DollarOutlined />}
+                suffix="VND"
+                valueStyle={{ color: 'white', fontWeight: 'bold' }}
+              />
+              <Space direction="vertical" style={{ width: '100%', marginTop: '16px' }}>
+                <Button
+                  type="primary"
+                  onClick={() => setTopUpModalVisible(true)}
+                  style={{
+                    width: '100%',
+                    background: 'rgba(255,255,255,0.2)',
+                    border: '1px solid rgba(255,255,255,0.3)'
+                  }}
+                >
+                  Top Up
+                </Button>
+                <Button
+                  onClick={handleOpenPenaltyModal}
+                  style={{
+                    width: '100%',
+                    background: 'rgba(255,255,255,0.1)',
+                    border: '1px solid rgba(255,255,255,0.3)',
+                    color: 'white'
+                  }}
+                >
+                  Pay Penalties
+                </Button>
+              </Space>
+            </Card>
+          </motion.div>
+        </Col>
+
+        <Col xs={24} md={16}>
+          <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+            <Card
+              title="Transaction History"
+              extra={
+                <Button
+                  icon={<ReloadOutlined />}
+                  onClick={loadTransactionHistory}
+                  loading={transactionsLoading}
+                >
+                  Refresh
+                </Button>
+              }
+              style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+            >
+              <Spin spinning={transactionsLoading}>
+                <Table
+                  dataSource={transactions}
+                  columns={[
+                    {
+                      title: 'Type',
+                      dataIndex: 'type',
+                      key: 'type',
+                      render: (type) => {
+                        const config = getTransactionTypeConfig(type);
+                        return (
+                          <Tag
+                            color={config.color}
+                            style={{
+                              background: config.bg,
+                              border: config.border,
+                              color: config.text,
+                              fontWeight: 'bold',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              fontSize: 13,
+                              letterSpacing: 1
+                            }}
+                          >
+                            {config.icon} <span>{config.label}</span>
+                          </Tag>
+                        );
+                      }
+                    },
+                    {
+                      title: 'Amount',
+                      dataIndex: 'amount',
+                      key: 'amount',
+                      render: (amount) => (
+                        <Text strong style={{
+                          color: amount > 0 ? '#52c41a' : '#ff4d4f'
+                        }}>
+                          {amount ? amount.toLocaleString() : 0} VND
+                        </Text>
+                      ),
+                    },
+                    {
+                      title: 'Description',
+                      dataIndex: 'description',
+                      key: 'description',
+                      render: (description) => description || 'N/A',
+                    },
+                    {
+                      title: 'Date',
+                      dataIndex: 'createdAt',
+                      key: 'date',
+                      render: (date) => {
+                        if (!date) return 'N/A';
+                        return formatDateTimeDisplay(date);
+                      },
+                    },
+                    {
+                      title: 'Status',
+                      dataIndex: 'status',
+                      key: 'status',
+                      render: (status) => {
+                        const statusColor = status === 'COMPLETED' || status === 'SUCCESS' ? 'success' :
+                          status === 'PENDING' ? 'processing' :
+                            status === 'FAILED' ? 'error' : 'default';
+                        return (
+                          <Tag color={statusColor}>
+                            {status || 'N/A'}
+                          </Tag>
+                        );
+                      },
+                    },
+                  ]}
+                  rowKey={(record, index) => record.id || record.transactionId || index}
+                  pagination={{
+                    pageSize: 10,
+                    showSizeChanger: true,
+                    showTotal: (total) => `Total ${total} transactions`,
+                  }}
+                  locale={{ emptyText: 'No transactions found' }}
+                />
+              </Spin>
+            </Card>
+          </motion.div>
+        </Col>
+      </Row>
+
+      {/* Top Up Modal */}
+      <Modal
+        title="Top Up Wallet via PayPal"
+        open={topUpModalVisible}
+        onCancel={() => {
+          setTopUpModalVisible(false);
+          topUpForm.resetFields();
+        }}
+        footer={null}
+        width={500}
+      >
+        <Alert
+          message="PayPal Payment"
+          description="You will be redirected to PayPal to complete the payment. Amount will be converted from VND to USD (1 USD ≈ 24,000 VND)."
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+
+        <Form
+          form={topUpForm}
+          layout="vertical"
+          onFinish={handleTopUp}
+        >
+          <Form.Item
+            label="Select Amount (VND)"
+            name="amount"
+            rules={[
+              { required: true, message: 'Please select or enter an amount' },
+              { type: 'number', min: 10000, message: 'Minimum amount is 10,000 VND' },
+              { type: 'number', max: 10000000, message: 'Maximum amount is 10,000,000 VND' }
+            ]}
+          >
+            <InputNumber
+              style={{ width: '100%' }}
+              placeholder="Enter amount (10,000 - 10,000,000 VND)"
+              formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+              parser={value => value.replace(/\$\s?|(,*)/g, '')}
+              min={10000}
+              max={10000000}
+              step={10000}
+            />
+          </Form.Item>
+
+          <Form.Item shouldUpdate={(prevValues, currentValues) => prevValues.amount !== currentValues.amount}>
+            {({ getFieldValue }) => {
+              const amount = getFieldValue('amount');
+              if (amount) {
+                const exchangeRate = 24000;
+                const amountUSD = (amount / exchangeRate).toFixed(2);
+                return (
+                  <Alert
+                    message={`Equivalent: $${amountUSD} USD`}
+                    type="info"
+                    style={{ marginBottom: 16 }}
+                  />
+                );
+              }
+              return null;
+            }}
+          </Form.Item>
+
+          <div style={{ marginBottom: 16 }}>
+            <Text type="secondary">Quick select:</Text>
+            <Space wrap style={{ marginTop: 8 }}>
+              {amountOptions.map(option => (
+                <Button
+                  key={option.value}
+                  onClick={() => topUpForm.setFieldsValue({ amount: option.value })}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </Space>
+          </div>
+
+          <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
+            <Space>
+              <Button onClick={() => {
+                setTopUpModalVisible(false);
+                topUpForm.resetFields();
+              }}>
+                Cancel
+              </Button>
+              <Button type="primary" htmlType="submit" loading={topUpLoading}>
+                Continue to PayPal
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Pay Penalty Modal */}
+      <Modal
+        title="Pay Penalties"
+        open={penaltyModalVisible}
+        onCancel={() => {
+          setPenaltyModalVisible(false);
+          setSelectedPenalty(null);
+          setPenaltyDetails([]);
+        }}
+        footer={[
+          <Button key="cancel" onClick={() => {
+            setPenaltyModalVisible(false);
+            setSelectedPenalty(null);
+            setPenaltyDetails([]);
+          }}>
+            Cancel
+          </Button>,
+          <Button
+            key="pay"
+            type="primary"
+            onClick={handlePayPenalty}
+            loading={payingPenalty}
+            disabled={!selectedPenalty || (wallet.balance < (selectedPenalty?.amount || 0))}
             style={{
-              borderRadius: '16px',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              color: 'white'
+              background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+              border: 'none'
             }}
           >
-            <Statistic
-              title="Current Balance"
-              value={wallet.balance}
-              prefix={<DollarOutlined />}
-              suffix="VND"
-              valueStyle={{ color: 'white', fontWeight: 'bold' }}
-            />
+            Pay {selectedPenalty ? `${selectedPenalty.amount.toLocaleString()} VND` : ''}
+          </Button>
+        ]}
+        width={800}
+      >
+        <Spin spinning={penaltyLoading}>
+          {penalties.length === 0 ? (
+            <Empty description="No pending penalties" />
+          ) : (
+            <div>
+              <Alert
+                message={`Current Balance: ${wallet.balance.toLocaleString()} VND`}
+                type={wallet.balance < (selectedPenalty?.amount || 0) ? 'warning' : 'info'}
+                style={{ marginBottom: 16 }}
+              />
 
-          </Card>
-        </motion.div>
-      </Col>
+              <Row gutter={[16, 16]}>
+                <Col xs={24} md={12}>
+                  <Card title="Select Penalty" size="small">
+                    <List
+                      dataSource={penalties}
+                      renderItem={(penalty) => (
+                        <List.Item
+                          style={{
+                            cursor: 'pointer',
+                            backgroundColor: selectedPenalty?.id === penalty.id ? '#e6f7ff' : 'transparent',
+                            border: selectedPenalty?.id === penalty.id ? '2px solid #1890ff' : '1px solid #f0f0f0'
+                          }}
+                          onClick={() => handleSelectPenalty(penalty)}
+                        >
+                          <List.Item.Meta
+                            title={
+                              <div>
+                                <Text strong>{penalty.kitName}</Text>
+                                <Tag color="error" style={{ marginLeft: 8 }}>
+                                  {penalty.amount.toLocaleString()} VND
+                                </Tag>
+                              </div>
+                            }
+                            description={
+                              <div>
+                                <Text type="secondary">{penalty.reason}</Text>
+                                <br />
+                                <Text type="secondary" style={{ fontSize: 12 }}>
+                                  Due: {formatDateTimeDisplay(penalty.dueDate)}
+                                </Text>
+                              </div>
+                            }
+                          />
+                        </List.Item>
+                      )}
+                    />
+                  </Card>
+                </Col>
 
-      <Col xs={24} md={16}>
-        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-          <Card title="Transaction History" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            <Table
-              dataSource={wallet.transactions}
-              columns={[
-                {
-                  title: 'Type',
-                  dataIndex: 'type',
-                  key: 'type',
-                  render: (type) => <Tag color={type === 'Top-up' ? 'success' : 'primary'}>{type}</Tag>
-                },
-                {
-                  title: 'Amount',
-                  dataIndex: 'amount',
-                  key: 'amount',
-                  render: (amount) => `${amount.toLocaleString()} VND`
-                },
-                { title: 'Date', dataIndex: 'date', key: 'date' },
-              ]}
-              rowKey={(record, index) => index}
-              pagination={false}
-            />
-          </Card>
-        </motion.div>
-      </Col>
-    </Row>
-  </div>
-);
+                <Col xs={24} md={12}>
+                  <Card title="Penalty Details" size="small">
+                    {selectedPenalty ? (
+                      <div>
+                        <Descriptions column={1} bordered size="small">
+                          <Descriptions.Item label="Kit Name">
+                            {selectedPenalty.kitName}
+                          </Descriptions.Item>
+                          <Descriptions.Item label="Amount">
+                            <Text strong style={{ color: '#ff4d4f' }}>
+                              {selectedPenalty.amount.toLocaleString()} VND
+                            </Text>
+                          </Descriptions.Item>
+                          <Descriptions.Item label="Reason">
+                            {selectedPenalty.reason}
+                          </Descriptions.Item>
+                          <Descriptions.Item label="Due Date">
+                            {formatDateTimeDisplay(selectedPenalty.dueDate)}
+                          </Descriptions.Item>
+                        </Descriptions>
+
+                        {penaltyDetails.length > 0 && (
+                          <div style={{ marginTop: 16 }}>
+                            <Text strong>Penalty Breakdown:</Text>
+                            <List
+                              size="small"
+                              dataSource={penaltyDetails}
+                              renderItem={(detail) => (
+                                <List.Item>
+                                  <Text>{detail.policyName || 'Penalty'}: </Text>
+                                  <Text strong>{detail.amount?.toLocaleString()} VND</Text>
+                                </List.Item>
+                              )}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <Empty description="Select a penalty to view details" />
+                    )}
+                  </Card>
+                </Col>
+              </Row>
+            </div>
+          )}
+        </Spin>
+      </Modal>
+    </div>
+  );
+};
 
 
 
@@ -1311,10 +1983,6 @@ const ProfileManagement = ({ profile, setProfile, loading, setLoading, user }) =
 
                   <Col xs={24} md={16}>
                     <Descriptions column={1} bordered>
-                      <Descriptions.Item label="Account ID">
-                        <Text code>{profile.id}</Text>
-                      </Descriptions.Item>
-
                       <Descriptions.Item label="Email">
                         <Text strong>{profile.email || 'N/A'}</Text>
                         <Tag color="blue" style={{ marginLeft: 8 }}>Cannot be changed</Tag>

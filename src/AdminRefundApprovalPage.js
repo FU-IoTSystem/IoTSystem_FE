@@ -92,7 +92,7 @@ function AdminRefundApprovalPage() {
   const calculateRefundAmount = (request, damage) => {
     const originalAmount = request.originalAmount || 0;
     let damageFee = 0;
-    
+
     // Calculate damage fees based on damaged components
     Object.keys(damage).forEach(componentName => {
       const component = damage[componentName];
@@ -107,7 +107,7 @@ function AdminRefundApprovalPage() {
     const returnDate = new Date(request.refundDate);
     const dueDate = new Date(request.dueDate || new Date());
     const isLate = returnDate > dueDate;
-    
+
     let latePenalty = 0;
     if (isLate) {
       const daysLate = Math.ceil((returnDate - dueDate) / (1000 * 60 * 60 * 24));
@@ -153,7 +153,7 @@ function AdminRefundApprovalPage() {
       <Card>
         <CardContent>
           <Typography variant="h6" gutterBottom>Pending Refund Requests</Typography>
-          
+
           {refundRequests.length === 0 ? (
             <Typography>No refund requests found.</Typography>
           ) : (
@@ -183,10 +183,10 @@ function AdminRefundApprovalPage() {
                       <TableCell>{new Date(request.requestDate).toLocaleDateString()}</TableCell>
                       <TableCell>{request.originalAmount?.toLocaleString()} VND</TableCell>
                       <TableCell>
-                        <Chip 
-                          label={request.status} 
-                          color={getStatusColor(request.status)} 
-                          size="small" 
+                        <Chip
+                          label={request.status}
+                          color={getStatusColor(request.status)}
+                          size="small"
                         />
                       </TableCell>
                       <TableCell>
@@ -224,13 +224,13 @@ function AdminRefundApprovalPage() {
                   <Typography><strong>Requested Date:</strong> {new Date(selectedRequest.requestDate).toLocaleDateString()}</Typography>
                   <Typography><strong>Original Amount:</strong> {selectedRequest.originalAmount?.toLocaleString()} VND</Typography>
                 </Grid>
-                
+
                 <Grid item xs={12} md={6}>
                   <Typography variant="h6" gutterBottom>Damage Assessment</Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                     Assess any damaged components and their quantities
                   </Typography>
-                  
+
                   {/* Mock kit components for damage assessment */}
                   {['Arduino Board', 'Sensors', 'Cables', 'Battery'].map((component) => (
                     <Box key={component} sx={{ mb: 2 }}>
@@ -285,16 +285,16 @@ function AdminRefundApprovalPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setApprovalDialog(false)}>Cancel</Button>
-          <Button 
-            onClick={handleReject} 
-            color="error" 
+          <Button
+            onClick={handleReject}
+            color="error"
             variant="outlined"
           >
             Reject
           </Button>
-          <Button 
-            onClick={handleApprove} 
-            color="success" 
+          <Button
+            onClick={handleApprove}
+            color="success"
             variant="contained"
           >
             Approve
