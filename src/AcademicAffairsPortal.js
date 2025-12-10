@@ -28,7 +28,8 @@ import {
   Skeleton,
   Spin,
   notification,
-  InputNumber
+  InputNumber,
+  Popover
 } from 'antd';
 import dayjs from 'dayjs';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -60,7 +61,7 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { LoadingOutlined } from '@ant-design/icons';
-import { classesAPI, userAPI, classAssignmentAPI, excelImportAPI } from './api';
+import { classesAPI, userAPI, classAssignmentAPI, excelImportAPI, notificationAPI } from './api';
 
 // Mock data - TODO: Replace with real API calls
 const mockSemesters = [];
@@ -105,6 +106,13 @@ const getStatusColor = (status) => {
   }
 };
 
+// Format date time for display
+const formatDateTimeDisplay = (dateString) => {
+  if (!dateString) return 'N/A';
+  const date = dayjs(dateString);
+  return date.isValid() ? date.format('DD/MM/YYYY HH:mm') : 'N/A';
+};
+
 function AcademicAffairsPortal({ user, onLogout }) {
   console.log('AcademicAffairsPortal received user:', user);
   const navigate = useNavigate();
@@ -124,6 +132,17 @@ function AcademicAffairsPortal({ user, onLogout }) {
   const [lecturerModal, setLecturerModal] = useState({ visible: false, data: {} });
   const [kitModal, setKitModal] = useState({ visible: false, data: {} });
   const [iotSubjectModal, setIotSubjectModal] = useState({ visible: false, data: {} });
+  const [iotSubjectStudentsModal, setIotSubjectStudentsModal] = useState({ visible: false, data: {} });
+  const [classStudents, setClassStudents] = useState([]);
+  const [loadingClassStudents, setLoadingClassStudents] = useState(false);
+
+  // Notification state
+  const [notifications, setNotifications] = useState([]);
+  const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
+  const [notificationLoading, setNotificationLoading] = useState(false);
+
+  // Sheet selection state
+  const [sheetSelectionModal, setSheetSelectionModal] = useState({ visible: false, sheets: [], selectedSheet: null, file: null, importType: null, importData: null });
 
   // Form instances
   const [semesterForm] = Form.useForm();
@@ -154,6 +173,13 @@ function AcademicAffairsPortal({ user, onLogout }) {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Load notifications when user is available
+  useEffect(() => {
+    if (user && user.id) {
+      loadNotifications();
+    }
+  }, [user]);
 
   const loadData = async () => {
     setLoading(true);
@@ -303,6 +329,77 @@ function AcademicAffairsPortal({ user, onLogout }) {
     }
   };
 
+  // Notification Functions
+  const loadNotifications = async () => {
+    try {
+      setNotificationLoading(true);
+      // Use getMyNotifications to fetch notifications for current user
+      const response = await notificationAPI.getMyNotifications();
+      const data = response?.data ?? response;
+      setNotifications(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error loading notifications:', error);
+      setNotifications([]);
+    } finally {
+      setNotificationLoading(false);
+    }
+  };
+
+  const unreadNotificationsCount = notifications.filter((item) => !item.isRead).length;
+
+  const notificationTypeStyles = {
+    ALERT: { color: 'volcano', label: 'Cảnh báo' },
+    DEPOSIT: { color: 'green', label: 'Giao dịch ví' },
+    SYSTEM: { color: 'blue', label: 'Hệ thống' },
+    USER: { color: 'purple', label: 'Người dùng' }
+  };
+
+  const handleNotificationOpenChange = (open) => {
+    setNotificationPopoverOpen(open);
+    if (open) {
+      loadNotifications();
+    }
+  };
+
+  const renderNotificationContent = () => (
+    <div style={{ width: 320 }}>
+      <Spin spinning={notificationLoading}>
+        {notifications.length > 0 ? (
+          <List
+            rowKey={(item) => item.id || item.title}
+            dataSource={notifications}
+            renderItem={(item) => {
+              const typeInfo = notificationTypeStyles[item.type] || { color: 'blue', label: item.type };
+              const notificationDate = item.createdAt ? formatDateTimeDisplay(item.createdAt) : 'N/A';
+              return (
+                <List.Item style={{ alignItems: 'flex-start' }}>
+                  <List.Item.Meta
+                    title={
+                      <Space size={8} align="start">
+                        <Tag color={typeInfo.color}>{typeInfo.label}</Tag>
+                        <Text strong>{item.title || item.subType}</Text>
+                      </Space>
+                    }
+                    description={
+                      <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                        <Text type="secondary">{item.message}</Text>
+                        <Text type="secondary" style={{ fontSize: '12px' }}>
+                          {notificationDate}
+                        </Text>
+                      </Space>
+                    }
+                  />
+                </List.Item>
+              );
+            }}
+          />
+        ) : (
+          <Empty description="Không có thông báo" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        )}
+      </Spin>
+    </div>
+  );
+
   // Import/Export Functions
   const exportToExcel = (data, filename) => {
     const ws = XLSX.utils.json_to_sheet(data);
@@ -350,19 +447,119 @@ function AcademicAffairsPortal({ user, onLogout }) {
     });
   };
 
-  const handleImportStudents = async (file) => {
+  // Helper function to read sheet names from Excel file
+  const getExcelSheetNames = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          resolve(workbook.SheetNames || []);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      reader.onerror = (error) => reject(error);
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
+  // Helper function to show sheet selection modal and proceed with import
+  const showSheetSelectionAndImport = async (file, importType, importData) => {
     try {
-      // Use the class-specific import endpoint that handles SpreadsheetML XML format
-      const response = await excelImportAPI.importStudentsWithClasses(file);
+      const sheetNames = await getExcelSheetNames(file);
 
-      // The endpoint returns a string message like "Imported new students: X"
-      const message = typeof response === 'string' ? response : (response.message || response.raw || 'Import completed');
+      if (sheetNames.length === 0) {
+        notification.error({
+          message: 'Error',
+          description: 'No sheets found in Excel file',
+          placement: 'topRight',
+        });
+        return;
+      }
 
-      notification.success({
-        message: 'Import Successful',
-        description: message,
+      // If only one sheet, use it directly
+      if (sheetNames.length === 1) {
+        await proceedWithImport(file, sheetNames[0], importType, importData);
+        return;
+      }
+
+      // Show modal for sheet selection
+      setSheetSelectionModal({
+        visible: true,
+        sheets: sheetNames,
+        selectedSheet: sheetNames[0], // Default to first sheet
+        file: file,
+        importType: importType,
+        importData: importData
+      });
+    } catch (error) {
+      console.error('Error reading Excel file:', error);
+      notification.error({
+        message: 'Error',
+        description: 'Failed to read Excel file: ' + error.message,
         placement: 'topRight',
       });
+    }
+  };
+
+  // Proceed with import using selected sheet
+  const proceedWithImport = async (file, sheetName, importType, importData) => {
+    try {
+      if (importType === 'students') {
+        await handleImportStudents(file, sheetName);
+      } else if (importType === 'lecturers') {
+        await handleImportLecturers(file, sheetName);
+      }
+    } catch (error) {
+      console.error('Import error:', error);
+      notification.error({
+        message: 'Import Failed',
+        description: error.message || 'Failed to import data',
+        placement: 'topRight',
+        duration: 5,
+      });
+    }
+  };
+
+  const handleImportStudents = async (file, sheetName = null) => {
+    try {
+      // Use the generic import endpoint with STUDENT role
+      const response = await excelImportAPI.importAccounts(file, 'STUDENT', sheetName);
+
+      // Handle response format
+      let message = 'Import completed';
+      let successCount = 0;
+      let errorCount = 0;
+
+      if (typeof response === 'string') {
+        message = response;
+      } else if (response) {
+        message = response.message || 'Import completed';
+        successCount = response.successCount || 0;
+        errorCount = response.errorCount || 0;
+
+        if (response.errors && response.errors.length > 0) {
+          console.warn('Import errors:', response.errors);
+        }
+      }
+
+      if (successCount > 0 || errorCount === 0) {
+        notification.success({
+          message: 'Import Successful',
+          description: `Successfully imported ${successCount} student(s)${sheetName ? ` from sheet "${sheetName}"` : ''}. ${errorCount > 0 ? `${errorCount} error(s) occurred.` : ''}`,
+          placement: 'topRight',
+          duration: 5,
+        });
+      } else {
+        notification.warning({
+          message: 'Import Completed with Errors',
+          description: message,
+          placement: 'topRight',
+          duration: 5,
+        });
+      }
 
       // Refresh students list
       await loadData();
@@ -370,37 +567,49 @@ function AcademicAffairsPortal({ user, onLogout }) {
       console.error('Import error:', error);
       notification.error({
         message: 'Import Failed',
-        description: error.message || 'Failed to import students. Please check file format. Expected SpreadsheetML XML format.',
+        description: error.message || 'Failed to import students. Please check file format. Expected Excel format with columns: studentCode, StudentName, email, phone, StudentClass. Password will be set to "1" by default.',
         placement: 'topRight',
+        duration: 5,
       });
     }
   };
 
-  const handleImportLecturers = async (file) => {
+  const handleImportLecturers = async (file, sheetName = null) => {
     try {
-      const response = await excelImportAPI.importAccounts(file, 'LECTURER');
+      // Use the generic import endpoint with LECTURER role
+      const response = await excelImportAPI.importAccounts(file, 'LECTURER', sheetName);
 
-      if (response.success) {
-        notification.success({
-          message: 'Import Successful',
-          description: response.message,
-          placement: 'topRight',
-        });
-      } else {
-        notification.error({
-          message: 'Import Failed',
-          description: response.message,
-          placement: 'topRight',
-        });
+      // Handle response format
+      let message = 'Import completed';
+      let successCount = 0;
+      let errorCount = 0;
+
+      if (typeof response === 'string') {
+        message = response;
+      } else if (response) {
+        message = response.message || 'Import completed';
+        successCount = response.successCount || 0;
+        errorCount = response.errorCount || 0;
+
+        if (response.errors && response.errors.length > 0) {
+          console.warn('Import errors:', response.errors);
+        }
       }
 
-      if (response.errors && response.errors.length > 0) {
-        notification.warning({
-          message: 'Import Warnings',
-          description: `${response.errors.length} rows failed to import. Check console for details.`,
+      if (successCount > 0 || errorCount === 0) {
+        notification.success({
+          message: 'Import Successful',
+          description: `Successfully imported ${successCount} lecturer(s)${sheetName ? ` from sheet "${sheetName}"` : ''}. ${errorCount > 0 ? `${errorCount} error(s) occurred.` : ''}`,
           placement: 'topRight',
+          duration: 5,
         });
-        console.error('Import errors:', response.errors);
+      } else {
+        notification.warning({
+          message: 'Import Completed with Errors',
+          description: message,
+          placement: 'topRight',
+          duration: 5,
+        });
       }
 
       // Refresh lecturers list
@@ -409,8 +618,9 @@ function AcademicAffairsPortal({ user, onLogout }) {
       console.error('Import error:', error);
       notification.error({
         message: 'Import Failed',
-        description: 'Failed to import lecturers. Please check file format.',
+        description: error.message || 'Failed to import lecturers. Please check file format. Expected Excel format with columns: email, fullname, phone, class_code, Semester. Password will be set to "1" by default.',
         placement: 'topRight',
+        duration: 5,
       });
     }
   };
@@ -508,35 +718,48 @@ function AcademicAffairsPortal({ user, onLogout }) {
     }
   };
 
-  const handleViewIotSubjectStudents = (record) => {
-    // Mock enrolled students data since we removed enrollments
-    const enrolledStudents = students.slice(0, Math.min(record.enrolledCount, 10)).map(student => student.name);
+  const handleViewIotSubjectStudents = async (record) => {
+    try {
+      setLoadingClassStudents(true);
+      setIotSubjectStudentsModal({ visible: true, data: record });
 
-    Modal.info({
-      title: `Students in ${record.name}`,
-      width: 600,
-      content: (
-        <div>
-          <Alert
-            message={`Total Enrolled: ${enrolledStudents.length}/${record.capacity}`}
-            type="info"
-            style={{ marginBottom: 16 }}
-          />
-          <List
-            dataSource={enrolledStudents}
-            renderItem={(student, index) => (
-              <List.Item>
-                <List.Item.Meta
-                  avatar={<Avatar icon={<UserOutlined />} />}
-                  title={student}
-                  description={`Student #${index + 1}`}
-                />
-              </List.Item>
-            )}
-          />
-        </div>
-      ),
-    });
+      // Get all assignments for this class (including students)
+      const allAssignments = await classAssignmentAPI.getAll();
+      console.log('ClassAssignments API Response (for students):', allAssignments);
+
+      // Ensure we have an array
+      const assignmentsArray = Array.isArray(allAssignments) ? allAssignments : [];
+
+      // Filter students for this class
+      const studentsInClass = assignmentsArray.filter(assignment => {
+        const roleName = assignment.roleName || assignment.role || '';
+        const roleUpper = roleName.toUpperCase();
+        const isStudent = roleUpper === 'STUDENT' ||
+          roleUpper === 'STUDENT_ROLE';
+
+        // Compare classId (handle both UUID and string formats)
+        const assignmentClassId = assignment.classId?.toString();
+        const recordClassId = record.id?.toString();
+        const matchesClass = assignmentClassId === recordClassId;
+
+        console.log(`Assignment ${assignment.id}: roleName=${roleName}, classId=${assignmentClassId}, recordClassId=${recordClassId}, isStudent=${isStudent}, matchesClass=${matchesClass}`);
+
+        return isStudent && matchesClass;
+      });
+
+      console.log('Filtered students in class:', studentsInClass);
+      setClassStudents(studentsInClass);
+    } catch (error) {
+      console.error('Error loading class students:', error);
+      notification.error({
+        message: 'Error',
+        description: 'Failed to load class students',
+        placement: 'topRight',
+      });
+      setClassStudents([]);
+    } finally {
+      setLoadingClassStudents(false);
+    }
   };
 
   const handleDeleteIotSubject = (record) => {
@@ -642,16 +865,58 @@ function AcademicAffairsPortal({ user, onLogout }) {
     setStudentModal({ visible: true, data: record });
   };
 
-  const handleDeleteStudent = (record) => {
+  const handleDeleteStudent = async (record) => {
     Modal.confirm({
       title: 'Are you sure you want to delete this student?',
       content: `This will permanently delete ${record.name} from the system.`,
       okText: 'Yes',
       okType: 'danger',
       cancelText: 'No',
-      onOk() {
-        setStudents(prev => prev.filter(student => student.id !== record.id));
-        message.success('Student deleted successfully');
+      onOk: async () => {
+        try {
+          setLoading(true);
+          await userAPI.deleteUser(record.id);
+
+          // Refresh students list from API
+          const studentsData = await userAPI.getStudents();
+
+          const formatDate = (dateStr) => {
+            if (!dateStr) return '-';
+            try {
+              const date = new Date(dateStr);
+              return date.toLocaleString('vi-VN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+              });
+            } catch (e) {
+              console.error('Error formatting date:', e, dateStr);
+              return '-';
+            }
+          };
+
+          const mappedStudents = studentsData.map(student => ({
+            id: student.id,
+            name: student.fullName,
+            email: student.email,
+            studentCode: student.studentCode,
+            phoneNumber: student.phoneNumber,
+            createdAt: formatDate(student.createdAt),
+            status: student.status
+          }));
+
+          setStudents(mappedStudents);
+
+          message.success('Student deleted successfully');
+        } catch (error) {
+          console.error('Error deleting student:', error);
+          message.error('Failed to delete student: ' + error.message);
+        } finally {
+          setLoading(false);
+        }
       },
     });
   };
@@ -706,16 +971,57 @@ function AcademicAffairsPortal({ user, onLogout }) {
     setLecturerModal({ visible: true, data: record });
   };
 
-  const handleDeleteLecturer = (record) => {
+  const handleDeleteLecturer = async (record) => {
     Modal.confirm({
       title: 'Are you sure you want to delete this lecturer?',
       content: `This will permanently delete ${record.name} from the system.`,
       okText: 'Yes',
       okType: 'danger',
       cancelText: 'No',
-      onOk() {
-        setLecturers(prev => prev.filter(lecturer => lecturer.id !== record.id));
-        message.success('Lecturer deleted successfully');
+      onOk: async () => {
+        try {
+          setLoading(true);
+          await userAPI.deleteUser(record.id);
+
+          // Refresh lecturers list from API
+          const lecturersData = await userAPI.getLecturers();
+
+          const formatDate = (dateStr) => {
+            if (!dateStr) return '-';
+            try {
+              const date = new Date(dateStr);
+              return date.toLocaleString('vi-VN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+              });
+            } catch (e) {
+              console.error('Error formatting date:', e, dateStr);
+              return '-';
+            }
+          };
+
+          const mappedLecturers = lecturersData.map(lecturer => ({
+            id: lecturer.id || lecturer.email,
+            name: lecturer.fullName,
+            email: lecturer.email,
+            phoneNumber: lecturer.phone || '',
+            createdAt: formatDate(lecturer.createdAt),
+            status: lecturer.status || 'ACTIVE'
+          }));
+
+          setLecturers(mappedLecturers);
+
+          message.success('Lecturer deleted successfully');
+        } catch (error) {
+          console.error('Error deleting lecturer:', error);
+          message.error('Failed to delete lecturer: ' + error.message);
+        } finally {
+          setLoading(false);
+        }
       },
     });
   };
@@ -922,20 +1228,28 @@ function AcademicAffairsPortal({ user, onLogout }) {
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Badge count={3} size="small" style={{ cursor: 'pointer' }}>
-                  <div style={{
-                    padding: '12px',
-                    borderRadius: '12px',
-                    background: 'rgba(102, 126, 234, 0.1)',
-                    color: '#667eea',
-                    fontSize: '18px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    <BellOutlined />
-                  </div>
-                </Badge>
+                <Popover
+                  trigger="click"
+                  placement="bottomRight"
+                  open={notificationPopoverOpen}
+                  onOpenChange={handleNotificationOpenChange}
+                  content={renderNotificationContent()}
+                >
+                  <Badge count={unreadNotificationsCount} size="small" overflowCount={99} style={{ cursor: 'pointer' }}>
+                    <div style={{
+                      padding: '12px',
+                      borderRadius: '12px',
+                      background: 'rgba(102, 126, 234, 0.1)',
+                      color: '#667eea',
+                      fontSize: '18px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      <BellOutlined />
+                    </div>
+                  </Badge>
+                </Popover>
               </motion.div>
               <motion.div
                 whileHover={{ scale: 1.1 }}
@@ -1009,8 +1323,8 @@ function AcademicAffairsPortal({ user, onLogout }) {
               >
                 {selectedKey === 'dashboard' && <DashboardContent semesters={semesters} students={students} lecturers={lecturers} kits={kits} iotSubjects={iotSubjects} />}
                 {selectedKey === 'student-enrollment' && <StudentEnrollment semesters={semesters} setSemesters={setSemesters} semesterModal={semesterModal} setSemesterModal={setSemesterModal} semesterForm={semesterForm} />}
-                {selectedKey === 'students' && <StudentManagement students={students} setStudents={setStudents} studentModal={studentModal} setStudentModal={setStudentModal} studentForm={studentForm} handleExportStudents={handleExportStudents} handleImportStudents={handleImportStudents} handleAddStudent={handleAddStudent} handleEditStudent={handleEditStudent} handleDeleteStudent={handleDeleteStudent} />}
-                {selectedKey === 'lecturers' && <LecturerManagement lecturers={lecturers} setLecturers={setLecturers} lecturerModal={lecturerModal} setLecturerModal={setLecturerModal} lecturerForm={lecturerForm} handleExportLecturers={handleExportLecturers} handleImportLecturers={handleImportLecturers} handleAddLecturer={handleAddLecturer} handleEditLecturer={handleEditLecturer} handleDeleteLecturer={handleDeleteLecturer} />}
+                {selectedKey === 'students' && <StudentManagement students={students} setStudents={setStudents} studentModal={studentModal} setStudentModal={setStudentModal} studentForm={studentForm} handleExportStudents={handleExportStudents} handleImportStudents={handleImportStudents} handleAddStudent={handleAddStudent} handleEditStudent={handleEditStudent} handleDeleteStudent={handleDeleteStudent} showSheetSelectionAndImport={showSheetSelectionAndImport} />}
+                {selectedKey === 'lecturers' && <LecturerManagement lecturers={lecturers} setLecturers={setLecturers} lecturerModal={lecturerModal} setLecturerModal={setLecturerModal} lecturerForm={lecturerForm} handleExportLecturers={handleExportLecturers} handleImportLecturers={handleImportLecturers} handleAddLecturer={handleAddLecturer} handleEditLecturer={handleEditLecturer} handleDeleteLecturer={handleDeleteLecturer} showSheetSelectionAndImport={showSheetSelectionAndImport} />}
                 {selectedKey === 'iot-subjects' && <IotSubjectsManagement iotSubjects={iotSubjects} setIotSubjects={setIotSubjects} selectedSemester={selectedSemester} setSelectedSemester={setSelectedSemester} semesters={semesters} handleAddIotSubject={handleAddIotSubject} handleEditIotSubject={handleEditIotSubject} handleViewIotSubjectStudents={handleViewIotSubjectStudents} handleDeleteIotSubject={handleDeleteIotSubject} />}
                 {selectedKey === 'kits' && <KitsManagement kits={kits} setKits={setKits} handleExportKits={handleExportKits} handleViewKitDetails={handleViewKitDetails} />}
               </motion.div>
@@ -1259,6 +1573,111 @@ function AcademicAffairsPortal({ user, onLogout }) {
             </Col>
           </Row>
         </Form>
+      </Modal>
+
+      {/* IOT Subject Students Modal */}
+      <Modal
+        title={`Students in ${iotSubjectStudentsModal.data.classCode || 'Class'} (${classStudents.length} students)`}
+        open={iotSubjectStudentsModal.visible}
+        onCancel={() => {
+          setIotSubjectStudentsModal({ visible: false, data: {} });
+          setClassStudents([]);
+        }}
+        width={800}
+        footer={[
+          <Button key="close" onClick={() => {
+            setIotSubjectStudentsModal({ visible: false, data: {} });
+            setClassStudents([]);
+          }}>
+            Close
+          </Button>
+        ]}
+      >
+        <Spin spinning={loadingClassStudents}>
+          <Table
+            dataSource={classStudents}
+            columns={[
+              {
+                title: 'Student Name',
+                dataIndex: 'accountName',
+                key: 'accountName',
+                render: (text) => text || 'N/A'
+              },
+              {
+                title: 'Student Email',
+                dataIndex: 'accountEmail',
+                key: 'accountEmail',
+                render: (text) => text || 'N/A'
+              },
+              {
+                title: 'Enrollment Date',
+                dataIndex: 'createdAt',
+                key: 'createdAt',
+                render: (date) => {
+                  if (!date) return 'N/A';
+                  try {
+                    return new Date(date).toLocaleString('vi-VN');
+                  } catch (e) {
+                    return date.toString();
+                  }
+                }
+              },
+            ]}
+            rowKey="id"
+            pagination={{
+              showSizeChanger: true,
+              showQuickJumper: true,
+              showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} students`
+            }}
+            locale={{
+              emptyText: 'No students enrolled in this class'
+            }}
+          />
+        </Spin>
+      </Modal>
+
+      {/* Sheet Selection Modal */}
+      <Modal
+        title="Select Sheet to Import"
+        open={sheetSelectionModal.visible}
+        onOk={() => {
+          if (sheetSelectionModal.selectedSheet) {
+            proceedWithImport(
+              sheetSelectionModal.file,
+              sheetSelectionModal.selectedSheet,
+              sheetSelectionModal.importType,
+              sheetSelectionModal.importData
+            );
+          }
+          setSheetSelectionModal({ visible: false, sheets: [], selectedSheet: null, file: null, importType: null, importData: null });
+        }}
+        onCancel={() => {
+          setSheetSelectionModal({ visible: false, sheets: [], selectedSheet: null, file: null, importType: null, importData: null });
+        }}
+        okText="Import"
+        cancelText="Cancel"
+      >
+        <div style={{ marginBottom: 16 }}>
+          <Text strong>Please select which sheet to import from:</Text>
+        </div>
+        <Select
+          style={{ width: '100%' }}
+          value={sheetSelectionModal.selectedSheet}
+          onChange={(value) => {
+            setSheetSelectionModal(prev => ({ ...prev, selectedSheet: value }));
+          }}
+        >
+          {sheetSelectionModal.sheets.map((sheetName) => (
+            <Select.Option key={sheetName} value={sheetName}>
+              {sheetName}
+            </Select.Option>
+          ))}
+        </Select>
+        <div style={{ marginTop: 12 }}>
+          <Text type="secondary" style={{ fontSize: '12px' }}>
+            Found {sheetSelectionModal.sheets.length} sheet(s) in the Excel file
+          </Text>
+        </div>
       </Modal>
     </Layout>
   );
@@ -1626,9 +2045,24 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
     try {
       // Load class assignments - only lecturers for main table
       const allAssignments = await classAssignmentAPI.getAll();
-      const lecturerAssignments = allAssignments.filter(assignment =>
-        assignment.roleName === 'LECTURER' || assignment.roleName === 'TEACHER'
-      );
+      console.log('ClassAssignments API Response:', allAssignments);
+
+      // Ensure we have an array
+      const assignmentsArray = Array.isArray(allAssignments) ? allAssignments : [];
+      console.log('Assignments array:', assignmentsArray);
+
+      // Filter only lecturers for main table
+      const lecturerAssignments = assignmentsArray.filter(assignment => {
+        const roleName = assignment.roleName || assignment.role || '';
+        const roleUpper = roleName.toUpperCase();
+        const isLecturer = roleUpper === 'LECTURER' ||
+          roleUpper === 'TEACHER' ||
+          roleUpper === 'LECTURER_ROLE';
+        console.log(`Assignment ${assignment.id}: roleName=${roleName}, isLecturer=${isLecturer}`);
+        return isLecturer;
+      });
+
+      console.log('Filtered lecturer assignments:', lecturerAssignments);
       setClassAssignments(lecturerAssignments);
 
       // Load classes
@@ -1676,29 +2110,45 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
     try {
       const values = await studentForm.validateFields();
 
-      const studentData = {
-        classId: values.classId,
-        accountId: values.accountId
-      };
+      // Handle both single and multiple student IDs
+      const studentIds = Array.isArray(values.accountId) ? values.accountId : [values.accountId];
 
-      await classAssignmentAPI.create(studentData);
+      if (studentIds.length === 0) {
+        notification.warning({
+          message: 'Warning',
+          description: 'Please select at least one student',
+          placement: 'topRight',
+        });
+        return;
+      }
+
+      // Create assignments for all selected students
+      const assignmentPromises = studentIds.map(accountId => {
+        const studentData = {
+          classId: values.classId,
+          accountId: accountId
+        };
+        return classAssignmentAPI.create(studentData);
+      });
+
+      await Promise.all(assignmentPromises);
 
       // Refresh data
       await loadEnrollmentData();
 
       notification.success({
         message: 'Success',
-        description: 'Student enrolled successfully',
+        description: `Successfully enrolled ${studentIds.length} student(s)`,
         placement: 'topRight',
       });
 
       setStudentModal({ visible: false, data: {} });
       studentForm.resetFields();
     } catch (error) {
-      console.error('Error enrolling student:', error);
+      console.error('Error enrolling students:', error);
       notification.error({
         message: 'Error',
-        description: 'Failed to enroll student',
+        description: error.message || 'Failed to enroll students',
         placement: 'topRight',
       });
     }
@@ -1716,10 +2166,29 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
     try {
       // Get all assignments for this class (including students)
       const allAssignments = await classAssignmentAPI.getAll();
-      const studentsInClass = allAssignments.filter(assignment =>
-        assignment.classId === record.classId &&
-        assignment.roleName === 'STUDENT'
-      );
+      console.log('ClassAssignments API Response (for students):', allAssignments);
+
+      // Ensure we have an array
+      const assignmentsArray = Array.isArray(allAssignments) ? allAssignments : [];
+
+      // Filter students for this class
+      const studentsInClass = assignmentsArray.filter(assignment => {
+        const roleName = assignment.roleName || assignment.role || '';
+        const roleUpper = roleName.toUpperCase();
+        const isStudent = roleUpper === 'STUDENT' ||
+          roleUpper === 'STUDENT_ROLE';
+
+        // Compare classId (handle both UUID and string formats)
+        const assignmentClassId = assignment.classId?.toString();
+        const recordClassId = record.classId?.toString();
+        const matchesClass = assignmentClassId === recordClassId;
+
+        console.log(`Assignment ${assignment.id}: roleName=${roleName}, classId=${assignmentClassId}, recordClassId=${recordClassId}, isStudent=${isStudent}, matchesClass=${matchesClass}`);
+
+        return isStudent && matchesClass;
+      });
+
+      console.log('Filtered students in class:', studentsInClass);
       setClassStudents(studentsInClass);
       setDetailModal({ visible: true, data: record });
     } catch (error) {
@@ -1793,18 +2262,45 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
   };
 
   const columns = [
-    { title: 'Lecturer Name', dataIndex: 'accountName', key: 'accountName' },
-    { title: 'Lecturer Email', dataIndex: 'accountEmail', key: 'accountEmail' },
+    {
+      title: 'Lecturer Name',
+      dataIndex: 'accountName',
+      key: 'accountName',
+      render: (text) => text || 'N/A'
+    },
+    {
+      title: 'Lecturer Email',
+      dataIndex: 'accountEmail',
+      key: 'accountEmail',
+      render: (text) => text || 'N/A'
+    },
     {
       title: 'IoT Subject',
       dataIndex: 'classId',
       key: 'classId',
       render: (classId) => {
-        const classInfo = classes.find(c => c.value === classId);
-        return classInfo ? classInfo.label : '-';
+        if (!classId) return 'N/A';
+        const classInfo = classes.find(c => {
+          const cValue = c.value?.toString();
+          const classIdStr = classId?.toString();
+          return cValue === classIdStr;
+        });
+        return classInfo ? classInfo.label : (classId || 'N/A');
       }
     },
-    { title: 'Assignment Date', dataIndex: 'createdAt', key: 'createdAt' },
+    {
+      title: 'Assignment Date',
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      render: (date) => {
+        if (!date) return 'N/A';
+        try {
+          return new Date(date).toLocaleString('vi-VN');
+        } catch (e) {
+          return date.toString();
+        }
+      }
+    },
     {
       title: 'Actions',
       key: 'actions',
@@ -1900,7 +2396,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
 
       {/* Student Modal */}
       <Modal
-        title="Enroll Student to IoT Subject"
+        title="Enroll Students to IoT Subject"
         open={studentModal.visible}
         onOk={handleStudentSubmit}
         onCancel={() => {
@@ -1930,17 +2426,20 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
           </Form.Item>
           <Form.Item
             name="accountId"
-            label="Student"
-            rules={[{ required: true, message: 'Please select a student' }]}
+            label="Students"
+            rules={[{ required: true, message: 'Please select at least one student' }]}
+            help="You can select multiple students to enroll at once"
           >
             <Select
+              mode="multiple"
               showSearch
-              placeholder="Search and select student"
+              placeholder="Search and select students (multiple selection allowed)"
               optionFilterProp="children"
               filterOption={(input, option) =>
                 (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
               }
               options={students}
+              maxTagCount="responsive"
             />
           </Form.Item>
         </Form>
@@ -2004,7 +2503,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
 
 
 // Student Management Component
-const StudentManagement = ({ students, setStudents, studentModal, setStudentModal, studentForm, handleExportStudents, handleImportStudents, handleAddStudent, handleEditStudent, handleDeleteStudent }) => (
+const StudentManagement = ({ students, setStudents, studentModal, setStudentModal, studentForm, handleExportStudents, handleImportStudents, handleAddStudent, handleEditStudent, handleDeleteStudent, showSheetSelectionAndImport }) => (
   <div>
     <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
       <Card
@@ -2019,7 +2518,7 @@ const StudentManagement = ({ students, setStudents, studentModal, setStudentModa
                 accept=".xlsx,.xls"
                 showUploadList={false}
                 beforeUpload={(file) => {
-                  handleImportStudents(file);
+                  showSheetSelectionAndImport(file, 'students', {});
                   return false;
                 }}
               >
@@ -2114,7 +2613,7 @@ const StudentManagement = ({ students, setStudents, studentModal, setStudentModa
 );
 
 // Lecturer Management Component
-const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecturerModal, lecturerForm, handleExportLecturers, handleImportLecturers, handleAddLecturer, handleEditLecturer, handleDeleteLecturer }) => (
+const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecturerModal, lecturerForm, handleExportLecturers, handleImportLecturers, handleAddLecturer, handleEditLecturer, handleDeleteLecturer, showSheetSelectionAndImport }) => (
   <div>
     <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
       <Card
@@ -2129,7 +2628,7 @@ const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecture
                 accept=".xlsx,.xls"
                 showUploadList={false}
                 beforeUpload={(file) => {
-                  handleImportLecturers(file);
+                  showSheetSelectionAndImport(file, 'lecturers', {});
                   return false;
                 }}
               >
