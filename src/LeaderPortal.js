@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { kitAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, borrowingRequestAPI, walletTransactionAPI, penaltiesAPI, penaltyDetailAPI, notificationAPI, authAPI } from './api';
+import { kitAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, borrowingRequestAPI, walletTransactionAPI, penaltiesAPI, penaltyDetailAPI, notificationAPI, authAPI, paymentAPI } from './api';
 import dayjs from 'dayjs';
 import {
   Layout,
@@ -1747,7 +1747,102 @@ const WalletManagement = ({ wallet, setWallet }) => {
 
   useEffect(() => {
     loadTransactionHistory();
+
+    // Handle PayPal return callback
+    const urlParams = new URLSearchParams(window.location.search);
+    const paymentId = urlParams.get('paymentId');
+    const payerId = urlParams.get('PayerID');
+
+    // Check if this is a PayPal return
+    if (paymentId && payerId) {
+      handlePayPalReturn(paymentId, payerId);
+    } else if (urlParams.get('cancel') === 'true' || window.location.pathname.includes('paypal-cancel')) {
+      handlePayPalCancel();
+    }
   }, []);
+
+  const handlePayPalReturn = async (paymentId, payerId) => {
+    try {
+      // Get stored payment info
+      const storedPayment = sessionStorage.getItem('pendingPayPalPayment');
+      if (!storedPayment) {
+        message.error('Payment information not found');
+        return;
+      }
+
+      const paymentInfo = JSON.parse(storedPayment);
+
+      // Execute PayPal payment
+      const response = await paymentAPI.executePayPalPayment(
+        paymentId,
+        payerId,
+        paymentInfo.transactionId
+      );
+
+      if (response && response.data) {
+        message.success('Payment successful! Wallet balance has been updated.');
+
+        // Clear stored payment info
+        sessionStorage.removeItem('pendingPayPalPayment');
+
+        // Clean URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+
+        // Wait a moment for backend to process the payment
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Reload wallet directly to ensure balance is updated
+        try {
+          const walletResponse = await walletAPI.getMyWallet();
+          console.log('Wallet API response after payment:', walletResponse);
+
+          const walletData = walletResponse?.data || walletResponse || {};
+          console.log('Parsed wallet data:', walletData);
+          console.log('Wallet balance value:', walletData.balance, 'Type:', typeof walletData.balance);
+
+          // Parse balance - handle both number and string formats
+          let balance = 0;
+          if (walletData.balance !== undefined && walletData.balance !== null) {
+            balance = typeof walletData.balance === 'string'
+              ? parseFloat(walletData.balance)
+              : Number(walletData.balance);
+          }
+
+          console.log('Final balance to set:', balance);
+
+          // Update wallet state using setWallet prop
+          if (setWallet) {
+            setWallet(prevWallet => {
+              const updatedWallet = {
+                ...prevWallet,
+                balance: balance || 0
+              };
+              console.log('Updated wallet state:', updatedWallet);
+              return updatedWallet;
+            });
+          }
+        } catch (walletError) {
+          console.error('Error reloading wallet:', walletError);
+          message.warning('Payment successful but failed to refresh wallet. Please refresh the page.');
+        }
+
+        // Reload wallet and transactions
+        await loadTransactionHistory();
+      } else {
+        message.error('Payment execution failed. Please try again.');
+      }
+    } catch (error) {
+      console.error('PayPal payment execution error:', error);
+      message.error(error.message || 'Payment execution failed. Please try again.');
+      sessionStorage.removeItem('pendingPayPalPayment');
+    }
+  };
+
+  const handlePayPalCancel = () => {
+    message.warning('Payment was cancelled');
+    sessionStorage.removeItem('pendingPayPalPayment');
+    window.history.replaceState({}, document.title, window.location.pathname);
+  };
 
   const loadTransactionHistory = async () => {
     try {
@@ -2412,10 +2507,6 @@ const ProfileManagement = ({ profile, setProfile, loading, setLoading, user }) =
 
                   <Col xs={24} md={16}>
                     <Descriptions column={1} bordered>
-                      <Descriptions.Item label="Account ID">
-                        <Text code>{profile.id}</Text>
-                      </Descriptions.Item>
-
                       <Descriptions.Item label="Email">
                         <Text strong>{profile.email || 'N/A'}</Text>
                         <Tag color="blue" style={{ marginLeft: 8 }}>Cannot be changed</Tag>
