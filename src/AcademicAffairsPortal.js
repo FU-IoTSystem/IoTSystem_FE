@@ -13,22 +13,16 @@ import {
   Tag,
   Row,
   Col,
-  Statistic,
   Typography,
   Space,
   Avatar,
   Badge,
   List,
   Progress,
-  Upload,
-  Tabs,
   Alert,
-  Descriptions,
   Empty,
-  Skeleton,
   Spin,
   notification,
-  InputNumber,
   Popover
 } from 'antd';
 import dayjs from 'dayjs';
@@ -45,9 +39,6 @@ import {
   EditOutlined,
   DeleteOutlined,
   EyeOutlined,
-  CheckCircleOutlined,
-  ClockCircleOutlined,
-  ExclamationCircleOutlined,
   BarChartOutlined,
   PieChartOutlined,
   BellOutlined,
@@ -65,7 +56,6 @@ import { classesAPI, userAPI, classAssignmentAPI, excelImportAPI, notificationAP
 
 // Mock data - TODO: Replace with real API calls
 const mockSemesters = [];
-const mockKits = [];
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
@@ -124,17 +114,16 @@ function AcademicAffairsPortal({ user, onLogout }) {
   const [semesters, setSemesters] = useState([]);
   const [students, setStudents] = useState([]);
   const [lecturers, setLecturers] = useState([]);
-  const [kits, setKits] = useState([]);
 
   // State for modals and forms
   const [semesterModal, setSemesterModal] = useState({ visible: false, data: {} });
   const [studentModal, setStudentModal] = useState({ visible: false, data: {} });
   const [lecturerModal, setLecturerModal] = useState({ visible: false, data: {} });
-  const [kitModal, setKitModal] = useState({ visible: false, data: {} });
   const [iotSubjectModal, setIotSubjectModal] = useState({ visible: false, data: {} });
   const [iotSubjectStudentsModal, setIotSubjectStudentsModal] = useState({ visible: false, data: {} });
   const [classStudents, setClassStudents] = useState([]);
   const [loadingClassStudents, setLoadingClassStudents] = useState(false);
+  const [importFormatModal, setImportFormatModal] = useState({ visible: false, type: null });
 
   // Notification state
   const [notifications, setNotifications] = useState([]);
@@ -148,7 +137,6 @@ function AcademicAffairsPortal({ user, onLogout }) {
   const [semesterForm] = Form.useForm();
   const [studentForm] = Form.useForm();
   const [lecturerForm] = Form.useForm();
-  const [kitForm] = Form.useForm();
   const [iotSubjectForm] = Form.useForm();
 
   // State for semester-based management
@@ -185,7 +173,6 @@ function AcademicAffairsPortal({ user, onLogout }) {
     setLoading(true);
     try {
       setSemesters(mockSemesters);
-      setKits(mockKits);
 
       // Fetch Students from API
       try {
@@ -307,6 +294,20 @@ function AcademicAffairsPortal({ user, onLogout }) {
 
         console.log('Mapped classes:', mappedClasses);
         setIotSubjects(mappedClasses);
+
+        // Extract unique semesters from classes
+        const uniqueSemesters = [...new Set(mappedClasses
+          .map(cls => cls.semester)
+          .filter(semester => semester && semester.trim() !== '')
+        )].map((semester, index) => ({
+          id: `semester-${index}`,
+          name: semester,
+          value: semester,
+          status: 'Active'
+        }));
+
+        console.log('Extracted semesters:', uniqueSemesters);
+        setSemesters(uniqueSemesters);
       } catch (error) {
         console.error('Error fetching classes:', error);
         notification.error({
@@ -315,6 +316,7 @@ function AcademicAffairsPortal({ user, onLogout }) {
           placement: 'topRight',
         });
         setIotSubjects([]);
+        setSemesters([]);
       }
 
     } catch (error) {
@@ -361,8 +363,27 @@ function AcademicAffairsPortal({ user, onLogout }) {
     }
   };
 
+  const handleNotificationClick = async (notification) => {
+    // Only mark as read if not already read
+    if (!notification.isRead && notification.id) {
+      try {
+        await notificationAPI.markAsRead(notification.id);
+        // Update notification state to mark as read
+        setNotifications(prev =>
+          prev.map(item =>
+            item.id === notification.id
+              ? { ...item, isRead: true }
+              : item
+          )
+        );
+      } catch (error) {
+        console.error('Error marking notification as read:', error);
+      }
+    }
+  };
+
   const renderNotificationContent = () => (
-    <div style={{ width: 320 }}>
+    <div style={{ width: 320, maxHeight: '400px', overflowY: 'auto' }}>
       <Spin spinning={notificationLoading}>
         {notifications.length > 0 ? (
           <List
@@ -371,13 +392,23 @@ function AcademicAffairsPortal({ user, onLogout }) {
             renderItem={(item) => {
               const typeInfo = notificationTypeStyles[item.type] || { color: 'blue', label: item.type };
               const notificationDate = item.createdAt ? formatDateTimeDisplay(item.createdAt) : 'N/A';
+              const isUnread = !item.isRead;
               return (
-                <List.Item style={{ alignItems: 'flex-start' }}>
+                <List.Item
+                  style={{
+                    alignItems: 'flex-start',
+                    backgroundColor: isUnread ? '#f0f7ff' : 'transparent',
+                    cursor: 'pointer',
+                    padding: '12px'
+                  }}
+                  onClick={() => handleNotificationClick(item)}
+                >
                   <List.Item.Meta
                     title={
                       <Space size={8} align="start">
                         <Tag color={typeInfo.color}>{typeInfo.label}</Tag>
-                        <Text strong>{item.title || item.subType}</Text>
+                        <Text strong={isUnread}>{item.title || item.subType}</Text>
+                        {isUnread && <Badge dot color="blue" />}
                       </Space>
                     }
                     description={
@@ -625,59 +656,6 @@ function AcademicAffairsPortal({ user, onLogout }) {
     }
   };
 
-  // Kit Management Functions
-  const handleExportKits = () => {
-    try {
-      const data = kits.map(kit => ({
-        'Kit Name': kit.name,
-        'Category': kit.category,
-        'Quantity': kit.quantity,
-        'Location': kit.location,
-        'Status': kit.status,
-        'Price': kit.price
-      }));
-      exportToExcel(data, 'kits_export');
-      message.success('Kits exported successfully');
-    } catch (error) {
-      console.error('Error exporting kits:', error);
-      message.error('Failed to export kits');
-    }
-  };
-
-  const handleViewKitDetails = (record) => {
-    Modal.info({
-      title: `Kit Details: ${record.name}`,
-      width: 600,
-      content: (
-        <Descriptions bordered column={2}>
-          <Descriptions.Item label="Kit Name">{record.name}</Descriptions.Item>
-          <Descriptions.Item label="Category">{record.category}</Descriptions.Item>
-          <Descriptions.Item label="Quantity">{record.quantity}</Descriptions.Item>
-          <Descriptions.Item label="Location">{record.location}</Descriptions.Item>
-          <Descriptions.Item label="Status">
-            <Tag color={getStatusColor(record.status)}>{record.status}</Tag>
-          </Descriptions.Item>
-          <Descriptions.Item label="Price">${record.price}</Descriptions.Item>
-        </Descriptions>
-      ),
-    });
-  };
-
-  // Removed unused handleEditKit and handleDeleteKit functions
-
-  const _handleDeleteKit = (record) => {
-    Modal.confirm({
-      title: 'Delete Kit',
-      content: `Are you sure you want to delete "${record.name}"?`,
-      okText: 'Yes',
-      okType: 'danger',
-      cancelText: 'No',
-      onOk: () => {
-        setKits(prev => prev.filter(kit => kit.id !== record.id));
-        message.success('Kit deleted successfully');
-      },
-    });
-  };
 
 
 
@@ -762,6 +740,53 @@ function AcademicAffairsPortal({ user, onLogout }) {
     }
   };
 
+  const handleRemoveStudentFromClass = async (record, classId) => {
+    Modal.confirm({
+      title: 'Remove Student',
+      content: `Are you sure you want to remove "${record.accountName || record.accountEmail}" from this class?`,
+      okText: 'Yes',
+      okType: 'danger',
+      cancelText: 'No',
+      onOk: async () => {
+        try {
+          await classAssignmentAPI.delete(record.id);
+
+          // Refresh the student list in the modal
+          const allAssignments = await classAssignmentAPI.getAll();
+          const assignmentsArray = Array.isArray(allAssignments) ? allAssignments : [];
+
+          // Filter students for this class
+          const studentsInClass = assignmentsArray.filter(assignment => {
+            const roleName = assignment.roleName || assignment.role || '';
+            const roleUpper = roleName.toUpperCase();
+            const isStudent = roleUpper === 'STUDENT' || roleUpper === 'STUDENT_ROLE';
+
+            const assignmentClassId = assignment.classId?.toString();
+            const recordClassId = classId?.toString();
+            const matchesClass = assignmentClassId === recordClassId;
+
+            return isStudent && matchesClass;
+          });
+
+          setClassStudents(studentsInClass);
+
+          notification.success({
+            message: 'Success',
+            description: 'Student removed from class successfully',
+            placement: 'topRight',
+          });
+        } catch (error) {
+          console.error('Error removing student:', error);
+          notification.error({
+            message: 'Error',
+            description: error.message || 'Failed to remove student',
+            placement: 'topRight',
+          });
+        }
+      },
+    });
+  };
+
   const handleDeleteIotSubject = (record) => {
     Modal.confirm({
       title: 'Delete IOT Subject',
@@ -783,28 +808,6 @@ function AcademicAffairsPortal({ user, onLogout }) {
   };
 
   // Form submission handlers
-  const handleKitSubmit = () => {
-    kitForm.validateFields().then(values => {
-      if (kitModal.data.id) {
-        // Edit existing kit
-        setKits(prev => prev.map(kit =>
-          kit.id === kitModal.data.id ? { ...kit, ...values } : kit
-        ));
-        message.success('Kit updated successfully');
-      } else {
-        // Add new kit
-        const newKit = {
-          id: Date.now(),
-          ...values,
-          status: 'AVAILABLE'
-        };
-        setKits(prev => [...prev, newKit]);
-        message.success('Kit added successfully');
-      }
-      setKitModal({ visible: false, data: {} });
-      kitForm.resetFields();
-    });
-  };
 
 
 
@@ -926,11 +929,70 @@ function AcademicAffairsPortal({ user, onLogout }) {
       const values = await studentForm.validateFields();
 
       if (studentModal.data.id) {
-        // Edit existing student
-        setStudents(prev => prev.map(student =>
-          student.id === studentModal.data.id ? { ...student, ...values } : student
-        ));
-        message.success('Student updated successfully');
+        // Edit existing student - check for duplicates before updating
+        const currentStudent = studentModal.data;
+
+        // Check for duplicate email (excluding current student)
+        if (values.email && values.email !== currentStudent.email) {
+          const emailExists = students.some(s =>
+            s.id !== currentStudent.id && s.email?.toLowerCase() === values.email?.toLowerCase()
+          );
+          if (emailExists) {
+            studentForm.setFields([{ name: 'email', errors: ['Email already exists'] }]);
+            throw new Error('Email already exists');
+          }
+        }
+
+        // Check for duplicate studentCode (excluding current student)
+        if (values.studentCode && values.studentCode !== currentStudent.studentCode) {
+          const studentCodeExists = students.some(s =>
+            s.id !== currentStudent.id && s.studentCode === values.studentCode
+          );
+          if (studentCodeExists) {
+            studentForm.setFields([{ name: 'studentCode', errors: ['Student Code already exists'] }]);
+            throw new Error('Student Code already exists');
+          }
+        }
+
+        // Check for duplicate phoneNumber (excluding current student)
+        if (values.phoneNumber && values.phoneNumber !== currentStudent.phoneNumber) {
+          const phoneExists = students.some(s =>
+            s.id !== currentStudent.id && s.phoneNumber === values.phoneNumber
+          );
+          if (phoneExists) {
+            studentForm.setFields([{ name: 'phoneNumber', errors: ['Phone number already exists'] }]);
+            throw new Error('Phone number already exists');
+          }
+        }
+
+        // Update student via API
+        try {
+          await userAPI.updateStudent(studentModal.data.id, {
+            name: values.name,
+            email: values.email,
+            studentCode: values.studentCode,
+            phoneNumber: values.phoneNumber
+          });
+
+          // Refresh students list
+          await loadData();
+          message.success('Student updated successfully');
+        } catch (apiError) {
+          console.error('API error:', apiError);
+          const errorMessage = apiError.message || 'Failed to update student';
+
+          // Parse backend error messages
+          if (errorMessage.includes('Email already exists')) {
+            studentForm.setFields([{ name: 'email', errors: ['Email already exists'] }]);
+          } else if (errorMessage.includes('Student Code already exists')) {
+            studentForm.setFields([{ name: 'studentCode', errors: ['Student Code already exists'] }]);
+          } else if (errorMessage.includes('Phone number already exists')) {
+            studentForm.setFields([{ name: 'phoneNumber', errors: ['Phone number already exists'] }]);
+          }
+
+          message.error(errorMessage);
+          throw apiError;
+        }
       } else {
         // Create new student via API
         const response = await userAPI.createSingleStudent({
@@ -951,7 +1013,10 @@ function AcademicAffairsPortal({ user, onLogout }) {
       studentForm.resetFields();
     } catch (error) {
       console.error('Error submitting student:', error);
-      message.error('Failed to save student');
+      // Error message already set above or by API
+      if (!error.message || (!error.message.includes('already exists') && !error.message.includes('required'))) {
+        message.error('Failed to save student: ' + (error.message || 'Unknown error'));
+      }
     }
   };
 
@@ -1031,11 +1096,56 @@ function AcademicAffairsPortal({ user, onLogout }) {
       const values = await lecturerForm.validateFields();
 
       if (lecturerModal.data.id) {
-        // Edit existing lecturer
-        setLecturers(prev => prev.map(lecturer =>
-          lecturer.id === lecturerModal.data.id ? { ...lecturer, ...values } : lecturer
-        ));
-        message.success('Lecturer updated successfully');
+        // Edit existing lecturer - check for duplicates before updating
+        const currentLecturer = lecturerModal.data;
+
+        // Check for duplicate email (excluding current lecturer)
+        if (values.email && values.email !== currentLecturer.email) {
+          const emailExists = lecturers.some(l =>
+            l.id !== currentLecturer.id && l.email?.toLowerCase() === values.email?.toLowerCase()
+          );
+          if (emailExists) {
+            lecturerForm.setFields([{ name: 'email', errors: ['Email already exists'] }]);
+            throw new Error('Email already exists');
+          }
+        }
+
+        // Check for duplicate phoneNumber (excluding current lecturer)
+        if (values.phoneNumber && values.phoneNumber !== currentLecturer.phoneNumber) {
+          const phoneExists = lecturers.some(l =>
+            l.id !== currentLecturer.id && l.phoneNumber === values.phoneNumber
+          );
+          if (phoneExists) {
+            lecturerForm.setFields([{ name: 'phoneNumber', errors: ['Phone number already exists'] }]);
+            throw new Error('Phone number already exists');
+          }
+        }
+
+        // Update lecturer via API
+        try {
+          await userAPI.updateLecturer(lecturerModal.data.id, {
+            name: values.name,
+            email: values.email,
+            phoneNumber: values.phoneNumber
+          });
+
+          // Refresh lecturers list
+          await loadData();
+          message.success('Lecturer updated successfully');
+        } catch (apiError) {
+          console.error('API error:', apiError);
+          const errorMessage = apiError.message || 'Failed to update lecturer';
+
+          // Parse backend error messages
+          if (errorMessage.includes('Email already exists')) {
+            lecturerForm.setFields([{ name: 'email', errors: ['Email already exists'] }]);
+          } else if (errorMessage.includes('Phone number already exists')) {
+            lecturerForm.setFields([{ name: 'phoneNumber', errors: ['Phone number already exists'] }]);
+          }
+
+          message.error(errorMessage);
+          throw apiError;
+        }
       } else {
         // Create new lecturer via API
         const response = await userAPI.createSingleLecturer({
@@ -1055,7 +1165,10 @@ function AcademicAffairsPortal({ user, onLogout }) {
       lecturerForm.resetFields();
     } catch (error) {
       console.error('Error submitting lecturer:', error);
-      message.error('Failed to save lecturer');
+      // Error message already set above or by API
+      if (!error.message || (!error.message.includes('already exists') && !error.message.includes('required'))) {
+        message.error('Failed to save lecturer: ' + (error.message || 'Unknown error'));
+      }
     }
   };
 
@@ -1070,7 +1183,6 @@ function AcademicAffairsPortal({ user, onLogout }) {
     { key: 'students', icon: <UserOutlined />, label: 'Students' },
     { key: 'lecturers', icon: <TeamOutlined />, label: 'Lecturers' },
     { key: 'iot-subjects', icon: <ToolOutlined />, label: 'IOT Subjects' },
-    { key: 'kits', icon: <ToolOutlined />, label: 'Kits' },
   ];
 
   if (!user) {
@@ -1321,86 +1433,16 @@ function AcademicAffairsPortal({ user, onLogout }) {
                 variants={pageVariants}
                 transition={pageTransition}
               >
-                {selectedKey === 'dashboard' && <DashboardContent semesters={semesters} students={students} lecturers={lecturers} kits={kits} iotSubjects={iotSubjects} />}
+                {selectedKey === 'dashboard' && <DashboardContent semesters={semesters} students={students} lecturers={lecturers} iotSubjects={iotSubjects} />}
                 {selectedKey === 'student-enrollment' && <StudentEnrollment semesters={semesters} setSemesters={setSemesters} semesterModal={semesterModal} setSemesterModal={setSemesterModal} semesterForm={semesterForm} />}
-                {selectedKey === 'students' && <StudentManagement students={students} setStudents={setStudents} studentModal={studentModal} setStudentModal={setStudentModal} studentForm={studentForm} handleExportStudents={handleExportStudents} handleImportStudents={handleImportStudents} handleAddStudent={handleAddStudent} handleEditStudent={handleEditStudent} handleDeleteStudent={handleDeleteStudent} showSheetSelectionAndImport={showSheetSelectionAndImport} />}
-                {selectedKey === 'lecturers' && <LecturerManagement lecturers={lecturers} setLecturers={setLecturers} lecturerModal={lecturerModal} setLecturerModal={setLecturerModal} lecturerForm={lecturerForm} handleExportLecturers={handleExportLecturers} handleImportLecturers={handleImportLecturers} handleAddLecturer={handleAddLecturer} handleEditLecturer={handleEditLecturer} handleDeleteLecturer={handleDeleteLecturer} showSheetSelectionAndImport={showSheetSelectionAndImport} />}
-                {selectedKey === 'iot-subjects' && <IotSubjectsManagement iotSubjects={iotSubjects} setIotSubjects={setIotSubjects} selectedSemester={selectedSemester} setSelectedSemester={setSelectedSemester} semesters={semesters} handleAddIotSubject={handleAddIotSubject} handleEditIotSubject={handleEditIotSubject} handleViewIotSubjectStudents={handleViewIotSubjectStudents} handleDeleteIotSubject={handleDeleteIotSubject} />}
-                {selectedKey === 'kits' && <KitsManagement kits={kits} setKits={setKits} handleExportKits={handleExportKits} handleViewKitDetails={handleViewKitDetails} />}
+                {selectedKey === 'students' && <StudentManagement students={students} setStudents={setStudents} studentModal={studentModal} setStudentModal={setStudentModal} studentForm={studentForm} handleExportStudents={handleExportStudents} handleImportStudents={handleImportStudents} handleAddStudent={handleAddStudent} handleEditStudent={handleEditStudent} handleDeleteStudent={handleDeleteStudent} showSheetSelectionAndImport={showSheetSelectionAndImport} importFormatModal={importFormatModal} setImportFormatModal={setImportFormatModal} />}
+                {selectedKey === 'lecturers' && <LecturerManagement lecturers={lecturers} setLecturers={setLecturers} lecturerModal={lecturerModal} setLecturerModal={setLecturerModal} lecturerForm={lecturerForm} handleExportLecturers={handleExportLecturers} handleImportLecturers={handleImportLecturers} handleAddLecturer={handleAddLecturer} handleEditLecturer={handleEditLecturer} handleDeleteLecturer={handleDeleteLecturer} showSheetSelectionAndImport={showSheetSelectionAndImport} importFormatModal={importFormatModal} setImportFormatModal={setImportFormatModal} />}
+                {selectedKey === 'iot-subjects' && <IotSubjectsManagement iotSubjects={iotSubjects} setIotSubjects={setIotSubjects} selectedSemester={selectedSemester} setSelectedSemester={setSelectedSemester} semesters={semesters} handleAddIotSubject={handleAddIotSubject} handleEditIotSubject={handleEditIotSubject} handleViewIotSubjectStudents={handleViewIotSubjectStudents} handleDeleteIotSubject={handleDeleteIotSubject} handleRemoveStudent={handleRemoveStudentFromClass} />}
               </motion.div>
             </AnimatePresence>
           </Spin>
         </Content>
       </Layout>
-
-      {/* Kit Modal */}
-      <Modal
-        title={kitModal.data.id ? "Edit Kit" : "Add Kit"}
-        open={kitModal.visible}
-        onOk={handleKitSubmit}
-        onCancel={() => setKitModal({ visible: false, data: {} })}
-        width={600}
-        okText={kitModal.data.id ? "Update" : "Add"}
-        cancelText="Cancel"
-      >
-        <Form form={kitForm} layout="vertical">
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
-                name="name"
-                label="Kit Name"
-                rules={[{ required: true, message: 'Please enter kit name' }]}
-              >
-                <Input placeholder="Enter kit name" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
-                name="category"
-                label="Category"
-                rules={[{ required: true, message: 'Please select category' }]}
-              >
-                <Select placeholder="Select category">
-                  <Option value="Sensors">Sensors</Option>
-                  <Option value="Microcontrollers">Microcontrollers</Option>
-                  <Option value="Actuators">Actuators</Option>
-                  <Option value="Communication">Communication</Option>
-                  <Option value="Power">Power</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
-                name="quantity"
-                label="Quantity"
-                rules={[{ required: true, message: 'Please enter quantity' }]}
-              >
-                <InputNumber min={1} style={{ width: '100%' }} placeholder="Enter quantity" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
-                name="price"
-                label="Price"
-                rules={[{ required: true, message: 'Please enter price' }]}
-              >
-                <InputNumber min={0} step={0.01} style={{ width: '100%' }} placeholder="Enter price" />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item
-            name="location"
-            label="Location"
-            rules={[{ required: true, message: 'Please enter location' }]}
-          >
-            <Input placeholder="Enter location" />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-
 
       {/* Student Modal */}
       <Modal
@@ -1450,9 +1492,32 @@ function AcademicAffairsPortal({ user, onLogout }) {
               <Form.Item
                 name="phoneNumber"
                 label="Phone Number"
-                rules={[{ required: true, message: 'Please enter phone number' }]}
+                rules={[
+                  { required: true, message: 'Please enter phone number' },
+                  {
+                    pattern: /^0\d{9}$/,
+                    message: 'Phone number must start with 0 and have exactly 10 digits'
+                  },
+                  {
+                    validator: (_, value) => {
+                      if (!value || /^[0-9]+$/.test(value)) {
+                        return Promise.resolve();
+                      }
+                      return Promise.reject(new Error('Phone number must contain only numbers'));
+                    }
+                  }
+                ]}
               >
-                <Input placeholder="Enter phone number" />
+                <Input
+                  placeholder="Enter phone number (e.g., 0123456789)"
+                  maxLength={10}
+                  onKeyPress={(e) => {
+                    // Only allow numeric input
+                    if (!/[0-9]/.test(e.key) && e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'Tab') {
+                      e.preventDefault();
+                    }
+                  }}
+                />
               </Form.Item>
             </Col>
           </Row>
@@ -1498,9 +1563,32 @@ function AcademicAffairsPortal({ user, onLogout }) {
               <Form.Item
                 name="phoneNumber"
                 label="Phone Number"
-                rules={[{ required: true, message: 'Please enter phone number' }]}
+                rules={[
+                  { required: true, message: 'Please enter phone number' },
+                  {
+                    pattern: /^0\d{9}$/,
+                    message: 'Phone number must start with 0 and have exactly 10 digits'
+                  },
+                  {
+                    validator: (_, value) => {
+                      if (!value || /^[0-9]+$/.test(value)) {
+                        return Promise.resolve();
+                      }
+                      return Promise.reject(new Error('Phone number must contain only numbers'));
+                    }
+                  }
+                ]}
               >
-                <Input placeholder="Enter phone number" />
+                <Input
+                  placeholder="Enter phone number (e.g., 0123456789)"
+                  maxLength={10}
+                  onKeyPress={(e) => {
+                    // Only allow numeric input
+                    if (!/[0-9]/.test(e.key) && e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'Tab') {
+                      e.preventDefault();
+                    }
+                  }}
+                />
               </Form.Item>
             </Col>
           </Row>
@@ -1598,6 +1686,12 @@ function AcademicAffairsPortal({ user, onLogout }) {
             dataSource={classStudents}
             columns={[
               {
+                title: 'Student Code',
+                dataIndex: 'studentCode',
+                key: 'studentCode',
+                render: (text) => text || 'N/A'
+              },
+              {
                 title: 'Student Name',
                 dataIndex: 'accountName',
                 key: 'accountName',
@@ -1621,6 +1715,21 @@ function AcademicAffairsPortal({ user, onLogout }) {
                     return date.toString();
                   }
                 }
+              },
+              {
+                title: 'Actions',
+                key: 'actions',
+                render: (_, record) => (
+                  <Button
+                    type="primary"
+                    danger
+                    size="small"
+                    icon={<DeleteOutlined />}
+                    onClick={() => handleRemoveStudentFromClass(record, iotSubjectStudentsModal.data?.id)}
+                  >
+                    Remove
+                  </Button>
+                ),
               },
             ]}
             rowKey="id"
@@ -1684,12 +1793,11 @@ function AcademicAffairsPortal({ user, onLogout }) {
 }
 
 // Dashboard Component
-const DashboardContent = ({ semesters, students, lecturers, kits, iotSubjects }) => {
+const DashboardContent = ({ semesters, students, lecturers, iotSubjects }) => {
   // Calculate statistics
   const activeSemesters = semesters.filter(s => s.status === 'Active').length;
   const totalStudents = students.length;
   const totalLecturers = lecturers.length;
-  const availableKits = kits.filter(k => k.status === 'AVAILABLE').length;
   const activeIotSubjects = iotSubjects.filter(s => s.status === 'Active').length;
 
   // Quick stats for charts
@@ -1815,31 +1923,6 @@ const DashboardContent = ({ semesters, students, lecturers, kits, iotSubjects })
           </motion.div>
         </Col>
 
-        <Col xs={24} sm={12} lg={6}>
-          <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-            <Card
-              style={{
-                borderRadius: '16px',
-                boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-                background: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
-                border: 'none'
-              }}
-            >
-              <div style={{ color: 'white' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{availableKits}</div>
-                    <div style={{ fontSize: '14px', opacity: 0.8 }}>Available Kits</div>
-                  </div>
-                  <ToolOutlined style={{ fontSize: '32px', opacity: 0.8 }} />
-                </div>
-                <div style={{ marginTop: '16px', fontSize: '12px', opacity: 0.7 }}>
-                  {kits.length} total kits
-                </div>
-              </div>
-            </Card>
-          </motion.div>
-        </Col>
       </Row>
 
       {/* Charts and Analytics Section */}
@@ -1884,7 +1967,7 @@ const DashboardContent = ({ semesters, students, lecturers, kits, iotSubjects })
                   <PieChartOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
                   <div>System distribution chart</div>
                   <div style={{ fontSize: '12px', marginTop: '8px' }}>
-                    Students: {totalStudents} | Lecturers: {totalLecturers} | Kits: {kits.length}
+                    Students: {totalStudents} | Lecturers: {totalLecturers}
                   </div>
                 </div>
               </div>
@@ -1938,21 +2021,6 @@ const DashboardContent = ({ semesters, students, lecturers, kits, iotSubjects })
                   </Button>
                 </Col>
 
-                <Col span={12}>
-                  <Button
-                    type="primary"
-                    icon={<ToolOutlined />}
-                    block
-                    style={{
-                      height: '80px',
-                      borderRadius: '12px',
-                      background: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
-                      border: 'none'
-                    }}
-                  >
-                    <div>Manage Kits</div>
-                  </Button>
-                </Col>
               </Row>
             </Card>
           </motion.div>
@@ -2029,9 +2097,11 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
   const [enrollmentForm] = Form.useForm();
   const [studentForm] = Form.useForm();
   const [classAssignments, setClassAssignments] = useState([]);
-  const [classes, setClasses] = useState([]);
+  const [classes, setClasses] = useState([]); // Unassigned classes for lecturer assignment
+  const [allClasses, setAllClasses] = useState([]); // All classes for student enrollment
   const [lecturers, setLecturers] = useState([]);
   const [students, setStudents] = useState([]);
+  const [allStudents, setAllStudents] = useState([]); // All students (for filtering)
   const [classStudents, setClassStudents] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -2065,15 +2135,27 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
       console.log('Filtered lecturer assignments:', lecturerAssignments);
       setClassAssignments(lecturerAssignments);
 
-      // Load classes
-      const classesData = await classesAPI.getAllClasses();
-      const classOptions = classesData.map(cls => ({
+      // Load unassigned classes (classes without lecturer assignment)
+      const unassignedClassesData = await classAssignmentAPI.getUnassignedClasses();
+      console.log('Unassigned classes:', unassignedClassesData);
+
+      const unassignedClassOptions = (unassignedClassesData || []).map(cls => ({
         value: cls.id,
         label: `${cls.classCode} - ${cls.semester}`,
         classCode: cls.classCode,
         semester: cls.semester
       }));
-      setClasses(classOptions);
+      setClasses(unassignedClassOptions);
+
+      // Also load all classes for student enrollment (students can be enrolled in any class)
+      const allClassesData = await classesAPI.getAllClasses();
+      const allClassOptions = allClassesData.map(cls => ({
+        value: cls.id,
+        label: `${cls.classCode} - ${cls.semester}`,
+        classCode: cls.classCode,
+        semester: cls.semester
+      }));
+      setAllClasses(allClassOptions);
 
       // Load lecturers
       const lecturersData = await userAPI.getLecturers();
@@ -2093,7 +2175,8 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
         email: student.email,
         fullName: student.fullName
       }));
-      setStudents(studentOptions);
+      setAllStudents(studentOptions); // Store all students
+      setStudents(studentOptions); // Set initial students list
     } catch (error) {
       console.error('Error loading enrollment data:', error);
       notification.error({
@@ -2144,6 +2227,9 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
 
       setStudentModal({ visible: false, data: {} });
       studentForm.resetFields();
+
+      // Restore all students list after closing modal
+      setStudents(allStudents);
     } catch (error) {
       console.error('Error enrolling students:', error);
       notification.error({
@@ -2154,12 +2240,47 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
     }
   };
 
-  const handleAddStudent = (record) => {
-    // Set the classId from the record
-    studentForm.setFieldsValue({
-      classId: record.classId
-    });
-    setStudentModal({ visible: true, data: record });
+  const handleAddStudent = async (record) => {
+    try {
+      // Set the classId from the record
+      studentForm.setFieldsValue({
+        classId: record.classId
+      });
+
+      // Get all assignments to find students already in this class
+      const allAssignments = await classAssignmentAPI.getAll();
+      const assignmentsArray = Array.isArray(allAssignments) ? allAssignments : [];
+
+      // Get students already enrolled in this class
+      const enrolledStudentIds = assignmentsArray
+        .filter(assignment => {
+          const roleName = assignment.roleName || assignment.role || '';
+          const roleUpper = roleName.toUpperCase();
+          const isStudent = roleUpper === 'STUDENT' || roleUpper === 'STUDENT_ROLE';
+          const assignmentClassId = assignment.classId?.toString();
+          const recordClassId = record.classId?.toString();
+          const matchesClass = assignmentClassId === recordClassId;
+          return isStudent && matchesClass;
+        })
+        .map(assignment => assignment.accountId?.toString());
+
+      // Filter out students already enrolled in this class from allStudents
+      const unenrolledStudentOptions = allStudents.filter(student => {
+        const studentId = student.value?.toString();
+        return !enrolledStudentIds.includes(studentId);
+      });
+
+      // Update student options with only unenrolled students
+      setStudents(unenrolledStudentOptions);
+      setStudentModal({ visible: true, data: record });
+    } catch (error) {
+      console.error('Error loading unenrolled students:', error);
+      notification.error({
+        message: 'Error',
+        description: 'Failed to load students',
+        placement: 'topRight',
+      });
+    }
   };
 
   const handleShowDetail = async (record) => {
@@ -2261,6 +2382,56 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
     });
   };
 
+  const handleRemoveStudent = async (record, classId) => {
+    Modal.confirm({
+      title: 'Remove Student',
+      content: `Are you sure you want to remove "${record.accountName || record.accountEmail}" from this class?`,
+      okText: 'Yes',
+      okType: 'danger',
+      cancelText: 'No',
+      onOk: async () => {
+        try {
+          await classAssignmentAPI.delete(record.id);
+
+          // Refresh the student list in the modal
+          const allAssignments = await classAssignmentAPI.getAll();
+          const assignmentsArray = Array.isArray(allAssignments) ? allAssignments : [];
+
+          // Filter students for this class
+          const studentsInClass = assignmentsArray.filter(assignment => {
+            const roleName = assignment.roleName || assignment.role || '';
+            const roleUpper = roleName.toUpperCase();
+            const isStudent = roleUpper === 'STUDENT' || roleUpper === 'STUDENT_ROLE';
+
+            const assignmentClassId = assignment.classId?.toString();
+            const recordClassId = classId?.toString();
+            const matchesClass = assignmentClassId === recordClassId;
+
+            return isStudent && matchesClass;
+          });
+
+          setClassStudents(studentsInClass);
+
+          // Also refresh main enrollment data
+          await loadEnrollmentData();
+
+          notification.success({
+            message: 'Success',
+            description: 'Student removed from class successfully',
+            placement: 'topRight',
+          });
+        } catch (error) {
+          console.error('Error removing student:', error);
+          notification.error({
+            message: 'Error',
+            description: error.message || 'Failed to remove student',
+            placement: 'topRight',
+          });
+        }
+      },
+    });
+  };
+
   const columns = [
     {
       title: 'Lecturer Name',
@@ -2276,16 +2447,23 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
     },
     {
       title: 'IoT Subject',
-      dataIndex: 'classId',
-      key: 'classId',
-      render: (classId) => {
-        if (!classId) return 'N/A';
-        const classInfo = classes.find(c => {
-          const cValue = c.value?.toString();
-          const classIdStr = classId?.toString();
-          return cValue === classIdStr;
-        });
-        return classInfo ? classInfo.label : (classId || 'N/A');
+      dataIndex: 'classCode',
+      key: 'classCode',
+      render: (classCode, record) => {
+        // Use classCode from response if available, otherwise fallback to classId lookup
+        if (classCode) {
+          return classCode;
+        }
+        // Fallback: try to find from allClasses
+        if (record.classId) {
+          const classInfo = allClasses.find(c => {
+            const cValue = c.value?.toString();
+            const classIdStr = record.classId?.toString();
+            return cValue === classIdStr;
+          });
+          return classInfo ? classInfo.classCode || classInfo.label : (record.classId || 'N/A');
+        }
+        return 'N/A';
       }
     },
     {
@@ -2363,8 +2541,9 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
         <Form form={enrollmentForm} layout="vertical">
           <Form.Item
             name="classId"
-            label="IoT Subject"
+            label="IoT Subject (Unassigned Only)"
             rules={[{ required: true, message: 'Please select a class' }]}
+            extra="Only classes without assigned lecturers are shown"
           >
             <Select
               showSearch
@@ -2374,6 +2553,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
                 (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
               }
               options={classes}
+              notFoundContent={classes.length === 0 ? "No unassigned classes available" : null}
             />
           </Form.Item>
           <Form.Item
@@ -2402,6 +2582,8 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
         onCancel={() => {
           setStudentModal({ visible: false, data: {} });
           studentForm.resetFields();
+          // Restore all students list after closing modal
+          setStudents(allStudents);
         }}
         width={600}
         okText="Enroll"
@@ -2420,15 +2602,15 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
               filterOption={(input, option) =>
                 (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
               }
-              options={classes}
+              options={allClasses}
               disabled={true}
             />
           </Form.Item>
           <Form.Item
             name="accountId"
-            label="Students"
+            label="Students (Not Enrolled)"
             rules={[{ required: true, message: 'Please select at least one student' }]}
-            help="You can select multiple students to enroll at once"
+            help="Only students not enrolled in this class are shown"
           >
             <Select
               mode="multiple"
@@ -2466,9 +2648,37 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
         <Table
           dataSource={classStudents}
           columns={[
-            { title: 'Student Name', dataIndex: 'accountName', key: 'accountName' },
-            { title: 'Student Email', dataIndex: 'accountEmail', key: 'accountEmail' },
-            { title: 'Enrollment Date', dataIndex: 'createdAt', key: 'createdAt' },
+            {
+              title: 'Student Code',
+              dataIndex: 'studentCode',
+              key: 'studentCode',
+              render: (text) => text || 'N/A'
+            },
+            {
+              title: 'Student Name',
+              dataIndex: 'accountName',
+              key: 'accountName',
+              render: (text) => text || 'N/A'
+            },
+            {
+              title: 'Student Email',
+              dataIndex: 'accountEmail',
+              key: 'accountEmail',
+              render: (text) => text || 'N/A'
+            },
+            {
+              title: 'Enrollment Date',
+              dataIndex: 'createdAt',
+              key: 'createdAt',
+              render: (date) => {
+                if (!date) return 'N/A';
+                try {
+                  return new Date(date).toLocaleString('vi-VN');
+                } catch (e) {
+                  return date.toString();
+                }
+              }
+            },
             {
               title: 'Actions',
               key: 'actions',
@@ -2478,7 +2688,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
                   danger
                   size="small"
                   icon={<DeleteOutlined />}
-                  onClick={() => handleDeleteEnrollment(record)}
+                  onClick={() => handleRemoveStudent(record, detailModal.data?.classId)}
                 >
                   Remove
                 </Button>
@@ -2503,7 +2713,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
 
 
 // Student Management Component
-const StudentManagement = ({ students, setStudents, studentModal, setStudentModal, studentForm, handleExportStudents, handleImportStudents, handleAddStudent, handleEditStudent, handleDeleteStudent, showSheetSelectionAndImport }) => (
+const StudentManagement = ({ students, setStudents, studentModal, setStudentModal, studentForm, handleExportStudents, handleImportStudents, handleAddStudent, handleEditStudent, handleDeleteStudent, showSheetSelectionAndImport, importFormatModal, setImportFormatModal }) => (
   <div>
     <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
       <Card
@@ -2514,27 +2724,19 @@ const StudentManagement = ({ students, setStudents, studentModal, setStudentModa
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              <Upload
-                accept=".xlsx,.xls"
-                showUploadList={false}
-                beforeUpload={(file) => {
-                  showSheetSelectionAndImport(file, 'students', {});
-                  return false;
+              <Button
+                icon={<ImportOutlined />}
+                onClick={() => setImportFormatModal({ visible: true, type: 'students' })}
+                style={{
+                  borderRadius: '12px',
+                  background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+                  border: 'none',
+                  fontWeight: 'bold',
+                  color: '#fff'
                 }}
               >
-                <Button
-                  icon={<ImportOutlined />}
-                  style={{
-                    borderRadius: '12px',
-                    background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-                    border: 'none',
-                    fontWeight: 'bold',
-                    color: '#fff'
-                  }}
-                >
-                  Import Students
-                </Button>
-              </Upload>
+                Import Students
+              </Button>
             </motion.div>
             <motion.div
               whileHover={{ scale: 1.05 }}
@@ -2609,11 +2811,269 @@ const StudentManagement = ({ students, setStudents, studentModal, setStudentModa
         />
       </Card>
     </motion.div>
+
+    {/* Import Format Modal */}
+    <Modal
+      title={
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <ImportOutlined style={{ fontSize: '20px', color: '#52c41a' }} />
+          <span>Student Import Format Guide</span>
+        </div>
+      }
+      open={importFormatModal.visible && importFormatModal.type === 'students'}
+      onCancel={() => setImportFormatModal({ visible: false, type: null })}
+      footer={[
+        <Button key="cancel" onClick={() => setImportFormatModal({ visible: false, type: null })}>
+          Cancel
+        </Button>,
+        <Button
+          key="proceed"
+          type="primary"
+          icon={<ImportOutlined />}
+          onClick={() => {
+            setImportFormatModal({ visible: false, type: null });
+            // Trigger file input
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.xlsx,.xls';
+            input.onchange = (e) => {
+              const file = e.target.files[0];
+              if (file) {
+                showSheetSelectionAndImport(file, 'students', {});
+              }
+            };
+            input.click();
+          }}
+          style={{
+            background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+            border: 'none',
+            fontWeight: 'bold'
+          }}
+        >
+          I Understand, Proceed to Import
+        </Button>
+      ]}
+      width={800}
+      style={{ top: 20 }}
+    >
+      <div style={{ padding: '10px 0' }}>
+        <Alert
+          message="File Format Requirements"
+          description="Please ensure your Excel file follows the format below. The first row (header) will be automatically skipped."
+          type="info"
+          showIcon
+          style={{ marginBottom: '20px' }}
+        />
+
+        <Title level={4}>Excel File Structure</Title>
+        <Text type="secondary" style={{ display: 'block', marginBottom: '16px' }}>
+          File must be in <strong>.xlsx</strong> or <strong>.xls</strong> format
+        </Text>
+
+        <Table
+          dataSource={[
+            { column: 'A', field: 'studentCode', required: 'Yes', description: 'Mã số sinh viên', example: 'SV001, 2021001' },
+            { column: 'B', field: 'StudentName', required: 'Yes', description: 'Họ và tên đầy đủ', example: 'Nguyễn Văn A' },
+            { column: 'C', field: 'email', required: 'Yes', description: 'Email của sinh viên (phải unique)', example: 'student@example.com' },
+            { column: 'D', field: 'phone', required: 'No', description: 'Số điện thoại', example: '0123456789' },
+            { column: 'E', field: 'StudentClass', required: 'No', description: 'Mã lớp học (classCode)', example: 'IOT2024, CS101' },
+          ]}
+          columns={[
+            { title: 'Column', dataIndex: 'column', key: 'column', width: 80, align: 'center' },
+            { title: 'Field Name', dataIndex: 'field', key: 'field', width: 150 },
+            { title: 'Required', dataIndex: 'required', key: 'required', width: 80, align: 'center', render: (text) => text === 'Yes' ? <Tag color="red">Required</Tag> : <Tag>Optional</Tag> },
+            { title: 'Description', dataIndex: 'description', key: 'description' },
+            { title: 'Example', dataIndex: 'example', key: 'example', render: (text) => <Text code>{text}</Text> },
+          ]}
+          pagination={false}
+          size="small"
+          style={{ marginBottom: '20px' }}
+        />
+
+        <Title level={5}>Example Data</Title>
+        <div style={{
+          background: '#f5f5f5',
+          padding: '12px',
+          borderRadius: '4px',
+          marginBottom: '20px',
+          fontFamily: 'monospace',
+          fontSize: '12px'
+        }}>
+          <div style={{ marginBottom: '8px' }}><strong>Row 1 (Header - will be skipped):</strong></div>
+          <div style={{ marginBottom: '4px' }}>studentCode | StudentName | email | phone | StudentClass</div>
+          <div style={{ marginBottom: '16px', marginTop: '12px' }}><strong>Row 2 (Data):</strong></div>
+          <div style={{ marginBottom: '4px' }}>SV001 | Nguyễn Văn A | nva@example.com | 0123456789 | IOT2024</div>
+          <div style={{ marginBottom: '4px' }}>SV002 | Trần Thị B | ttb@example.com | 0987654321 | IOT2024</div>
+          <div>SV003 | Lê Văn C | lvc@example.com | | CS101</div>
+        </div>
+
+        <Alert
+          message="Important Notes"
+          description={
+            <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
+              <li>Password will be set to <strong>"1"</strong> by default for all imported students</li>
+              <li>Each student will automatically receive a wallet with <strong>0 VND</strong> balance</li>
+              <li>If <strong>StudentClass</strong> doesn't exist, it will be automatically created</li>
+              <li>Email must be unique - duplicate emails will cause import errors</li>
+              <li>Rows with missing required fields will be skipped</li>
+            </ul>
+          }
+          type="warning"
+          showIcon
+          style={{ marginBottom: '20px' }}
+        />
+
+        <Alert
+          message="Common Errors"
+          description={
+            <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
+              <li><strong>"Email already exists"</strong>: Email is already registered in the system</li>
+              <li><strong>"Full Name is required"</strong>: Missing student name in Column B</li>
+              <li><strong>"Email is required"</strong>: Missing email in Column C</li>
+              <li><strong>"Invalid file format"</strong>: File is not .xlsx or .xls format</li>
+            </ul>
+          }
+          type="error"
+          showIcon
+        />
+      </div>
+    </Modal>
+
+    {/* Lecturer Import Format Modal */}
+    <Modal
+      title={
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <ImportOutlined style={{ fontSize: '20px', color: '#52c41a' }} />
+          <span>Lecturer Import Format Guide</span>
+        </div>
+      }
+      open={importFormatModal.visible && importFormatModal.type === 'lecturers'}
+      onCancel={() => setImportFormatModal({ visible: false, type: null })}
+      footer={[
+        <Button key="cancel" onClick={() => setImportFormatModal({ visible: false, type: null })}>
+          Cancel
+        </Button>,
+        <Button
+          key="proceed"
+          type="primary"
+          icon={<ImportOutlined />}
+          onClick={() => {
+            setImportFormatModal({ visible: false, type: null });
+            // Trigger file input
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.xlsx,.xls';
+            input.onchange = (e) => {
+              const file = e.target.files[0];
+              if (file) {
+                showSheetSelectionAndImport(file, 'lecturers', {});
+              }
+            };
+            input.click();
+          }}
+          style={{
+            background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+            border: 'none',
+            fontWeight: 'bold'
+          }}
+        >
+          I Understand, Proceed to Import
+        </Button>
+      ]}
+      width={800}
+      style={{ top: 20 }}
+    >
+      <div style={{ padding: '10px 0' }}>
+        <Alert
+          message="File Format Requirements"
+          description="Please ensure your Excel file follows the format below. The first row (header) will be automatically skipped."
+          type="info"
+          showIcon
+          style={{ marginBottom: '20px' }}
+        />
+
+        <Title level={4}>Excel File Structure</Title>
+        <Text type="secondary" style={{ display: 'block', marginBottom: '16px' }}>
+          File must be in <strong>.xlsx</strong> or <strong>.xls</strong> format
+        </Text>
+
+        <Table
+          dataSource={[
+            { column: 'A', field: 'email', required: 'Yes', description: 'Email của giảng viên (phải unique)', example: 'lecturer@example.com' },
+            { column: 'B', field: 'fullname', required: 'Yes', description: 'Họ và tên đầy đủ', example: 'Nguyễn Văn A' },
+            { column: 'C', field: 'phone', required: 'No', description: 'Số điện thoại (bắt đầu bằng 0, 10 chữ số)', example: '0123456789' },
+            { column: 'D', field: 'class_code', required: 'No', description: 'Mã lớp học', example: 'IOT2024, CS101' },
+            { column: 'E', field: 'Semester', required: 'No', description: 'Học kỳ', example: 'Fall 2024, Spring 2024' },
+          ]}
+          columns={[
+            { title: 'Column', dataIndex: 'column', key: 'column', width: 80, align: 'center' },
+            { title: 'Field Name', dataIndex: 'field', key: 'field', width: 150 },
+            { title: 'Required', dataIndex: 'required', key: 'required', width: 80, align: 'center', render: (text) => text === 'Yes' ? <Tag color="red">Required</Tag> : <Tag>Optional</Tag> },
+            { title: 'Description', dataIndex: 'description', key: 'description' },
+            { title: 'Example', dataIndex: 'example', key: 'example', render: (text) => <Text code>{text}</Text> },
+          ]}
+          pagination={false}
+          size="small"
+          style={{ marginBottom: '20px' }}
+        />
+
+        <Title level={5}>Example Data</Title>
+        <div style={{
+          background: '#f5f5f5',
+          padding: '12px',
+          borderRadius: '4px',
+          marginBottom: '20px',
+          fontFamily: 'monospace',
+          fontSize: '12px'
+        }}>
+          <div style={{ marginBottom: '8px' }}><strong>Row 1 (Header - will be skipped):</strong></div>
+          <div style={{ marginBottom: '4px' }}>email | fullname | phone | class_code | Semester</div>
+          <div style={{ marginBottom: '16px', marginTop: '12px' }}><strong>Row 2 (Data):</strong></div>
+          <div style={{ marginBottom: '4px' }}>lecturer1@example.com | Nguyễn Văn A | 0123456789 | IOT2024 | Fall 2024</div>
+          <div style={{ marginBottom: '4px' }}>lecturer2@example.com | Trần Thị B | 0987654321 | CS101 | Spring 2024</div>
+          <div>lecturer3@example.com | Lê Văn C | | IOT2024 | Fall 2024</div>
+        </div>
+
+        <Alert
+          message="Important Notes"
+          description={
+            <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
+              <li>Password will be set to <strong>"1"</strong> by default for all imported lecturers</li>
+              <li>Each lecturer will automatically receive a wallet with <strong>0 VND</strong> balance</li>
+              <li>If <strong>class_code</strong> doesn't exist, it will be automatically created with the lecturer assigned as teacher</li>
+              <li>If <strong>class_code</strong> already exists, the lecturer will be assigned to that class</li>
+              <li>Email must be unique - duplicate emails will cause import errors</li>
+              <li>Phone number must start with <strong>0</strong> and have exactly <strong>10 digits</strong> (if provided)</li>
+              <li>Rows with missing required fields will be skipped</li>
+            </ul>
+          }
+          type="warning"
+          showIcon
+          style={{ marginBottom: '20px' }}
+        />
+
+        <Alert
+          message="Common Errors"
+          description={
+            <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
+              <li><strong>"Email already exists"</strong>: Email is already registered in the system</li>
+              <li><strong>"Full Name is required"</strong>: Missing lecturer name in Column B</li>
+              <li><strong>"Email is required"</strong>: Missing email in Column A</li>
+              <li><strong>"Phone number must start with 0"</strong>: Phone number format is invalid</li>
+              <li><strong>"Phone number must have exactly 10 digits"</strong>: Phone number length is incorrect</li>
+              <li><strong>"Invalid file format"</strong>: File is not .xlsx or .xls format</li>
+            </ul>
+          }
+          type="error"
+          showIcon
+        />
+      </div>
+    </Modal>
   </div>
 );
 
 // Lecturer Management Component
-const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecturerModal, lecturerForm, handleExportLecturers, handleImportLecturers, handleAddLecturer, handleEditLecturer, handleDeleteLecturer, showSheetSelectionAndImport }) => (
+const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecturerModal, lecturerForm, handleExportLecturers, handleImportLecturers, handleAddLecturer, handleEditLecturer, handleDeleteLecturer, showSheetSelectionAndImport, importFormatModal, setImportFormatModal }) => (
   <div>
     <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
       <Card
@@ -2624,27 +3084,19 @@ const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecture
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              <Upload
-                accept=".xlsx,.xls"
-                showUploadList={false}
-                beforeUpload={(file) => {
-                  showSheetSelectionAndImport(file, 'lecturers', {});
-                  return false;
+              <Button
+                icon={<ImportOutlined />}
+                onClick={() => setImportFormatModal({ visible: true, type: 'lecturers' })}
+                style={{
+                  borderRadius: '12px',
+                  background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+                  border: 'none',
+                  fontWeight: 'bold',
+                  color: '#fff'
                 }}
               >
-                <Button
-                  icon={<ImportOutlined />}
-                  style={{
-                    borderRadius: '12px',
-                    background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-                    border: 'none',
-                    fontWeight: 'bold',
-                    color: '#fff'
-                  }}
-                >
-                  Import Lecturers
-                </Button>
-              </Upload>
+                Import Lecturers
+              </Button>
             </motion.div>
             <motion.div
               whileHover={{ scale: 1.05 }}
@@ -2718,226 +3170,235 @@ const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecture
         />
       </Card>
     </motion.div>
-  </div>
-);
 
-
-
-// Log History Component
-const LogHistory = ({ logs }) => (
-  <div>
-    <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-      <Card title="Log History" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-        <Table
-          dataSource={logs}
-          columns={[
-            { title: 'Timestamp', dataIndex: 'timestamp', key: 'timestamp' },
-            { title: 'Action', dataIndex: 'action', key: 'action' },
-            { title: 'User', dataIndex: 'user', key: 'user' },
-            { title: 'Details', dataIndex: 'details', key: 'details' },
-          ]}
-          rowKey="id"
+    {/* Lecturer Import Format Modal */}
+    <Modal
+      title={
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <ImportOutlined style={{ fontSize: '20px', color: '#52c41a' }} />
+          <span>Lecturer Import Format Guide</span>
+        </div>
+      }
+      open={importFormatModal.visible && importFormatModal.type === 'lecturers'}
+      onCancel={() => setImportFormatModal({ visible: false, type: null })}
+      footer={[
+        <Button key="cancel" onClick={() => setImportFormatModal({ visible: false, type: null })}>
+          Cancel
+        </Button>,
+        <Button
+          key="proceed"
+          type="primary"
+          icon={<ImportOutlined />}
+          onClick={() => {
+            setImportFormatModal({ visible: false, type: null });
+            // Trigger file input
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.xlsx,.xls';
+            input.onchange = (e) => {
+              const file = e.target.files[0];
+              if (file) {
+                showSheetSelectionAndImport(file, 'lecturers', {});
+              }
+            };
+            input.click();
+          }}
+          style={{
+            background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+            border: 'none',
+            fontWeight: 'bold'
+          }}
+        >
+          I Understand, Proceed to Import
+        </Button>
+      ]}
+      width={800}
+      style={{ top: 20 }}
+    >
+      <div style={{ padding: '10px 0' }}>
+        <Alert
+          message="File Format Requirements"
+          description="Please ensure your Excel file follows the format below. The first row (header) will be automatically skipped."
+          type="info"
+          showIcon
+          style={{ marginBottom: '20px' }}
         />
-      </Card>
-    </motion.div>
+
+        <Title level={4}>Excel File Structure</Title>
+        <Text type="secondary" style={{ display: 'block', marginBottom: '16px' }}>
+          File must be in <strong>.xlsx</strong> or <strong>.xls</strong> format
+        </Text>
+
+        <Table
+          dataSource={[
+            { column: 'A', field: 'email', required: 'Yes', description: 'Email của giảng viên (phải unique)', example: 'lecturer@example.com' },
+            { column: 'B', field: 'fullname', required: 'Yes', description: 'Họ và tên đầy đủ', example: 'Nguyễn Văn A' },
+            { column: 'C', field: 'phone', required: 'No', description: 'Số điện thoại (bắt đầu bằng 0, 10 chữ số)', example: '0123456789' },
+            { column: 'D', field: 'class_code', required: 'No', description: 'Mã lớp học', example: 'IOT2024, CS101' },
+            { column: 'E', field: 'Semester', required: 'No', description: 'Học kỳ', example: 'Fall 2024, Spring 2024' },
+          ]}
+          columns={[
+            { title: 'Column', dataIndex: 'column', key: 'column', width: 80, align: 'center' },
+            { title: 'Field Name', dataIndex: 'field', key: 'field', width: 150 },
+            { title: 'Required', dataIndex: 'required', key: 'required', width: 80, align: 'center', render: (text) => text === 'Yes' ? <Tag color="red">Required</Tag> : <Tag>Optional</Tag> },
+            { title: 'Description', dataIndex: 'description', key: 'description' },
+            { title: 'Example', dataIndex: 'example', key: 'example', render: (text) => <Text code>{text}</Text> },
+          ]}
+          pagination={false}
+          size="small"
+          style={{ marginBottom: '20px' }}
+        />
+
+        <Title level={5}>Example Data</Title>
+        <div style={{
+          background: '#f5f5f5',
+          padding: '12px',
+          borderRadius: '4px',
+          marginBottom: '20px',
+          fontFamily: 'monospace',
+          fontSize: '12px'
+        }}>
+          <div style={{ marginBottom: '8px' }}><strong>Row 1 (Header - will be skipped):</strong></div>
+          <div style={{ marginBottom: '4px' }}>email | fullname | phone | class_code | Semester</div>
+          <div style={{ marginBottom: '16px', marginTop: '12px' }}><strong>Row 2 (Data):</strong></div>
+          <div style={{ marginBottom: '4px' }}>lecturer1@example.com | Nguyễn Văn A | 0123456789 | IOT2024 | Fall 2024</div>
+          <div style={{ marginBottom: '4px' }}>lecturer2@example.com | Trần Thị B | 0987654321 | CS101 | Spring 2024</div>
+          <div>lecturer3@example.com | Lê Văn C | | IOT2024 | Fall 2024</div>
+        </div>
+
+        <Alert
+          message="Important Notes"
+          description={
+            <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
+              <li>Password will be set to <strong>"1"</strong> by default for all imported lecturers</li>
+              <li>Each lecturer will automatically receive a wallet with <strong>0 VND</strong> balance</li>
+              <li>If <strong>class_code</strong> doesn't exist, it will be automatically created with the lecturer assigned as teacher</li>
+              <li>If <strong>class_code</strong> already exists, the lecturer will be assigned to that class</li>
+              <li>Email must be unique - duplicate emails will cause import errors</li>
+              <li>Phone number must start with <strong>0</strong> and have exactly <strong>10 digits</strong> (if provided)</li>
+              <li>Rows with missing required fields will be skipped</li>
+            </ul>
+          }
+          type="warning"
+          showIcon
+          style={{ marginBottom: '20px' }}
+        />
+
+        <Alert
+          message="Common Errors"
+          description={
+            <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
+              <li><strong>"Email already exists"</strong>: Email is already registered in the system</li>
+              <li><strong>"Full Name is required"</strong>: Missing lecturer name in Column B</li>
+              <li><strong>"Email is required"</strong>: Missing email in Column A</li>
+              <li><strong>"Phone number must start with 0"</strong>: Phone number format is invalid</li>
+              <li><strong>"Phone number must have exactly 10 digits"</strong>: Phone number length is incorrect</li>
+              <li><strong>"Invalid file format"</strong>: File is not .xlsx or .xls format</li>
+            </ul>
+          }
+          type="error"
+          showIcon
+        />
+      </div>
+    </Modal>
   </div>
 );
 
 // IOT Subjects Management Component
-const IotSubjectsManagement = ({ iotSubjects, setIotSubjects, selectedSemester, setSelectedSemester, semesters, handleAddIotSubject, handleEditIotSubject, handleViewIotSubjectStudents, handleDeleteIotSubject }) => (
-  <div>
-    <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-      <Card
-        title="IOT Subjects Management"
-        extra={
-          <Space>
-            <Select
-              placeholder="Select Semester"
-              style={{ width: 200 }}
-              value={selectedSemester}
-              onChange={setSelectedSemester}
-            >
-              {semesters.map(semester => (
-                <Option key={semester.id} value={semester.id}>
-                  {semester.name}
-                </Option>
-              ))}
-            </Select>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={handleAddIotSubject}
-              style={{
-                borderRadius: '12px',
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                border: 'none',
-                fontWeight: 'bold'
-              }}
-            >
-              Add IOT Subject
-            </Button>
-          </Space>
-        }
-        style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
-      >
-        <Alert
-          message="IOT Subjects Management"
-          description="Manage IOT-related subjects for each semester. Only IOT subjects are displayed here."
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-        />
+const IotSubjectsManagement = ({ iotSubjects, setIotSubjects, selectedSemester, setSelectedSemester, semesters, handleAddIotSubject, handleEditIotSubject, handleViewIotSubjectStudents, handleDeleteIotSubject, handleRemoveStudent }) => {
+  // Filter iotSubjects based on selected semester
+  const filteredIotSubjects = selectedSemester
+    ? iotSubjects.filter(subject => subject.semester === selectedSemester)
+    : iotSubjects;
 
-        <Table
-          dataSource={iotSubjects}
-          columns={[
-            { title: 'Class Code', dataIndex: 'classCode', key: 'classCode' },
-            { title: 'Semester', dataIndex: 'semester', key: 'semester' },
-            { title: 'Lecturer', dataIndex: 'teacherName', key: 'teacherName' },
-            {
-              title: 'Status',
-              dataIndex: 'status',
-              key: 'status',
-              render: (status) => (
-                <Tag color={status ? 'green' : 'red'}>
-                  {status ? 'Active' : 'Inactive'}
-                </Tag>
-              )
-            },
-            { title: 'Created At', dataIndex: 'createdAt', key: 'createdAt' },
-            { title: 'Updated At', dataIndex: 'updatedAt', key: 'updatedAt' },
-            {
-              title: 'Actions',
-              key: 'actions',
-              render: (_, record) => (
-                <Space>
-                  <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEditIotSubject(record)}>
-                    Edit
-                  </Button>
-                  <Button type="primary" size="small" icon={<EyeOutlined />} onClick={() => handleViewIotSubjectStudents(record)}>
-                    View Students
-                  </Button>
-                  <Button type="primary" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDeleteIotSubject(record)}>
-                    Delete
-                  </Button>
-                </Space>
-              ),
-            },
-          ]}
-          rowKey="id"
-        />
-      </Card>
-    </motion.div>
-  </div>
-);
+  return (
+    <div>
+      <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+        <Card
+          title="IOT Subjects Management"
+          extra={
+            <Space>
+              <Select
+                placeholder="Select Semester"
+                style={{ width: 200 }}
+                value={selectedSemester}
+                onChange={setSelectedSemester}
+                allowClear
+              >
+                <Option value={null}>All Semesters</Option>
+                {semesters.map(semester => (
+                  <Option key={semester.id || semester.value} value={semester.value || semester.name}>
+                    {semester.name}
+                  </Option>
+                ))}
+              </Select>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={handleAddIotSubject}
+                style={{
+                  borderRadius: '12px',
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  border: 'none',
+                  fontWeight: 'bold'
+                }}
+              >
+                Add IOT Subject
+              </Button>
+            </Space>
+          }
+          style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+        >
+          <Alert
+            message="IOT Subjects Management"
+            description="Manage IOT-related subjects for each semester. Only IOT subjects are displayed here."
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
 
-
-
-// Kits Management Component
-const KitsManagement = ({ kits, setKits, handleExportKits, handleViewKitDetails }) => (
-  <div>
-    <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-      <Card
-        title="Kits Management"
-        extra={
-          <Button
-            icon={<ExportOutlined />}
-            onClick={handleExportKits}
-            style={{
-              borderRadius: '12px',
-              background: 'linear-gradient(135deg, #1890ff 0%, #096dd9 100%)',
-              border: 'none',
-              fontWeight: 'bold',
-              color: '#fff'
-            }}
-          >
-            Export Kits
-          </Button>
-        }
-        style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
-      >
-        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-          <Col span={6}>
-            <Card size="small">
-              <Statistic
-                title="Total Kits"
-                value={kits.length}
-                prefix={<ToolOutlined />}
-                valueStyle={{ color: '#1890ff' }}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card size="small">
-              <Statistic
-                title="Available"
-                value={kits.filter(kit => kit.status === 'AVAILABLE').length}
-                prefix={<CheckCircleOutlined />}
-                valueStyle={{ color: '#52c41a' }}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card size="small">
-              <Statistic
-                title="In Use"
-                value={kits.filter(kit => kit.status === 'IN-USE').length}
-                prefix={<ClockCircleOutlined />}
-                valueStyle={{ color: '#fa8c16' }}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card size="small">
-              <Statistic
-                title="Damaged"
-                value={kits.filter(kit => kit.status === 'DAMAGED').length}
-                prefix={<ExclamationCircleOutlined />}
-                valueStyle={{ color: '#f5222d' }}
-              />
-            </Card>
-          </Col>
-        </Row>
-
-        <Table
-          dataSource={kits}
-          columns={[
-            { title: 'Kit Name', dataIndex: 'name', key: 'name' },
-            { title: 'Category', dataIndex: 'category', key: 'category' },
-            { title: 'Quantity', dataIndex: 'quantity', key: 'quantity' },
-            { title: 'Location', dataIndex: 'location', key: 'location' },
-            {
-              title: 'Status',
-              dataIndex: 'status',
-              key: 'status',
-              render: (status) => {
-                const colors = {
-                  'AVAILABLE': 'green',
-                  'IN-USE': 'orange',
-                  'DAMAGED': 'red',
-                  'MAINTENANCE': 'blue'
-                };
-                return <Tag color={colors[status]}>{status}</Tag>;
-              }
-            },
-            { title: 'Price', dataIndex: 'price', key: 'price', render: (price) => `$${price}` },
-            {
-              title: 'Actions',
-              key: 'actions',
-              render: (_, record) => (
-                <Space>
-                  <Button type="primary" size="small" icon={<EyeOutlined />} onClick={() => handleViewKitDetails(record)}>
-                    View Details
-                  </Button>
-                </Space>
-              ),
-            },
-          ]}
-          rowKey="id"
-        />
-      </Card>
-    </motion.div>
-  </div>
-);
+          <Table
+            dataSource={filteredIotSubjects}
+            columns={[
+              { title: 'Class Code', dataIndex: 'classCode', key: 'classCode' },
+              { title: 'Semester', dataIndex: 'semester', key: 'semester' },
+              { title: 'Lecturer', dataIndex: 'teacherName', key: 'teacherName' },
+              {
+                title: 'Status',
+                dataIndex: 'status',
+                key: 'status',
+                render: (status) => (
+                  <Tag color={status ? 'green' : 'red'}>
+                    {status ? 'Active' : 'Inactive'}
+                  </Tag>
+                )
+              },
+              { title: 'Created At', dataIndex: 'createdAt', key: 'createdAt' },
+              { title: 'Updated At', dataIndex: 'updatedAt', key: 'updatedAt' },
+              {
+                title: 'Actions',
+                key: 'actions',
+                render: (_, record) => (
+                  <Space>
+                    <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEditIotSubject(record)}>
+                      Edit
+                    </Button>
+                    <Button type="primary" size="small" icon={<EyeOutlined />} onClick={() => handleViewIotSubjectStudents(record)}>
+                      View Students
+                    </Button>
+                    <Button type="primary" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDeleteIotSubject(record)}>
+                      Delete
+                    </Button>
+                  </Space>
+                ),
+              },
+            ]}
+            rowKey="id"
+          />
+        </Card>
+      </motion.div>
+    </div>
+  );
+};
 
 export default AcademicAffairsPortal; 
