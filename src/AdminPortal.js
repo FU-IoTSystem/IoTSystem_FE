@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Layout,
   Menu,
@@ -34,7 +34,9 @@ import {
   Transfer,
   Popconfirm,
   Checkbox,
-  InputNumber
+  InputNumber,
+  Carousel,
+  Pagination
 } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as XLSX from 'xlsx';
@@ -59,6 +61,7 @@ import {
   ReloadOutlined,
   DownloadOutlined,
   SearchOutlined,
+  FilterOutlined,
   BellOutlined,
   DollarOutlined,
   SafetyCertificateOutlined,
@@ -72,9 +75,12 @@ import {
   HistoryOutlined,
   ImportOutlined,
   RollbackOutlined,
-  LoadingOutlined
+  LoadingOutlined,
+  LeftOutlined,
+  RightOutlined
 } from '@ant-design/icons';
 import { kitAPI, kitComponentAPI, borrowingRequestAPI, walletTransactionAPI, userAPI, authAPI, classesAPI, studentGroupAPI, borrowingGroupAPI, penaltyPoliciesAPI, penaltiesAPI, penaltyDetailAPI, damageReportAPI, notificationAPI, excelImportAPI } from './api';
+import webSocketService from './utils/websocket';
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
@@ -200,6 +206,13 @@ function AdminPortal({ onLogout }) {
       // Fetch real data from API
       console.log('Loading data from API...');
 
+      // Variables to store fetched data for stats calculation
+      let fetchedKits = [];
+      let fetchedUsers = [];
+      let fetchedRentalRequests = [];
+      let fetchedApprovedRequests = [];
+      let transactionsData = [];
+
       // Fetch all kits from API
       try {
         const kitsResponse = await kitAPI.getAllKits();
@@ -214,22 +227,26 @@ function AdminPortal({ onLogout }) {
             components: kit.components || [], // Convert null to empty array for display
             imageUrl: kit.imageUrl === 'null' ? null : kit.imageUrl // Convert string 'null' to actual null
           }));
+          fetchedKits = transformedKits;
           setKits(transformedKits);
           console.log('Kits loaded successfully:', transformedKits.length);
           console.log('Transformed kits:', transformedKits);
         }
         // Handle wrapped response format
         else if (kitsResponse && kitsResponse.data && Array.isArray(kitsResponse.data)) {
+          fetchedKits = kitsResponse.data;
           setKits(kitsResponse.data);
           console.log('Kits loaded successfully:', kitsResponse.data.length);
         }
         // Handle empty or invalid response
         else {
+          fetchedKits = [];
           setKits([]);
           console.log('No kits found or invalid response format');
         }
       } catch (kitsError) {
         console.error('Error loading kits:', kitsError);
+        fetchedKits = [];
         setKits([]);
       }
 
@@ -253,14 +270,17 @@ function AdminPortal({ onLogout }) {
             createdAt: new Date().toISOString()
           }));
 
+          fetchedUsers = mappedUsers;
           setUsers(mappedUsers);
           console.log('Users loaded successfully:', mappedUsers.length);
         } else {
+          fetchedUsers = [];
           setUsers([]);
           console.log('No users found or invalid response format');
         }
       } catch (usersError) {
         console.error('Error loading users:', usersError);
+        fetchedUsers = [];
         setUsers([]);
       }
       // Fetch rental requests from API
@@ -268,27 +288,44 @@ function AdminPortal({ onLogout }) {
         const rentalResponse = await borrowingRequestAPI.getAll();
         console.log('Raw rental requests response:', rentalResponse);
 
+        // Helper function to sort rental requests by createdAt desc
+        const sortRentalRequestsByCreatedAt = (requests) => {
+          return [...requests].sort((a, b) => {
+            const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0);
+            const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0);
+            return dateB - dateA; // Descending order (newest first)
+          });
+        };
+
         if (Array.isArray(rentalResponse)) {
-          setRentalRequests(rentalResponse);
-          console.log('Rental requests loaded successfully:', rentalResponse.length);
+          const sortedRequests = sortRentalRequestsByCreatedAt(rentalResponse);
+          fetchedRentalRequests = sortedRequests;
+          setRentalRequests(sortedRequests);
+          console.log('Rental requests loaded successfully:', sortedRequests.length);
         } else if (rentalResponse && rentalResponse.data && Array.isArray(rentalResponse.data)) {
-          setRentalRequests(rentalResponse.data);
-          console.log('Rental requests loaded successfully:', rentalResponse.data.length);
+          const sortedRequests = sortRentalRequestsByCreatedAt(rentalResponse.data);
+          fetchedRentalRequests = sortedRequests;
+          setRentalRequests(sortedRequests);
+          console.log('Rental requests loaded successfully:', sortedRequests.length);
         } else {
+          fetchedRentalRequests = [];
           setRentalRequests([]);
           console.log('No rental requests data');
         }
       } catch (rentalError) {
         console.error('Error loading rental requests:', rentalError);
+        fetchedRentalRequests = [];
         setRentalRequests([]);
       }
 
-      // Fetch approved requests for refund checking
+      // Fetch approved requests for return checking and kits in use
       try {
         const approvedResponse = await borrowingRequestAPI.getApproved();
         console.log('Raw approved requests response:', approvedResponse);
 
         if (Array.isArray(approvedResponse)) {
+          fetchedApprovedRequests = approvedResponse;
+
           // Transform approved requests to refund request format
           const refundRequestsData = approvedResponse.map(request => ({
             id: request.id,
@@ -298,8 +335,8 @@ function AdminPortal({ onLogout }) {
             userEmail: request.requestedBy?.email || 'N/A',
             userName: request.requestedBy?.fullName || 'N/A',
             status: 'pending',
-            requestDate: request.createdAt || new Date().toISOString(),
-            approvedDate: request.approvedDate || new Date().toISOString(),
+            requestDate: request.createdAt || request.approvedDate || null,
+            approvedDate: request.approvedDate || null,
             totalCost: request.depositAmount || 0,
             damageAssessment: {},
             reason: request.reason || 'Course project',
@@ -310,16 +347,17 @@ function AdminPortal({ onLogout }) {
           setRefundRequests(refundRequestsData);
           console.log('Approved requests loaded successfully:', refundRequestsData.length);
         } else {
+          fetchedApprovedRequests = [];
           setRefundRequests([]);
           console.log('No approved requests found or invalid response format');
         }
       } catch (approvedError) {
         console.error('Error loading approved requests:', approvedError);
+        fetchedApprovedRequests = [];
         setRefundRequests([]);
       }
 
       // Fetch wallet transactions from API
-      let transactionsData = [];
       try {
         console.log('Fetching wallet transactions...');
         const transactionsResponse = await walletTransactionAPI.getAll();
@@ -337,11 +375,13 @@ function AdminPortal({ onLogout }) {
           setTransactions(transactionsResponse.data);
           console.log('Wallet transactions loaded from response.data:', transactionsResponse.data.length);
         } else {
+          transactionsData = [];
           setTransactions([]);
           console.log('No transactions data');
         }
       } catch (transactionsError) {
         console.error('Error loading wallet transactions:', transactionsError);
+        transactionsData = [];
         setTransactions([]);
       }
 
@@ -371,9 +411,12 @@ function AdminPortal({ onLogout }) {
       const studentUsers = []; // TODO: Replace with real API call to get student users
       setAvailableStudents(studentUsers);
 
-      // Calculate system stats from loaded data (using response data directly)
-      const availableKitsCount = kits.filter(kit => kit.status === 'AVAILABLE').length;
-      const pendingRequestsCount = rentalRequests.filter(req => req.status === 'PENDING' || req.status === 'PENDING_APPROVAL').length;
+      // Calculate system stats from fetched data (not from state)
+      const availableKitsCount = fetchedKits.filter(kit => kit.status === 'ACTIVE' || kit.status === 'active').length;
+      const pendingRequestsCount = fetchedRentalRequests.filter(req => req.status === 'PENDING' || req.status === 'PENDING_APPROVAL').length;
+
+      // Calculate kits in use from approved requests (same API as return checking)
+      const kitsInUseCount = fetchedApprovedRequests.length;
 
       // Calculate monthly revenue from transactions (current month) using response data
       const statsCurrentMonth = new Date().getMonth();
@@ -387,14 +430,90 @@ function AdminPortal({ onLogout }) {
         })
         .reduce((sum, txn) => sum + (txn.amount || 0), 0);
 
+      // Calculate recent activity from rental requests and transactions
+      const recentActivity = [];
+
+      // Add recent rental requests as activities
+      fetchedRentalRequests.forEach(request => {
+        const userName = request.requestedBy?.fullName || request.requestedBy?.email || 'Unknown User';
+        const kitName = request.kit?.kitName || 'Unknown Kit';
+        const status = request.status || 'PENDING';
+        const timestamp = request.createdAt || new Date().toISOString();
+
+        let actionText = '';
+        if (status === 'PENDING' || status === 'PENDING_APPROVAL') {
+          actionText = `Requested to rent ${kitName}`;
+        } else if (status === 'APPROVED') {
+          actionText = `Approved rental for ${kitName}`;
+        } else if (status === 'REJECTED') {
+          actionText = `Rejected rental request for ${kitName}`;
+        } else if (status === 'RETURNED') {
+          actionText = `Returned ${kitName}`;
+        } else {
+          actionText = `${status} - ${kitName}`;
+        }
+
+        const timeAgo = getTimeAgo(timestamp);
+        recentActivity.push({
+          action: actionText,
+          user: userName,
+          time: timeAgo,
+          timestamp: timestamp
+        });
+      });
+
+      // Add recent transactions as activities
+      transactionsData.forEach(txn => {
+        const txnType = txn.type || 'TRANSACTION';
+        const timestamp = txn.createdAt || txn.transactionDate || new Date().toISOString();
+        let actionText = '';
+        if (txnType === 'RENTAL_FEE') {
+          actionText = `Rental fee payment: ${formatCurrency(txn.amount || 0)}`;
+        } else if (txnType === 'PENALTY_PAYMENT') {
+          actionText = `Penalty payment: ${formatCurrency(txn.amount || 0)}`;
+        } else if (txnType === 'DEPOSIT') {
+          actionText = `Deposit: ${formatCurrency(txn.amount || 0)}`;
+        } else {
+          actionText = `${txnType}: ${formatCurrency(txn.amount || 0)}`;
+        }
+
+        const timeAgo = getTimeAgo(timestamp);
+        recentActivity.push({
+          action: actionText,
+          user: txn.accountEmail || 'System',
+          time: timeAgo,
+          timestamp: timestamp
+        });
+      });
+
+      // Sort all activities by timestamp (most recent first) and take top 20
+      recentActivity.sort((a, b) => {
+        const dateA = new Date(a.timestamp || 0);
+        const dateB = new Date(b.timestamp || 0);
+        return dateB - dateA;
+      });
+
       setSystemStats({
-        totalUsers: users.length,
+        totalUsers: fetchedUsers.length,
         availableKits: availableKitsCount,
         pendingApprovals: pendingRequestsCount,
-        monthlyRevenue: statsMonthlyRevenueAmount
+        kitsInUse: kitsInUseCount,
+        monthlyRevenue: statsMonthlyRevenueAmount,
+        recentActivity: recentActivity.slice(0, 20)
       });
 
       console.log('Data loaded successfully');
+      console.log('System stats:', {
+        totalUsers: fetchedUsers.length,
+        availableKits: availableKitsCount,
+        pendingApprovals: pendingRequestsCount,
+        kitsInUse: kitsInUseCount,
+        monthlyRevenue: statsMonthlyRevenueAmount
+      });
+      console.log('Kits in use count breakdown:', {
+        totalApprovedRequests: fetchedApprovedRequests.length,
+        approvedRequestsFromAPI: fetchedApprovedRequests.length
+      });
     } catch (error) {
       console.error('Error loading data:', error);
       message.error('Failed to load data');
@@ -408,7 +527,16 @@ function AdminPortal({ onLogout }) {
       setNotificationLoading(true);
       const response = await notificationAPI.getRoleNotifications();
       const data = response?.data ?? response;
-      setNotifications(Array.isArray(data) ? data : []);
+      const notificationsArray = Array.isArray(data) ? data : [];
+
+      // Sort notifications by createdAt descending (newest first)
+      const sortedNotifications = notificationsArray.sort((a, b) => {
+        const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0);
+        const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0);
+        return dateB - dateA; // Descending order (newest first)
+      });
+
+      setNotifications(sortedNotifications);
     } catch (error) {
       console.error('Error loading notifications:', error);
       setNotifications([]);
@@ -417,8 +545,54 @@ function AdminPortal({ onLogout }) {
     }
   };
 
+  const notificationSubscriptionRef = useRef(null);
+
   useEffect(() => {
     loadNotifications();
+
+    // Connect to WebSocket and subscribe to admin notifications
+    webSocketService.connect(
+      () => {
+        console.log('WebSocket connected for admin notifications');
+        // Subscribe to admin notifications
+        notificationSubscriptionRef.current = webSocketService.subscribeToAdminNotifications((data) => {
+          console.log('Received new notification via WebSocket:', data);
+          // Add new notification to the list
+          setNotifications(prev => {
+            // Check if notification already exists
+            const exists = prev.find(notif => notif.id === data.id);
+            if (!exists) {
+              // Show browser notification
+              notification.info({
+                message: data.title || 'New Notification',
+                description: data.message,
+                placement: 'topRight',
+                duration: 5,
+              });
+              // Add new notification at the beginning and maintain sort order
+              const updated = [data, ...prev];
+              return updated.sort((a, b) => {
+                const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0);
+                const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0);
+                return dateB - dateA; // Descending order (newest first)
+              });
+            }
+            return prev;
+          });
+        });
+      },
+      (error) => {
+        console.error('WebSocket connection error:', error);
+      }
+    );
+
+    // Cleanup on unmount
+    return () => {
+      if (notificationSubscriptionRef.current) {
+        webSocketService.unsubscribe(notificationSubscriptionRef.current);
+      }
+      webSocketService.disconnect();
+    };
   }, []);
 
   const notificationTypeStyles = {
@@ -437,8 +611,27 @@ function AdminPortal({ onLogout }) {
     }
   };
 
+  const handleNotificationClick = async (notification) => {
+    // Only mark as read if not already read
+    if (!notification.isRead && notification.id) {
+      try {
+        await notificationAPI.markAsRead(notification.id);
+        // Update notification state to mark as read
+        setNotifications(prev =>
+          prev.map(item =>
+            item.id === notification.id
+              ? { ...item, isRead: true }
+              : item
+          )
+        );
+      } catch (error) {
+        console.error('Error marking notification as read:', error);
+      }
+    }
+  };
+
   const renderNotificationContent = () => (
-    <div style={{ width: 320 }}>
+    <div style={{ width: 320, maxHeight: '400px', overflowY: 'auto' }}>
       <Spin spinning={notificationLoading}>
         {notifications.length > 0 ? (
           <List
@@ -447,13 +640,23 @@ function AdminPortal({ onLogout }) {
             renderItem={(item) => {
               const typeInfo = notificationTypeStyles[item.type] || { color: 'blue', label: item.type };
               const notificationDate = item.createdAt ? formatDateTime(item.createdAt) : 'N/A';
+              const isUnread = !item.isRead;
               return (
-                <List.Item style={{ alignItems: 'flex-start' }}>
+                <List.Item
+                  style={{
+                    alignItems: 'flex-start',
+                    backgroundColor: isUnread ? '#f0f7ff' : 'transparent',
+                    cursor: 'pointer',
+                    padding: '12px'
+                  }}
+                  onClick={() => handleNotificationClick(item)}
+                >
                   <List.Item.Meta
                     title={
                       <Space size={8} align="start">
                         <Tag color={typeInfo.color}>{typeInfo.label}</Tag>
-                        <Text strong>{item.title || item.subType}</Text>
+                        <Text strong={isUnread}>{item.title || item.subType}</Text>
+                        {isUnread && <Badge dot color="blue" />}
                       </Space>
                     }
                     description={
@@ -802,47 +1005,14 @@ function AdminPortal({ onLogout }) {
     // Check if this is a refund request or rental request
     const isRefundRequest = selectedRental && (selectedRental.status === 'approved' || selectedRental.status === 'pending');
 
-    try {
-      // Update borrowing request status to RETURNED when checkin
-      if (selectedRental && selectedRental.id) {
-        try {
-          await borrowingRequestAPI.update(selectedRental.id, {
-            status: 'RETURNED',
-            actualReturnDate: new Date().toISOString()
-          });
-          console.log('Borrowing request status updated to RETURNED');
-        } catch (updateError) {
-          console.error('Error updating borrowing request:', updateError);
-        }
-      }
-
-      // Update kit status to AVAILABLE
-      if (selectedKit && selectedKit.id) {
-        try {
-          const kitUpdateData = {
-            status: 'AVAILABLE'
-          };
-          await kitAPI.updateKit(selectedKit.id, kitUpdateData);
-          console.log('Kit status updated to AVAILABLE');
-        } catch (kitUpdateError) {
-          console.error('Error updating kit status:', kitUpdateError);
-        }
-      }
-    } catch (error) {
-      console.error('Error during checkin process:', error);
-    }
-
+    // IMPORTANT: Create penalty FIRST before updating status to RETURNED
+    // This ensures backend can check for unresolved penalties and won't refund deposit prematurely
+    let penaltyCreated = false;
     if (totalFine > 0 && (selectedPenaltyPolicies.length > 0 || Object.keys(damageAssessment).length > 0)) {
       try {
-        // Compute 50% rental fee (remaining to pay). Prefer depositAmount; fallback to totalCost
-        const rentalHalfFee = (selectedRental?.depositAmount && selectedRental.depositAmount > 0)
-          ? selectedRental.depositAmount
-          : (selectedRental?.totalCost && selectedRental.totalCost > 0)
-            ? selectedRental.totalCost
-            : 0;
-
-        // Add rental 50% to total penalty amount
-        totalFine = totalFine + (rentalHalfFee || 0);
+        // Rental fee is NOT included in penalty amount
+        // Penalty only includes policy violations and damage fees
+        // Rental fee is handled separately in penalty payment logic
 
         // Create penalty
         const penaltyData = {
@@ -873,48 +1043,43 @@ function AdminPortal({ onLogout }) {
             penaltyId: penaltyId
           }));
 
-          // Add extra penalty detail for rental 50% fee
-          if (rentalHalfFee && rentalHalfFee > 0) {
-            penaltyDetailsData.push({
-              amount: rentalHalfFee,
-              description: 'Trả tiền thuê kit (50%)',
-              policiesId: null,
-              penaltyId: penaltyId
-            });
-          }
+          // Rental fee is handled in penalty payment logic, not as a separate penalty detail
+          // No need to add rental fee as penalty detail
 
           if (penaltyDetailsData.length > 0) {
-            console.log('Creating penalty details (including rental 50% if any):', penaltyDetailsData);
+            console.log('Creating penalty details:', penaltyDetailsData);
             const penaltyDetailsResponse = await penaltyDetailAPI.createMultiple(penaltyDetailsData);
             console.log('Penalty details created:', penaltyDetailsResponse);
           }
         }
 
-        // Create damage report
-        const damageDescriptions = Object.entries(damageAssessment)
-          .filter(([_, assessment]) => assessment.damaged)
-          .map(([component, assessment]) => `${component}: ${assessment.value} VND`)
-          .join(', ');
-
-        const damageReportData = {
-          description: damageDescriptions || 'No component damage',
-          status: 'PENDING',
-          generatedByEmail: selectedRental?.userEmail,
-          kitId: selectedKit?.id,
-          borrowRequestId: selectedRental?.id,
-          totalDamageValue: Object.values(damageAssessment)
-            .filter(a => a.damaged)
-            .reduce((sum, a) => sum + a.value, 0)
-        };
-
-        console.log('Creating damage report:', damageReportData);
-        const damageReportResponse = await damageReportAPI.create(damageReportData);
-        console.log('Damage report created:', damageReportResponse);
+        penaltyCreated = true;
       } catch (error) {
         console.error('Error creating penalty and damage report:', error);
       }
+    }
 
-      // Find the group leader for this rental
+    // Update borrowing request status to RETURNED AFTER penalty is created (if any)
+    // This ensures backend can check for unresolved penalties correctly
+    // If no penalty was created, backend will automatically refund deposit
+    try {
+      if (selectedRental && selectedRental.id) {
+        try {
+          await borrowingRequestAPI.update(selectedRental.id, {
+            status: 'RETURNED',
+            actualReturnDate: new Date().toISOString()
+          });
+          console.log('Borrowing request status updated to RETURNED');
+        } catch (updateError) {
+          console.error('Error updating borrowing request:', updateError);
+        }
+      }
+    } catch (error) {
+      console.error('Error during checkin process:', error);
+    }
+
+    // Find the group leader for this rental (only if penalty was created)
+    if (penaltyCreated) {
       const group = groups.find(g =>
         g.members && g.members.includes(selectedRental.userEmail)
       );
@@ -976,31 +1141,47 @@ function AdminPortal({ onLogout }) {
       try {
         const targetAccountId = users.find(u => u.email === (selectedRental?.userEmail))?.id;
 
-        const notificationsPayload = [{
-          subType: totalFine > 0 ? 'UNPAID_PENALTY' : 'OVERDUE_RETURN',
-          userId: targetAccountId,
-          title: totalFine > 0 ? 'Bạn có khoản phạt mới' : 'Trả kit thành công',
-          message:
-            totalFine > 0
-              ? `Kit ${selectedKit?.kitName || ''} có phát sinh khoản phạt ${totalFine.toLocaleString()} VND. Vui lòng kiểm tra và thanh toán.`
-              : `Kit ${selectedKit?.kitName || ''} đã được check-in thành công.`
-        }];
+        if (targetAccountId) {
+          const notificationsPayload = [{
+            subType: totalFine > 0 ? 'UNPAID_PENALTY' : 'OVERDUE_RETURN',
+            userId: targetAccountId,
+            title: totalFine > 0 ? 'Bạn có khoản phạt mới' : 'Trả kit thành công',
+            message:
+              totalFine > 0
+                ? `Kit ${selectedKit?.kitName || ''} có phát sinh khoản phạt ${totalFine.toLocaleString()} VND. Vui lòng kiểm tra và thanh toán.`
+                : `Kit ${selectedKit?.kitName || ''} đã được check-in thành công.`
+          }];
 
-        if (group) {
-          const leaderAccountId = users.find(u => u.email === group.leader)?.id;
-          if (leaderAccountId && leaderAccountId !== targetAccountId) {
-            notificationsPayload.push({
-              subType: 'UNPAID_PENALTY',
-              userId: leaderAccountId,
-              title: 'Khoản phạt của nhóm',
-              message: `Nhóm có khoản phạt ${totalFine.toLocaleString()} VND do kit ${selectedKit?.kitName || ''} bị tổn thất.`
+          if (group) {
+            const leaderAccountId = users.find(u => u.email === group.leader)?.id;
+            if (leaderAccountId && leaderAccountId !== targetAccountId) {
+              notificationsPayload.push({
+                subType: 'UNPAID_PENALTY',
+                userId: leaderAccountId,
+                title: 'Khoản phạt của nhóm',
+                message: `Nhóm có khoản phạt ${totalFine.toLocaleString()} VND do kit ${selectedKit?.kitName || ''} bị tổn thất.`
+              });
+            }
+          }
+
+          try {
+            await notificationAPI.createNotifications(notificationsPayload);
+            console.log('Notifications sent successfully:', notificationsPayload.length);
+          } catch (notifyError) {
+            console.error('Error sending check-in notifications:', notifyError);
+            // Show error to admin but don't block the process
+            notification.warning({
+              message: 'Notification Error',
+              description: 'Kit inspection completed but failed to send notifications. Please check manually.',
+              placement: 'topRight',
+              duration: 5,
             });
           }
+        } else {
+          console.warn('Target account ID not found for user:', selectedRental?.userEmail);
         }
-
-        await notificationAPI.createNotifications(notificationsPayload);
-      } catch (notifyError) {
-        console.error('Error sending check-in notifications:', notifyError);
+      } catch (error) {
+        console.error('Error preparing notifications:', error);
       }
 
       // For refund requests with damage, add to log history and remove from refund requests
@@ -1049,79 +1230,83 @@ function AdminPortal({ onLogout }) {
         });
       }
     } else {
-      // No damage detected
-      if (isRefundRequest) {
-        // Calculate refund amount (assuming full refund for no damage)
-        const refundAmount = selectedRental.totalCost || 0;
-
+      // No damage detected - backend will automatically refund deposit if no penalty exists
+      // Get updated borrowing request to check if refund was processed
+      let updatedRequest = null;
+      if (selectedRental && selectedRental.id) {
         try {
-          // TODO: Process refund to wallet via API
-          // const refundResult = await refundAPI.create(...);
-          const refundResult = { success: true };
-
-          if (refundResult.success) {
-            // Update kit status to available
-            setKits(prev => prev.map(kit =>
-              kit.id === selectedKit.id
-                ? { ...kit, status: 'AVAILABLE' }
-                : kit
-            ));
-
-            // Add refund transaction to log history
-            const logEntry = {
-              id: Date.now(),
-              timestamp: new Date().toISOString(),
-              action: 'REFUND_PROCESSED',
-              type: 'refund',
-              user: selectedRental.userEmail,
-              userName: selectedRental.userName,
-              details: {
-                kitName: selectedKit.name,
-                kitId: selectedKit.id,
-                requestId: `REF-${selectedRental.id}`,
-                refundAmount: refundAmount,
-                refundStatus: 'completed',
-                originalRentalId: selectedRental.id,
-                processedBy: 'admin@fpt.edu.vn',
-                inspectionNotes: 'No damage found - full refund processed',
-                kitStatusChanged: 'AVAILABLE',
-                transactionId: refundResult.transactionId
-              },
-              status: 'COMPLETED',
-              adminAction: 'refund_processed',
-              adminUser: 'admin@fpt.edu.vn',
-              adminTimestamp: new Date().toISOString()
-            };
-
-            setLogHistory(prev => [logEntry, ...prev]);
-
-            // Remove from refund requests
-            setRefundRequests(prev => prev.filter(req => req.id !== selectedRental.id));
-
-            notification.success({
-              message: 'Refund Processed Successfully',
-              description: `Refund of ${refundAmount.toLocaleString()} VND has been sent to ${selectedRental.userName}'s wallet. Kit status changed to AVAILABLE.`,
-              placement: 'topRight',
-              duration: 5,
-            });
-          } else {
-            notification.error({
-              message: 'Refund Failed',
-              description: 'Failed to process refund to wallet. Please try again.',
-              placement: 'topRight',
-            });
-            setKitInspectionLoading(false);
-            return; // Don't close modal if refund failed
-          }
+          const requestResponse = await borrowingRequestAPI.getById(selectedRental.id);
+          updatedRequest = requestResponse?.data || requestResponse;
         } catch (error) {
-          notification.error({
-            message: 'Refund Error',
-            description: 'An error occurred while processing the refund. Please try again.',
-            placement: 'topRight',
-          });
-          setKitInspectionLoading(false);
-          return; // Don't close modal if refund failed
+          console.error('Error fetching updated request:', error);
         }
+      }
+
+      // Calculate refund amount (deposit amount if no penalty)
+      const depositAmount = selectedRental?.depositAmount || selectedRental?.totalCost || 0;
+
+      // Check if there's a penalty for this request (if penalty exists, refund is handled in penalty payment)
+      // Wait a bit for backend to process refund, then check for penalties
+      let hasPenalty = false;
+      try {
+        // Check for unresolved penalties related to this borrowing request
+        const unresolvedPenalties = await penaltiesAPI.getUnresolved();
+        const penaltiesData = Array.isArray(unresolvedPenalties)
+          ? unresolvedPenalties
+          : (unresolvedPenalties?.data || []);
+        hasPenalty = penaltiesData.some(p =>
+          (p.borrowRequestId === selectedRental?.id || p.request?.id === selectedRental?.id) && !p.resolved
+        );
+      } catch (penaltyCheckError) {
+        console.error('Error checking for penalties:', penaltyCheckError);
+        // If error, assume no penalty to send notification
+        hasPenalty = false;
+      }
+
+      if (isRefundRequest) {
+        // Update kit status to available
+        setKits(prev => prev.map(kit =>
+          kit.id === selectedKit.id
+            ? { ...kit, status: 'AVAILABLE' }
+            : kit
+        ));
+
+        // Add refund transaction to log history
+        const logEntry = {
+          id: Date.now(),
+          timestamp: new Date().toISOString(),
+          action: 'REFUND_PROCESSED',
+          type: 'refund',
+          user: selectedRental.userEmail,
+          userName: selectedRental.userName,
+          details: {
+            kitName: selectedKit.name,
+            kitId: selectedKit.id,
+            requestId: `REF-${selectedRental.id}`,
+            refundAmount: depositAmount,
+            refundStatus: 'completed',
+            originalRentalId: selectedRental.id,
+            processedBy: 'admin@fpt.edu.vn',
+            inspectionNotes: 'No damage found - full refund processed',
+            kitStatusChanged: 'AVAILABLE'
+          },
+          status: 'COMPLETED',
+          adminAction: 'refund_processed',
+          adminUser: 'admin@fpt.edu.vn',
+          adminTimestamp: new Date().toISOString()
+        };
+
+        setLogHistory(prev => [logEntry, ...prev]);
+
+        // Remove from refund requests
+        setRefundRequests(prev => prev.filter(req => req.id !== selectedRental.id));
+
+        notification.success({
+          message: 'Refund Processed Successfully',
+          description: `Refund of ${depositAmount.toLocaleString()} VND has been sent to ${selectedRental.userName}'s wallet. Kit status changed to AVAILABLE.`,
+          placement: 'topRight',
+          duration: 5,
+        });
       } else {
         // Update kit status to available for regular rental returns
         setKits(prev => prev.map(kit =>
@@ -1142,6 +1327,24 @@ function AdminPortal({ onLogout }) {
             ? { ...rental, status: 'RETURNED', returnDate: new Date().toISOString() }
             : rental
         ));
+      }
+
+      // Send refund notification to user if no penalty exists
+      if (!hasPenalty && depositAmount > 0) {
+        try {
+          const targetAccountId = users.find(u => u.email === (selectedRental?.userEmail))?.id;
+
+          if (targetAccountId) {
+            await notificationAPI.createNotifications([{
+              subType: 'DEPOSIT_SUCCESS',
+              userId: targetAccountId,
+              title: 'Hoàn tiền thuê kit thành công',
+              message: `Kit ${selectedKit?.kitName || ''} đã được trả thành công. Bạn đã được hoàn lại ${depositAmount.toLocaleString()} VND vào ví.`
+            }]);
+          }
+        } catch (notifyError) {
+          console.error('Error sending refund notification:', notifyError);
+        }
       }
     }
 
@@ -1177,7 +1380,7 @@ function AdminPortal({ onLogout }) {
     {
       key: 'refunds',
       icon: <RollbackOutlined />,
-      label: 'Refund Checking',
+      label: 'Return Checking',
     },
     {
       key: 'fines',
@@ -1208,11 +1411,6 @@ function AdminPortal({ onLogout }) {
       key: 'penalty-policies',
       icon: <SafetyCertificateOutlined />,
       label: 'Penalty Policies',
-    },
-    {
-      key: 'settings',
-      icon: <SettingOutlined />,
-      label: 'Settings',
     },
   ];
 
@@ -1246,6 +1444,37 @@ function AdminPortal({ onLogout }) {
   const formatDateTime = (dateTimeString) => {
     if (!dateTimeString) return 'N/A';
     return new Date(dateTimeString).toLocaleString('vi-VN');
+  };
+
+  // Helper function to format time ago
+  const getTimeAgo = (dateString) => {
+    if (!dateString) return 'Unknown time';
+    const now = new Date();
+    const date = new Date(dateString);
+    const diffInSeconds = Math.floor((now - date) / 1000);
+
+    if (diffInSeconds < 60) {
+      return 'Just now';
+    } else if (diffInSeconds < 3600) {
+      const minutes = Math.floor(diffInSeconds / 60);
+      return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+    } else if (diffInSeconds < 86400) {
+      const hours = Math.floor(diffInSeconds / 3600);
+      return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    } else if (diffInSeconds < 604800) {
+      const days = Math.floor(diffInSeconds / 86400);
+      return `${days} day${days > 1 ? 's' : ''} ago`;
+    } else {
+      return date.toLocaleDateString('vi-VN');
+    }
+  };
+
+  // Helper function to format currency
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'currency',
+      currency: 'VND'
+    }).format(amount || 0);
   };
 
   return (
@@ -1475,7 +1704,6 @@ function AdminPortal({ onLogout }) {
                 {selectedKey === 'groups' && <GroupManagement groups={groups} setGroups={setGroups} adjustGroupMembers={adjustGroupMembers} availableStudents={availableStudents} />}
                 {selectedKey === 'users' && <UserManagement users={users} setUsers={setUsers} />}
                 {selectedKey === 'penalty-policies' && <PenaltyPoliciesManagement penaltyPolicies={penaltyPolicies} setPenaltyPolicies={setPenaltyPolicies} />}
-                {selectedKey === 'settings' && <Settings />}
               </motion.div>
             </AnimatePresence>
           </Spin>
@@ -1803,6 +2031,13 @@ const DashboardContent = ({ systemStats }) => {
       suffix: 'kits'
     },
     {
+      title: 'Kits In Use',
+      value: systemStats.kitsInUse || 0,
+      icon: <ShoppingOutlined />,
+      color: '#ff7875',
+      suffix: 'kits'
+    },
+    {
       title: 'Pending Approvals',
       value: systemStats.pendingApprovals || 0,
       icon: <ClockCircleOutlined />,
@@ -1822,7 +2057,7 @@ const DashboardContent = ({ systemStats }) => {
     <div>
       <Row gutter={[16, 16]}>
         {statCards.map((stat, index) => (
-          <Col xs={24} sm={12} lg={6} key={index}>
+          <Col xs={24} sm={12} md={8} lg={6} xl={4} key={index}>
             <motion.div
               custom={index}
               variants={statCardVariants}
@@ -1884,7 +2119,7 @@ const DashboardContent = ({ systemStats }) => {
       </Row>
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col xs={24} lg={12}>
+        <Col xs={24}>
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1907,85 +2142,47 @@ const DashboardContent = ({ systemStats }) => {
                 borderBottom: 'none',
                 borderRadius: '20px 20px 0 0'
               }}
-            >
-              <Timeline>
-                {systemStats.recentActivity?.map((activity, index) => (
-                  <motion.div
-                    key={index}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.9 + index * 0.1, duration: 0.3 }}
-                  >
-                    <Timeline.Item color="blue">
-                      <motion.p
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: 1 + index * 0.1, duration: 0.3 }}
-                      >
-                        {activity.action}
-                      </motion.p>
-                      <motion.p
-                        style={{ fontSize: 12, color: '#999' }}
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: 1.1 + index * 0.1, duration: 0.3 }}
-                      >
-                        {activity.user} • {activity.time}
-                      </motion.p>
-                    </Timeline.Item>
-                  </motion.div>
-                ))}
-              </Timeline>
-            </Card>
-          </motion.div>
-        </Col>
-        <Col xs={24} lg={12}>
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.9, duration: 0.5 }}
-          >
-            <Card
-              title="Popular Kits"
-              extra={<a href="#" style={{ color: '#667eea', fontWeight: 'bold' }}>View All</a>}
-              style={{
-                borderRadius: '20px',
-                background: 'rgba(255, 255, 255, 0.95)',
-                backdropFilter: 'blur(10px)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
-                border: '1px solid rgba(255,255,255,0.2)',
-                overflow: 'hidden'
-              }}
-              headStyle={{
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                color: '#fff',
-                borderBottom: 'none',
-                borderRadius: '20px 20px 0 0'
+              bodyStyle={{
+                maxHeight: '500px',
+                overflowY: 'auto',
+                padding: '20px'
               }}
             >
-              <List
-                dataSource={systemStats.popularKits || []}
-                renderItem={(item, index) => (
-                  <motion.div
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 1 + index * 0.1, duration: 0.3 }}
-                  >
-                    <List.Item>
-                      <List.Item.Meta
-                        title={item.name}
-                        description={`${item.rentals} rentals`}
-                      />
-                      <motion.div
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.95 }}
-                      >
-                        <Tag color="blue">{item.rentals} rentals</Tag>
-                      </motion.div>
-                    </List.Item>
-                  </motion.div>
-                )}
-              />
+              {systemStats.recentActivity && systemStats.recentActivity.length > 0 ? (
+                <Timeline>
+                  {systemStats.recentActivity.map((activity, index) => (
+                    <motion.div
+                      key={index}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.9 + index * 0.1, duration: 0.3 }}
+                    >
+                      <Timeline.Item color="blue">
+                        <motion.p
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 1 + index * 0.1, duration: 0.3 }}
+                          style={{ marginBottom: '4px' }}
+                        >
+                          {activity.action}
+                        </motion.p>
+                        <motion.p
+                          style={{ fontSize: 12, color: '#999', marginBottom: 0 }}
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 1.1 + index * 0.1, duration: 0.3 }}
+                        >
+                          {activity.user} • {activity.time}
+                        </motion.p>
+                      </Timeline.Item>
+                    </motion.div>
+                  ))}
+                </Timeline>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
+                  No recent activity
+                </div>
+              )}
             </Card>
           </motion.div>
         </Col>
@@ -2005,6 +2202,12 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
   const [componentFormVisible, setComponentFormVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sheetSelectionModal, setSheetSelectionModal] = useState({ visible: false, sheets: [], selectedSheet: null, file: null, importType: null, importData: null });
+  const [searchText, setSearchText] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterType, setFilterType] = useState('all');
+  const [componentPage, setComponentPage] = useState(1);
+  const [componentPageSize] = useState(6);
+  const [kitDetailsModal, setKitDetailsModal] = useState({ visible: false, kit: null });
 
   // Helper function to read sheet names from Excel file
   const getExcelSheetNames = (file) => {
@@ -2234,353 +2437,323 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
     loadKits();
   }, []);
 
-  const columns = [
-    {
-      title: 'Name',
-      dataIndex: 'kitName',
-      key: 'kitName',
-      render: (text, record) => (
-        <Button type="link" onClick={() => showKitDetails(record)}>
-          {text}
-        </Button>
-      )
-    },
-    {
-      title: 'Type',
-      dataIndex: 'type',
-      key: 'type',
-      render: (type) => (
-        <Tag color={type === 'LECTURER_KIT' ? 'red' : type === 'STUDENT_KIT' ? 'blue' : 'default'}>
-          {type}
-        </Tag>
-      )
-    },
-    {
-      title: 'Total Quantity',
-      dataIndex: 'quantityTotal',
-      key: 'quantityTotal',
-    },
-    {
-      title: 'Available',
-      dataIndex: 'quantityAvailable',
-      key: 'quantityAvailable',
-    },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      key: 'status',
-      render: (status) => (
-        <Tag color={status === 'AVAILABLE' ? 'green' : status === 'IN_USE' ? 'orange' : 'red'}>
-          {status}
-        </Tag>
-      )
-    },
-    {
-      title: 'Components',
-      key: 'components',
-      render: (_, record) => (
-        <div>
-          <Text>{record.components?.length || 0} components</Text>
-          <br />
-          <Button
-            type="link"
-            size="small"
-            onClick={() => manageComponents(record)}
-            style={{ padding: 0, height: 'auto' }}
-          >
-            Manage Components
-          </Button>
-        </div>
-      )
-    },
-    {
-      title: 'Actions',
-      key: 'actions',
-      render: (_, record) => (
-        <Space>
-          <motion.div
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-          >
-            <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => editKit(record)}>
-              Edit
-            </Button>
-          </motion.div>
-          <motion.div
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-          >
-            <Button
-              type="primary"
-              size="small"
-              icon={<EyeOutlined />}
-              onClick={() => showKitDetails(record)}
-              style={{
-                background: 'linear-gradient(135deg, #1890ff 0%, #096dd9 100%)',
-                border: 'none',
-                color: '#fff'
-              }}
-            >
-              Details
-            </Button>
-          </motion.div>
-          <motion.div
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-          >
-            <Button
-              type="primary"
-              danger
-              size="small"
-              icon={<DeleteOutlined />}
-              onClick={() => handleDeleteKit(record.id)}
-            >
-              Delete
-            </Button>
-          </motion.div>
-        </Space>
-      )
-    }
-  ];
+  // Filter kits based on search and filters
+  const filteredKits = kits.filter(kit => {
+    const matchesSearch = !searchText ||
+      kit.kitName?.toLowerCase().includes(searchText.toLowerCase()) ||
+      kit.id?.toString().includes(searchText);
+    const matchesStatus = filterStatus === 'all' || kit.status === filterStatus;
+    const matchesType = filterType === 'all' || kit.type === filterType;
+    return matchesSearch && matchesStatus && matchesType;
+  });
 
   const showKitDetails = (kit) => {
-    // Helper function to format date time
-    const formatKitDateTime = (dateTimeString) => {
-      if (!dateTimeString) return 'N/A';
-      return new Date(dateTimeString).toLocaleString('vi-VN');
-    };
-
-    Modal.info({
-      title: (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <InfoCircleOutlined style={{ color: '#1890ff', fontSize: '20px' }} />
-          <span style={{ fontSize: '18px', fontWeight: 'bold' }}>Kit Details</span>
-        </div>
-      ),
-      width: 900,
-      okText: 'Close',
-      okButtonProps: {
-        style: {
-          borderRadius: '8px',
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          border: 'none'
-        }
-      },
-      content: (
-        <div>
-          <Descriptions bordered column={2} style={{ marginBottom: 16 }}>
-            <Descriptions.Item label="Kit ID" span={2}>
-              <Text code style={{ fontSize: '14px' }}>{kit.id}</Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="Kit Name">
-              <Text strong style={{ fontSize: '16px' }}>{kit.kitName || kit.name || 'N/A'}</Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="Type">
-              <Tag
-                color={kit.type === 'LECTURER_KIT' ? 'red' : kit.type === 'STUDENT_KIT' ? 'blue' : 'default'}
-                style={{ fontSize: '13px', padding: '4px 12px' }}
-              >
-                {kit.type || 'N/A'}
-              </Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="Status">
-              <Tag
-                color={kit.status === 'AVAILABLE' ? 'green' : kit.status === 'IN_USE' ? 'orange' : 'red'}
-                style={{ fontSize: '13px', padding: '4px 12px' }}
-              >
-                {kit.status || 'N/A'}
-              </Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="Total Quantity">
-              <Text strong style={{ fontSize: '15px', color: '#1890ff' }}>
-                {kit.quantityTotal || 0}
-              </Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="Available Quantity">
-              <Text strong style={{ fontSize: '15px', color: '#52c41a' }}>
-                {kit.quantityAvailable || 0}
-              </Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="In Use Quantity">
-              <Text strong style={{ fontSize: '15px', color: '#faad14' }}>
-                {(kit.quantityTotal || 0) - (kit.quantityAvailable || 0)}
-              </Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="Total Components">
-              <Text strong style={{ fontSize: '15px' }}>
-                {kit.components?.length || 0} components
-              </Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="Description" span={2}>
-              <Text>{kit.description || 'No description available'}</Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="Image URL" span={2}>
-              {kit.imageUrl && kit.imageUrl !== 'null' && kit.imageUrl !== 'undefined' ? (
-                <div>
-                  <div style={{ marginBottom: 8 }}>
-                    <Text code style={{ fontSize: '12px', wordBreak: 'break-all' }}>
-                      {kit.imageUrl}
-                    </Text>
-                  </div>
-                  <Space>
-                    <Button
-                      type="primary"
-                      size="small"
-                      icon={<EyeOutlined />}
-                      onClick={() => window.open(kit.imageUrl, '_blank')}
-                      style={{
-                        borderRadius: '6px',
-                        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                        border: 'none'
-                      }}
-                    >
-                      View Image
-                    </Button>
-                    {kit.imageUrl.startsWith('http') && (
-                      <img
-                        src={kit.imageUrl}
-                        alt="Kit"
-                        style={{
-                          maxWidth: '200px',
-                          maxHeight: '150px',
-                          borderRadius: '8px',
-                          border: '1px solid #d9d9d9',
-                          objectFit: 'cover'
-                        }}
-                        onError={(e) => {
-                          e.target.style.display = 'none';
-                        }}
-                      />
-                    )}
-                  </Space>
-                </div>
-              ) : (
-                <Text type="secondary">No image available</Text>
-              )}
-            </Descriptions.Item>
-            {(kit.createdAt || kit.updatedAt) && (
-              <>
-                {kit.createdAt && (
-                  <Descriptions.Item label="Created At">
-                    <Text type="secondary">{formatKitDateTime(kit.createdAt)}</Text>
-                  </Descriptions.Item>
-                )}
-                {kit.updatedAt && (
-                  <Descriptions.Item label="Updated At">
-                    <Text type="secondary">{formatKitDateTime(kit.updatedAt)}</Text>
-                  </Descriptions.Item>
-                )}
-              </>
-            )}
-          </Descriptions>
-
-          <Divider orientation="left">
-            <Space>
-              <BuildOutlined style={{ color: '#1890ff' }} />
-              <Text strong style={{ fontSize: '16px' }}>Components ({kit.components?.length || 0})</Text>
-            </Space>
-          </Divider>
-
-          {kit.components && kit.components.length > 0 ? (
-            <Table
-              dataSource={kit.components}
-              rowKey={(record, index) => record.id || record.componentName || index}
-              columns={[
-                {
-                  title: 'Component Name',
-                  dataIndex: 'componentName',
-                  key: 'componentName',
-                  render: (text, record) => text || record.name || 'N/A'
-                },
-                {
-                  title: 'Component Type',
-                  dataIndex: 'componentType',
-                  key: 'componentType',
-                  render: (type) => type ? (
-                    <Tag color="purple">{type}</Tag>
-                  ) : 'N/A'
-                },
-                {
-                  title: 'Price (VND)',
-                  dataIndex: 'pricePerCom',
-                  key: 'pricePerCom',
-                  render: (price) => (
-                    <Text strong style={{ color: '#1890ff' }}>
-                      {price ? Number(price).toLocaleString() : 0} VND
-                    </Text>
-                  )
-                },
-                {
-                  title: 'Total Quantity',
-                  dataIndex: 'quantityTotal',
-                  key: 'quantityTotal',
-                  render: (qty, record) => (
-                    <Text strong>{qty || record.quantity || 0}</Text>
-                  )
-                },
-                {
-                  title: 'Available Quantity',
-                  dataIndex: 'quantityAvailable',
-                  key: 'quantityAvailable',
-                  render: (qty) => (
-                    <Text strong style={{ color: '#52c41a' }}>
-                      {qty || 0}
-                    </Text>
-                  )
-                },
-                {
-                  title: 'Status',
-                  dataIndex: 'status',
-                  key: 'status',
-                  render: (status) => (
-                    <Tag
-                      color={
-                        status === 'AVAILABLE' ? 'green' :
-                          status === 'IN_USE' ? 'orange' :
-                            status === 'MAINTENANCE' ? 'blue' :
-                              status === 'DAMAGED' ? 'red' : 'default'
-                      }
-                    >
-                      {status || 'N/A'}
-                    </Tag>
-                  )
-                },
-                {
-                  title: 'Link',
-                  dataIndex: 'link',
-                  key: 'link',
-                  render: (link) => link ? (
-                    <a href={link} target="_blank" rel="noopener noreferrer">
-                      {link.length > 30 ? link.substring(0, 30) + '...' : link}
-                    </a>
-                  ) : 'N/A'
-                },
-                {
-                  title: 'Condition',
-                  dataIndex: 'condition',
-                  key: 'condition',
-                  render: (condition) => condition ? (
-                    <Tag color={condition === 'New' ? 'green' : condition === 'Used' ? 'orange' : 'red'}>
-                      {condition}
-                    </Tag>
-                  ) : 'N/A'
-                }
-              ]}
-              pagination={kit.components.length > 10 ? { pageSize: 10 } : false}
-              size="small"
-              style={{ marginTop: 16 }}
-            />
-          ) : (
-            <Empty
-              description="No components available"
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              style={{ margin: '24px 0' }}
-            />
-          )}
-        </div>
-      )
-    });
+    setComponentPage(1); // Reset to first page when opening modal
+    setKitDetailsModal({ visible: true, kit });
   };
+
+  // Helper function to format date time
+  const formatKitDateTime = (dateTimeString) => {
+    if (!dateTimeString) return 'N/A';
+    return new Date(dateTimeString).toLocaleString('vi-VN');
+  };
+
+  const renderKitDetailsContent = () => {
+    const kit = kitDetailsModal.kit;
+    if (!kit) return null;
+
+    return (
+      <div>
+        <Descriptions bordered column={2} style={{ marginBottom: 16 }}>
+          <Descriptions.Item label="Kit ID" span={2}>
+            <Text code style={{ fontSize: '14px' }}>{kit.id}</Text>
+          </Descriptions.Item>
+          <Descriptions.Item label="Kit Name">
+            <Text strong style={{ fontSize: '16px' }}>{kit.kitName || kit.name || 'N/A'}</Text>
+          </Descriptions.Item>
+          <Descriptions.Item label="Type">
+            <Tag
+              color={kit.type === 'LECTURER_KIT' ? 'red' : kit.type === 'STUDENT_KIT' ? 'blue' : 'default'}
+              style={{ fontSize: '13px', padding: '4px 12px' }}
+            >
+              {kit.type || 'N/A'}
+            </Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label="Status">
+            <Tag
+              color={kit.status === 'AVAILABLE' ? 'green' : kit.status === 'IN_USE' ? 'orange' : 'red'}
+              style={{ fontSize: '13px', padding: '4px 12px' }}
+            >
+              {kit.status || 'N/A'}
+            </Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label="Total Quantity">
+            <Text strong style={{ fontSize: '15px', color: '#1890ff' }}>
+              {kit.quantityTotal || 0}
+            </Text>
+          </Descriptions.Item>
+          <Descriptions.Item label="Available Quantity">
+            <Text strong style={{ fontSize: '15px', color: '#52c41a' }}>
+              {kit.quantityAvailable || 0}
+            </Text>
+          </Descriptions.Item>
+          <Descriptions.Item label="In Use Quantity">
+            <Text strong style={{ fontSize: '15px', color: '#faad14' }}>
+              {(kit.quantityTotal || 0) - (kit.quantityAvailable || 0)}
+            </Text>
+          </Descriptions.Item>
+          <Descriptions.Item label="Total Components">
+            <Text strong style={{ fontSize: '15px' }}>
+              {kit.components?.length || 0} components
+            </Text>
+          </Descriptions.Item>
+          <Descriptions.Item label="Description" span={2}>
+            <Text>{kit.description || 'No description available'}</Text>
+          </Descriptions.Item>
+          <Descriptions.Item label="Image" span={2}>
+            {kit.imageUrl && kit.imageUrl !== 'null' && kit.imageUrl !== 'undefined' ? (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                {kit.imageUrl.startsWith('http') && (
+                  <img
+                    src={kit.imageUrl}
+                    alt="Kit"
+                    style={{
+                      maxWidth: '200px',
+                      maxHeight: '150px',
+                      borderRadius: '8px',
+                      border: '1px solid #d9d9d9',
+                      objectFit: 'cover'
+                    }}
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                    }}
+                  />
+                )}
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<EyeOutlined />}
+                  onClick={() => window.open(kit.imageUrl, '_blank')}
+                  style={{
+                    borderRadius: '6px',
+                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    border: 'none',
+                    marginLeft: 'auto'
+                  }}
+                >
+                  View Image
+                </Button>
+              </div>
+            ) : (
+              <Text type="secondary">No image available</Text>
+            )}
+          </Descriptions.Item>
+          {(kit.createdAt || kit.updatedAt) && (
+            <>
+              {kit.createdAt && (
+                <Descriptions.Item label="Created At">
+                  <Text type="secondary">{formatKitDateTime(kit.createdAt)}</Text>
+                </Descriptions.Item>
+              )}
+              {kit.updatedAt && (
+                <Descriptions.Item label="Updated At">
+                  <Text type="secondary">{formatKitDateTime(kit.updatedAt)}</Text>
+                </Descriptions.Item>
+              )}
+            </>
+          )}
+        </Descriptions>
+
+        <Divider orientation="left">
+          <Space>
+            <BuildOutlined style={{ color: '#1890ff' }} />
+            <Text strong style={{ fontSize: '16px' }}>Components ({kit.components?.length || 0})</Text>
+          </Space>
+        </Divider>
+
+        {kit.components && kit.components.length > 0 ? (
+          <div style={{ marginTop: 16 }}>
+            {/* Calculate pagination */}
+            {(() => {
+              const startIndex = (componentPage - 1) * componentPageSize;
+              const endIndex = startIndex + componentPageSize;
+              const currentComponents = kit.components.slice(startIndex, endIndex);
+              const totalPages = Math.ceil(kit.components.length / componentPageSize);
+
+              return (
+                <>
+                  <Row gutter={[16, 16]}>
+                    {currentComponents.map((component, index) => (
+                      <Col xs={24} sm={12} md={8} key={component.id || index}>
+                        <motion.div
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3, delay: index * 0.1 }}
+                          whileHover={{ y: -8 }}
+                        >
+                          <Card
+                            hoverable
+                            style={{
+                              borderRadius: '16px',
+                              overflow: 'hidden',
+                              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                              border: '1px solid rgba(0,0,0,0.06)',
+                              height: '100%',
+                              display: 'flex',
+                              flexDirection: 'column'
+                            }}
+                            cover={
+                              <div
+                                style={{
+                                  height: 200,
+                                  background: component.imageUrl
+                                    ? `url(${component.imageUrl}) center/cover`
+                                    : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  position: 'relative'
+                                }}
+                              >
+                                {!component.imageUrl && (
+                                  <BuildOutlined style={{ fontSize: 48, color: '#fff', opacity: 0.8 }} />
+                                )}
+                                <div style={{
+                                  position: 'absolute',
+                                  top: 12,
+                                  right: 12
+                                }}>
+                                  <Tag
+                                    color={
+                                      component.status === 'AVAILABLE' ? 'green' :
+                                        component.status === 'IN_USE' ? 'orange' :
+                                          component.status === 'MAINTENANCE' ? 'blue' :
+                                            component.status === 'DAMAGED' ? 'red' : 'default'
+                                    }
+                                    style={{
+                                      fontSize: '12px',
+                                      padding: '4px 12px',
+                                      borderRadius: '12px',
+                                      fontWeight: 'bold'
+                                    }}
+                                  >
+                                    {component.status || 'N/A'}
+                                  </Tag>
+                                </div>
+                              </div>
+                            }
+                          >
+                            <Card.Meta
+                              title={
+                                <Text
+                                  strong
+                                  style={{
+                                    fontSize: '16px',
+                                    color: '#2c3e50',
+                                    display: 'block',
+                                    marginBottom: 8
+                                  }}
+                                >
+                                  {component.componentName || component.name || 'Unnamed Component'}
+                                </Text>
+                              }
+                              description={
+                                <div style={{ marginTop: 8 }}>
+                                  <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                                    <div>
+                                      <Tag
+                                        color="purple"
+                                        style={{
+                                          fontSize: '12px',
+                                          padding: '4px 12px',
+                                          borderRadius: '12px',
+                                          marginBottom: 8
+                                        }}
+                                      >
+                                        {component.componentType || 'N/A'}
+                                      </Tag>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                      <Text type="secondary" style={{ fontSize: '13px' }}>
+                                        <strong>Total:</strong> {component.quantityTotal || component.quantity || 0}
+                                      </Text>
+                                      <Text type="secondary" style={{ fontSize: '13px', color: '#52c41a' }}>
+                                        <strong>Available:</strong> {component.quantityAvailable || 0}
+                                      </Text>
+                                    </div>
+                                    <div style={{ marginTop: 4 }}>
+                                      <Text strong style={{ color: '#1890ff', fontSize: '14px' }}>
+                                        Price: {component.pricePerCom ? Number(component.pricePerCom).toLocaleString() : 0} VND
+                                      </Text>
+                                    </div>
+                                    {component.condition && (
+                                      <div style={{ marginTop: 4 }}>
+                                        <Tag
+                                          color={component.condition === 'New' ? 'green' : component.condition === 'Used' ? 'orange' : 'red'}
+                                          style={{ fontSize: '12px', padding: '4px 12px', borderRadius: '12px' }}
+                                        >
+                                          {component.condition}
+                                        </Tag>
+                                      </div>
+                                    )}
+                                    {component.link && (
+                                      <div style={{ marginTop: 8 }}>
+                                        <Button
+                                          type="link"
+                                          size="small"
+                                          onClick={() => window.open(component.link, '_blank')}
+                                          style={{ padding: 0, fontSize: '12px' }}
+                                        >
+                                          View Link →
+                                        </Button>
+                                      </div>
+                                    )}
+                                  </Space>
+                                </div>
+                              }
+                            />
+                          </Card>
+                        </motion.div>
+                      </Col>
+                    ))}
+                  </Row>
+
+                  {/* Pagination */}
+                  <div style={{
+                    marginTop: 24,
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    gap: 16
+                  }}>
+                    <Pagination
+                      current={componentPage}
+                      total={kit.components.length}
+                      pageSize={componentPageSize}
+                      onChange={(page) => setComponentPage(page)}
+                      showSizeChanger={false}
+                      showQuickJumper={false}
+                      showTotal={(total, range) =>
+                        `${range[0]}-${range[1]} of ${total} components`
+                      }
+                      style={{ marginTop: 16 }}
+                    />
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        ) : (
+          <Empty
+            description="No components available"
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            style={{ margin: '24px 0' }}
+          />
+        )}
+      </div>
+    );
+  };
+
 
   const editKit = (kit) => {
     setEditingKit(kit);
@@ -2905,12 +3078,6 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
     setComponentModalVisible(false);
     setEditingKit(null);
     setComponents([]);
-    notification.success({
-      message: 'Success',
-      description: 'Components saved successfully',
-      placement: 'topRight',
-      duration: 3,
-    });
   };
 
   const handleDeleteKit = async (kitId) => {
@@ -3110,16 +3277,238 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
             borderRadius: '20px 20px 0 0'
           }}
         >
-          <Table
-            columns={columns}
-            dataSource={kits}
-            rowKey="id"
-            pagination={{
-              showSizeChanger: true,
-              showQuickJumper: true,
-              showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} items`
-            }}
-          />
+          {/* Search and Filter Section */}
+          <div style={{ marginBottom: 24 }}>
+            <Row gutter={16}>
+              <Col xs={24} sm={12} md={8}>
+                <Input
+                  placeholder="Search by name or ID..."
+                  prefix={<SearchOutlined />}
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  allowClear
+                  style={{
+                    borderRadius: '8px',
+                    height: 40
+                  }}
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Select
+                  placeholder="Filter by Status"
+                  value={filterStatus}
+                  onChange={setFilterStatus}
+                  style={{ width: '100%', borderRadius: '8px' }}
+                >
+                  <Option value="all">All Status</Option>
+                  <Option value="AVAILABLE">Available</Option>
+                  <Option value="IN_USE">In Use</Option>
+                  <Option value="MAINTENANCE">Maintenance</Option>
+                </Select>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Select
+                  placeholder="Filter by Type"
+                  value={filterType}
+                  onChange={setFilterType}
+                  style={{ width: '100%', borderRadius: '8px' }}
+                >
+                  <Option value="all">All Types</Option>
+                  <Option value="STUDENT_KIT">Student Kit</Option>
+                  <Option value="LECTURER_KIT">Lecturer Kit</Option>
+                </Select>
+              </Col>
+            </Row>
+          </div>
+
+          {/* Kit Catalog Grid */}
+          {filteredKits.length === 0 ? (
+            <Empty
+              description="No kits found"
+              style={{ padding: '60px 0' }}
+            />
+          ) : (
+            <Row gutter={[24, 24]}>
+              {filteredKits.map((kit) => (
+                <Col xs={24} sm={12} md={8} lg={6} key={kit.id}>
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3 }}
+                    whileHover={{ y: -8 }}
+                  >
+                    <Card
+                      hoverable
+                      style={{
+                        borderRadius: '16px',
+                        overflow: 'hidden',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                        border: '1px solid rgba(0,0,0,0.06)',
+                        height: '100%',
+                        display: 'flex',
+                        flexDirection: 'column'
+                      }}
+                      cover={
+                        <div
+                          style={{
+                            height: 200,
+                            background: kit.imageUrl
+                              ? `url(${kit.imageUrl}) center/cover`
+                              : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            position: 'relative'
+                          }}
+                        >
+                          {!kit.imageUrl && (
+                            <ToolOutlined style={{ fontSize: 64, color: '#fff', opacity: 0.8 }} />
+                          )}
+                          <div style={{
+                            position: 'absolute',
+                            top: 12,
+                            right: 12
+                          }}>
+                            <Tag
+                              color={kit.status === 'AVAILABLE' ? 'green' : kit.status === 'IN_USE' ? 'orange' : 'red'}
+                              style={{
+                                fontSize: '12px',
+                                padding: '4px 12px',
+                                borderRadius: '12px',
+                                fontWeight: 'bold'
+                              }}
+                            >
+                              {kit.status}
+                            </Tag>
+                          </div>
+                        </div>
+                      }
+                      actions={[
+                        <motion.div
+                          key="edit"
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                        >
+                          <Button
+                            type="text"
+                            icon={<EditOutlined />}
+                            onClick={() => editKit(kit)}
+                            style={{ color: '#1890ff' }}
+                          >
+                            Edit
+                          </Button>
+                        </motion.div>,
+                        <motion.div
+                          key="view"
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                        >
+                          <Button
+                            type="text"
+                            icon={<EyeOutlined />}
+                            onClick={() => showKitDetails(kit)}
+                            style={{ color: '#52c41a' }}
+                          >
+                            View
+                          </Button>
+                        </motion.div>,
+                        <motion.div
+                          key="delete"
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                        >
+                          <Popconfirm
+                            title="Delete this kit?"
+                            onConfirm={() => handleDeleteKit(kit.id)}
+                            okText="Yes"
+                            cancelText="No"
+                          >
+                            <Button
+                              type="text"
+                              danger
+                              icon={<DeleteOutlined />}
+                            >
+                              Delete
+                            </Button>
+                          </Popconfirm>
+                        </motion.div>
+                      ]}
+                    >
+                      <Card.Meta
+                        title={
+                          <Text
+                            strong
+                            style={{
+                              fontSize: '18px',
+                              cursor: 'pointer',
+                              color: '#2c3e50'
+                            }}
+                            onClick={() => showKitDetails(kit)}
+                          >
+                            {kit.kitName || kit.name || 'Unnamed Kit'}
+                          </Text>
+                        }
+                        description={
+                          <div style={{ marginTop: 12 }}>
+                            <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                              <div>
+                                <Tag
+                                  color={kit.type === 'LECTURER_KIT' ? 'red' : 'blue'}
+                                  style={{
+                                    fontSize: '12px',
+                                    padding: '4px 12px',
+                                    borderRadius: '12px',
+                                    marginBottom: 8
+                                  }}
+                                >
+                                  {kit.type === 'LECTURER_KIT' ? 'Lecturer Kit' : 'Student Kit'}
+                                </Tag>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Text type="secondary" style={{ fontSize: '13px' }}>
+                                  <strong>Total:</strong> {kit.quantityTotal || 0}
+                                </Text>
+                                <Text type="secondary" style={{ fontSize: '13px' }}>
+                                  <strong>Available:</strong> {kit.quantityAvailable || 0}
+                                </Text>
+                              </div>
+                              <div style={{ marginTop: 8 }}>
+                                <Text type="secondary" style={{ fontSize: '13px' }}>
+                                  <strong>Components:</strong> {kit.components?.length || 0}
+                                </Text>
+                                <Button
+                                  type="link"
+                                  size="small"
+                                  onClick={() => manageComponents(kit)}
+                                  style={{
+                                    padding: 0,
+                                    height: 'auto',
+                                    fontSize: '12px',
+                                    marginLeft: 4
+                                  }}
+                                >
+                                  Manage
+                                </Button>
+                              </div>
+                            </Space>
+                          </div>
+                        }
+                      />
+                    </Card>
+                  </motion.div>
+                </Col>
+              ))}
+            </Row>
+          )}
+
+          {/* Pagination */}
+          {filteredKits.length > 0 && (
+            <div style={{ marginTop: 24, textAlign: 'center' }}>
+              <Text type="secondary">
+                Showing {filteredKits.length} of {kits.length} kit(s)
+              </Text>
+            </div>
+          )}
         </Card>
       </motion.div>
 
@@ -3280,15 +3669,8 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           setComponents([]);
         }}
         footer={[
-          <Button key="cancel" onClick={() => {
-            setComponentModalVisible(false);
-            setEditingKit(null);
-            setComponents([]);
-          }}>
-            Cancel
-          </Button>,
-          <Button key="save" type="primary" onClick={saveComponents}>
-            Save Components
+          <Button key="back" type="primary" onClick={saveComponents}>
+            Back
           </Button>
         ]}
         width={800}
@@ -3565,6 +3947,43 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           </Text>
         </div>
       </Modal>
+
+      {/* Kit Details Modal */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <InfoCircleOutlined style={{ color: '#1890ff', fontSize: '20px' }} />
+            <span style={{ fontSize: '18px', fontWeight: 'bold' }}>Kit Details</span>
+          </div>
+        }
+        open={kitDetailsModal.visible}
+        onCancel={() => {
+          setKitDetailsModal({ visible: false, kit: null });
+          setComponentPage(1);
+        }}
+        footer={[
+          <Button
+            key="close"
+            onClick={() => {
+              setKitDetailsModal({ visible: false, kit: null });
+              setComponentPage(1);
+            }}
+            style={{
+              borderRadius: '8px',
+              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              border: 'none',
+              color: '#fff'
+            }}
+          >
+            Close
+          </Button>
+        ]}
+        width={900}
+        centered
+        destroyOnClose
+      >
+        {renderKitDetailsContent()}
+      </Modal>
     </div>
   );
 };
@@ -3572,6 +3991,10 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
 // Rental Approvals Component
 const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, setTransactions, setRefundRequests, onNavigateToRefunds }) => {
   const [selectedStatuses, setSelectedStatuses] = useState({});
+  const [detailsModalVisible, setDetailsModalVisible] = useState(false);
+  const [selectedRequestDetails, setSelectedRequestDetails] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const rentalRequestSubscriptionRef = useRef(null);
   const columns = [
     {
       title: 'Request ID',
@@ -3686,31 +4109,30 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
                 >
                   {status || 'PENDING'}
                 </Tag>
-                {status === 'APPROVED' && (
-                  <Button
-                    type="default"
-                    size="small"
-                    icon={<EditOutlined />}
-                    onClick={() => setSelectedStatuses(prev => ({
-                      ...prev,
-                      [record.id]: {
-                        editing: true,
-                        value: status
-                      }
-                    }))}
-                    style={{
-                      border: '1px solid #d9d9d9',
-                      color: '#666'
-                    }}
-                  >
-                    Edit
-                  </Button>
-                )}
               </>
             )}
           </Space>
         );
       }
+    },
+    {
+      title: 'Details',
+      key: 'details',
+      render: (_, record) => (
+        <motion.div
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+        >
+          <Button
+            type="default"
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => handleShowDetails(record)}
+          >
+            Details
+          </Button>
+        </motion.div>
+      )
     },
     {
       title: 'Actions',
@@ -3741,6 +4163,65 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
       )
     }
   ];
+
+  const handleShowDetails = (record) => {
+    setSelectedRequestDetails(record);
+    setDetailsModalVisible(true);
+  };
+
+  const handleCloseDetails = () => {
+    setDetailsModalVisible(false);
+    setSelectedRequestDetails(null);
+  };
+
+  const formatDateTime = (dateTimeString) => {
+    if (!dateTimeString) return 'N/A';
+    return new Date(dateTimeString).toLocaleString('vi-VN');
+  };
+
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'currency',
+      currency: 'VND'
+    }).format(amount || 0);
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      const rentalResponse = await borrowingRequestAPI.getAll();
+      console.log('Refreshed rental requests response:', rentalResponse);
+
+      // Helper function to sort rental requests by createdAt desc
+      const sortRentalRequestsByCreatedAt = (requests) => {
+        return [...requests].sort((a, b) => {
+          const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0);
+          const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0);
+          return dateB - dateA; // Descending order (newest first)
+        });
+      };
+
+      if (Array.isArray(rentalResponse)) {
+        const sortedRequests = sortRentalRequestsByCreatedAt(rentalResponse);
+        setRentalRequests(sortedRequests);
+        console.log('Rental requests refreshed successfully:', sortedRequests.length);
+        message.success(`Refreshed ${sortedRequests.length} rental requests`);
+      } else if (rentalResponse && rentalResponse.data && Array.isArray(rentalResponse.data)) {
+        const sortedRequests = sortRentalRequestsByCreatedAt(rentalResponse.data);
+        setRentalRequests(sortedRequests);
+        console.log('Rental requests refreshed successfully:', sortedRequests.length);
+        message.success(`Refreshed ${sortedRequests.length} rental requests`);
+      } else {
+        setRentalRequests([]);
+        message.warning('No rental requests found');
+      }
+    } catch (error) {
+      console.error('Error refreshing rental requests:', error);
+      message.error('Failed to refresh rental requests: ' + (error.message || 'Unknown error'));
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const handleStatusChange = (id, newStatus) => {
     const request = rentalRequests.find(req => req.id === id);
@@ -3783,14 +4264,22 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
       });
     } else {
       // Normal status update
-      setRentalRequests(prev => prev.map(req =>
-        req.id === id ? {
-          ...req,
-          status: newStatus,
-          updatedBy: 'admin@fpt.edu.vn',
-          updatedDate: new Date().toISOString()
-        } : req
-      ));
+      setRentalRequests(prev => {
+        const updated = prev.map(req =>
+          req.id === id ? {
+            ...req,
+            status: newStatus,
+            updatedBy: 'admin@fpt.edu.vn',
+            updatedDate: new Date().toISOString()
+          } : req
+        );
+        // Sort by createdAt desc
+        return updated.sort((a, b) => {
+          const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0);
+          const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0);
+          return dateB - dateA; // Descending order (newest first)
+        });
+      });
 
       notification.success({
         message: 'Status Updated',
@@ -3825,15 +4314,65 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
       // Call API to update the borrowing request
       await borrowingRequestAPI.update(id, updateData);
 
-      // Update local state
-      setRentalRequests(prev => prev.map(req =>
-        req.id === id ? {
-          ...req,
-          status: newStatus,
-          approvedDate: action === 'approve' ? new Date().toISOString() : req.approvedDate,
-          note: updateData.note
-        } : req
-      ));
+      // When approved, immediately move record from rental requests to refund requests
+      if (action === 'approve') {
+        // Remove from rental requests immediately
+        setRentalRequests(prev => {
+          const filtered = prev.filter(req => req.id !== id);
+          // Sort by createdAt desc
+          return filtered.sort((a, b) => {
+            const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0);
+            const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0);
+            return dateB - dateA; // Descending order (newest first)
+          });
+        });
+
+        // Add to refund requests immediately
+        const approvedDate = new Date().toISOString();
+        const newRefundRequest = {
+          id: request.id,
+          rentalId: request.id,
+          kitId: request.kit?.id || 'N/A',
+          kitName: request.kit?.kitName || 'N/A',
+          userEmail: request.requestedBy?.email || 'N/A',
+          userName: request.requestedBy?.fullName || 'N/A',
+          status: 'pending',
+          requestDate: request.createdAt || approvedDate,
+          approvedDate: approvedDate,
+          totalCost: request.depositAmount || 0,
+          damageAssessment: {},
+          reason: request.reason || 'Course project',
+          depositAmount: request.depositAmount || 0,
+          requestType: request.requestType || 'BORROW_KIT'
+        };
+
+        setRefundRequests(prev => {
+          // Check if already exists to avoid duplicates
+          const exists = prev.find(req => req.id === id);
+          if (exists) {
+            return prev.map(req => req.id === id ? newRefundRequest : req);
+          }
+          // Add new refund request at the beginning
+          return [newRefundRequest, ...prev];
+        });
+      } else {
+        // For reject, update status in rental requests
+        setRentalRequests(prev => {
+          const updated = prev.map(req =>
+            req.id === id ? {
+              ...req,
+              status: newStatus,
+              note: updateData.note
+            } : req
+          );
+          // Sort by createdAt desc
+          return updated.sort((a, b) => {
+            const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0);
+            const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0);
+            return dateB - dateA; // Descending order (newest first)
+          });
+        });
+      }
 
       // Reload transaction history when approved
       if (action === 'approve') {
@@ -3901,9 +4440,9 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
         }
       }
 
-      // When approved, refresh refund requests from backend and navigate to refund checking tab
+      // When approved, refresh refund requests from backend to ensure sync and navigate to return checking tab
       if (action === 'approve') {
-        // Reload approved requests from backend
+        // Reload approved requests from backend to ensure data consistency
         try {
           const approvedResponse = await borrowingRequestAPI.getApproved();
           console.log('Refreshed approved requests:', approvedResponse);
@@ -3918,34 +4457,35 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
               userEmail: req.requestedBy?.email || 'N/A',
               userName: req.requestedBy?.fullName || 'N/A',
               status: 'pending',
-              requestDate: req.createdAt || new Date().toISOString(),
-              approvedDate: req.approvedDate || new Date().toISOString(),
+              requestDate: req.createdAt || req.approvedDate || null,
+              approvedDate: req.approvedDate || null,
               totalCost: req.depositAmount || 0,
               damageAssessment: {},
               reason: req.reason || 'Course project',
               depositAmount: req.depositAmount || 0,
-              requestType: req.requestType // Add request type
+              requestType: req.requestType || 'BORROW_KIT'
             }));
 
+            // Update refund requests with backend data to ensure consistency
             setRefundRequests(refundRequestsData);
-            console.log('Refund requests updated from backend:', refundRequestsData.length);
+            console.log('Refund requests synced from backend:', refundRequestsData.length);
           }
         } catch (refreshError) {
           console.error('Error refreshing approved requests:', refreshError);
         }
 
-        // Navigate to refund checking tab after a short delay
+        // Navigate to return checking tab immediately
         setTimeout(() => {
           if (onNavigateToRefunds) {
             onNavigateToRefunds();
           }
-        }, 1000);
+        }, 500);
       }
 
       notification.success({
         message: action === 'approve' ? 'Request Approved' : 'Request Rejected',
         description: action === 'approve'
-          ? 'Request approved successfully! Navigate to Refund Checking to monitor refund status.'
+          ? 'Request approved successfully! Navigate to Return Checking to monitor refund status.'
           : 'Request rejected successfully',
         placement: 'topRight',
         duration: 4,
@@ -3961,7 +4501,61 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
     }
   };
 
+  // Real-time WebSocket subscription for rental requests
+  useEffect(() => {
+    // Connect to WebSocket and subscribe to admin rental request updates
+    webSocketService.connect(
+      () => {
+        console.log('WebSocket connected for admin rental requests');
+        // Subscribe to new rental requests
+        rentalRequestSubscriptionRef.current = webSocketService.subscribeToAdminRentalRequests((data) => {
+          console.log('Received new rental request via WebSocket:', data);
 
+          // Update the rental requests list
+          setRentalRequests(prev => {
+            // Check if request already exists
+            const exists = prev.find(req => req.id === data.id);
+            let updated;
+            if (exists) {
+              // Update existing request
+              updated = prev.map(req => req.id === data.id ? data : req);
+            } else {
+              // Add new request if status is PENDING
+              if (data.status === 'PENDING') {
+                // Show notification
+                notification.info({
+                  message: 'New Rental Request',
+                  description: `New rental request from ${data.requestedBy?.fullName || data.requestedBy?.email || 'User'}`,
+                  placement: 'topRight',
+                  duration: 5,
+                });
+                // Add new request
+                updated = [data, ...prev];
+              } else {
+                return prev;
+              }
+            }
+            // Sort by createdAt desc
+            return updated.sort((a, b) => {
+              const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0);
+              const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0);
+              return dateB - dateA; // Descending order (newest first)
+            });
+          });
+        });
+      },
+      (error) => {
+        console.error('WebSocket connection error:', error);
+      }
+    );
+
+    // Cleanup on unmount
+    return () => {
+      if (rentalRequestSubscriptionRef.current) {
+        webSocketService.unsubscribe(rentalRequestSubscriptionRef.current);
+      }
+    };
+  }, []);
 
   return (
     <motion.div
@@ -3971,6 +4565,27 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
     >
       <Card
         title="Rental Request Management"
+        extra={
+          <motion.div
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <Button
+              type="default"
+              icon={<ReloadOutlined />}
+              onClick={handleRefresh}
+              loading={refreshing}
+              style={{
+                borderRadius: '8px',
+                border: '1px solid rgba(255,255,255,0.3)',
+                color: '#fff',
+                background: 'rgba(255,255,255,0.1)'
+              }}
+            >
+              Refresh
+            </Button>
+          </motion.div>
+        }
         style={{
           borderRadius: '20px',
           background: 'rgba(255, 255, 255, 0.95)',
@@ -3997,6 +4612,150 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
           }}
         />
       </Card>
+
+      {/* Details Modal */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <InfoCircleOutlined style={{ fontSize: '20px', color: '#667eea' }} />
+            <span>Rental Request Details</span>
+          </div>
+        }
+        open={detailsModalVisible}
+        onCancel={handleCloseDetails}
+        footer={[
+          <Button key="close" onClick={handleCloseDetails}>
+            Close
+          </Button>
+        ]}
+        width={800}
+        centered
+        destroyOnClose
+      >
+        {selectedRequestDetails && (
+          <div>
+            <Descriptions bordered column={1} size="small">
+              <Descriptions.Item label="Request ID">
+                <Text code>{selectedRequestDetails.id || 'N/A'}</Text>
+              </Descriptions.Item>
+
+              <Descriptions.Item label="Status">
+                <Tag
+                  color={
+                    selectedRequestDetails.status === 'PENDING' ? 'orange' :
+                      selectedRequestDetails.status === 'APPROVED' ? 'green' :
+                        selectedRequestDetails.status === 'REJECTED' ? 'red' :
+                          selectedRequestDetails.status === 'BORROWED' ? 'blue' :
+                            selectedRequestDetails.status === 'RETURNED' ? 'green' : 'default'
+                  }
+                >
+                  {selectedRequestDetails.status || 'PENDING'}
+                </Tag>
+              </Descriptions.Item>
+
+              <Descriptions.Item label="Request Type">
+                <Tag color={selectedRequestDetails.requestType === 'BORROW_COMPONENT' ? 'orange' : 'blue'}>
+                  {selectedRequestDetails.requestType || 'BORROW_KIT'}
+                </Tag>
+              </Descriptions.Item>
+
+              <Descriptions.Item label="User Information">
+                <div>
+                  <div><strong>Name:</strong> {selectedRequestDetails.requestedBy?.fullName || 'N/A'}</div>
+                  <div><strong>Email:</strong> {selectedRequestDetails.requestedBy?.email || 'N/A'}</div>
+                  {selectedRequestDetails.requestedBy?.phone && (
+                    <div><strong>Phone:</strong> {selectedRequestDetails.requestedBy?.phone}</div>
+                  )}
+                  {selectedRequestDetails.requestedBy?.studentCode && (
+                    <div><strong>Student Code:</strong> {selectedRequestDetails.requestedBy?.studentCode}</div>
+                  )}
+                </div>
+              </Descriptions.Item>
+
+              <Descriptions.Item label="Kit Information">
+                <div>
+                  <div><strong>Kit Name:</strong> {selectedRequestDetails.kit?.kitName || 'N/A'}</div>
+                  {selectedRequestDetails.kit?.id && (
+                    <div><strong>Kit ID:</strong> <Text code>{selectedRequestDetails.kit.id}</Text></div>
+                  )}
+                  {selectedRequestDetails.kit?.type && (
+                    <div><strong>Kit Type:</strong> {selectedRequestDetails.kit.type}</div>
+                  )}
+                  {selectedRequestDetails.kit?.description && (
+                    <div><strong>Description:</strong> {selectedRequestDetails.kit.description}</div>
+                  )}
+                </div>
+              </Descriptions.Item>
+
+              <Descriptions.Item label="Financial Information">
+                <div>
+                  <div><strong>Deposit Amount:</strong> {formatCurrency(selectedRequestDetails.depositAmount || 0)}</div>
+                  {selectedRequestDetails.totalCost && (
+                    <div><strong>Total Cost:</strong> {formatCurrency(selectedRequestDetails.totalCost)}</div>
+                  )}
+                </div>
+              </Descriptions.Item>
+
+              <Descriptions.Item label="Dates">
+                <div>
+                  <div><strong>Created At:</strong> {formatDateTime(selectedRequestDetails.createdAt)}</div>
+                  {selectedRequestDetails.expectReturnDate && (
+                    <div><strong>Expected Return Date:</strong> {formatDateTime(selectedRequestDetails.expectReturnDate)}</div>
+                  )}
+                  {selectedRequestDetails.approvedDate && (
+                    <div><strong>Approved Date:</strong> {formatDateTime(selectedRequestDetails.approvedDate)}</div>
+                  )}
+                  {selectedRequestDetails.actualReturnDate && (
+                    <div><strong>Actual Return Date:</strong> {formatDateTime(selectedRequestDetails.actualReturnDate)}</div>
+                  )}
+                </div>
+              </Descriptions.Item>
+
+              {selectedRequestDetails.reason && (
+                <Descriptions.Item label="Reason">
+                  {selectedRequestDetails.reason}
+                </Descriptions.Item>
+              )}
+
+              {selectedRequestDetails.note && (
+                <Descriptions.Item label="Note">
+                  {selectedRequestDetails.note}
+                </Descriptions.Item>
+              )}
+
+              {selectedRequestDetails.requestedBy?.group && (
+                <Descriptions.Item label="Group Information">
+                  <div>
+                    <div><strong>Group Name:</strong> {selectedRequestDetails.requestedBy.group.groupName || 'N/A'}</div>
+                    {selectedRequestDetails.requestedBy.group.lecturer && (
+                      <div><strong>Lecturer:</strong> {selectedRequestDetails.requestedBy.group.lecturer.fullName || selectedRequestDetails.requestedBy.group.lecturer.email || 'N/A'}</div>
+                    )}
+                  </div>
+                </Descriptions.Item>
+              )}
+
+              {selectedRequestDetails.components && selectedRequestDetails.components.length > 0 && (
+                <Descriptions.Item label="Components">
+                  <List
+                    size="small"
+                    dataSource={selectedRequestDetails.components}
+                    renderItem={(component) => (
+                      <List.Item>
+                        <div>
+                          <div><strong>{component.componentName || component.name || 'N/A'}</strong></div>
+                          {component.quantity && (
+                            <div>Quantity: {component.quantity}</div>
+                          )}
+                        </div>
+                      </List.Item>
+                    )}
+                  />
+                </Descriptions.Item>
+              )}
+            </Descriptions>
+          </div>
+        )}
+      </Modal>
     </motion.div>
   );
 };
@@ -4035,7 +4794,15 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
       title: 'Request Date',
       dataIndex: 'requestDate',
       key: 'requestDate',
-      render: (date) => date ? new Date(date).toLocaleString('vi-VN') : 'N/A'
+      render: (date) => {
+        if (!date) return 'N/A';
+        try {
+          return new Date(date).toLocaleString('vi-VN');
+        } catch (error) {
+          console.error('Error parsing requestDate:', date, error);
+          return 'N/A';
+        }
+      }
     },
     {
       title: 'Status',
@@ -4247,7 +5014,7 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
       transition={{ duration: 0.5 }}
     >
       <Card
-        title="Refund Checking Management"
+        title="Return Checking Management"
         style={{
           borderRadius: '20px',
           background: 'rgba(255, 255, 255, 0.95)',
@@ -5079,6 +5846,8 @@ const UserManagement = ({ users, setUsers }) => {
   const [editingUser, setEditingUser] = useState(null);
   const [selectedRole, setSelectedRole] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
 
   const columns = [
     {
@@ -5217,6 +5986,38 @@ const UserManagement = ({ users, setUsers }) => {
     });
   };
 
+  // Filter users based on search text and role
+  const filteredUsers = users.filter(user => {
+    // Filter by search text (name, email, phone, studentCode)
+    if (searchText && searchText.trim() !== '') {
+      const searchLower = searchText.toLowerCase();
+      const name = (user.name || '').toLowerCase();
+      const email = (user.email || '').toLowerCase();
+      const phone = (user.phone || '').toLowerCase();
+      const studentCode = (user.studentCode || '').toLowerCase();
+
+      if (!name.includes(searchLower) &&
+        !email.includes(searchLower) &&
+        !phone.includes(searchLower) &&
+        !studentCode.includes(searchLower)) {
+        return false;
+      }
+    }
+
+    // Filter by role
+    if (roleFilter !== 'all') {
+      const userRole = (user.role || '').toLowerCase();
+      if (userRole !== roleFilter.toLowerCase()) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  // Get unique roles from users for filter dropdown
+  const availableRoles = [...new Set(users.map(user => user.role).filter(Boolean))].sort();
+
   const handleSubmit = async (values) => {
     try {
       if (editingUser) {
@@ -5235,7 +6036,10 @@ const UserManagement = ({ users, setUsers }) => {
           const response = await authAPI.updateUser(editingUser.id, updateData);
           console.log('Update user response:', response);
 
-          if (response && response.email) {
+          // Backend returns ApiResponse with structure: {status, message, data}
+          const userData = response?.data || response;
+
+          if (userData && userData.email) {
             // Refresh users list from API
             try {
               const usersData = await userAPI.getAllAccounts(0, 100);
@@ -5265,7 +6069,7 @@ const UserManagement = ({ users, setUsers }) => {
 
             notification.success({
               message: 'Success',
-              description: `User updated successfully: ${response.email}`,
+              description: `User updated successfully: ${userData.email}`,
               placement: 'topRight',
               duration: 3,
             });
@@ -5415,9 +6219,40 @@ const UserManagement = ({ users, setUsers }) => {
             borderRadius: '20px 20px 0 0'
           }}
         >
+          {/* Filter and Search Section */}
+          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+            <Col xs={24} sm={12} md={12}>
+              <Input
+                placeholder="Search by name, email, phone, or student code..."
+                prefix={<SearchOutlined />}
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                allowClear
+                style={{ width: '100%', borderRadius: '8px' }}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={12}>
+              <Select
+                placeholder="Filter by Role"
+                value={roleFilter}
+                onChange={setRoleFilter}
+                allowClear
+                style={{ width: '100%', borderRadius: '8px' }}
+                suffixIcon={<FilterOutlined />}
+              >
+                <Option value="all">All Roles</Option>
+                {availableRoles.map(role => (
+                  <Option key={role} value={role}>
+                    {role.charAt(0).toUpperCase() + role.slice(1)}
+                  </Option>
+                ))}
+              </Select>
+            </Col>
+          </Row>
+
           <Table
             columns={columns}
-            dataSource={users}
+            dataSource={filteredUsers}
             rowKey="id"
             pagination={{
               showSizeChanger: true,
@@ -5440,34 +6275,103 @@ const UserManagement = ({ users, setUsers }) => {
         footer={null}
       >
         <Form form={form} layout="vertical" onFinish={handleSubmit}>
-          <Form.Item name="name" label="Name" rules={[{ required: true }]}>
-            <Input />
+          <Form.Item
+            name="name"
+            label="Name"
+            rules={[
+              { required: true, message: 'Name is required' },
+              { min: 2, message: 'Name must be at least 2 characters' },
+              { max: 100, message: 'Name must not exceed 100 characters' },
+              { pattern: /^[a-zA-Z\s\u00C0-\u1EF9]+$/, message: 'Name can only contain letters and spaces' }
+            ]}
+          >
+            <Input placeholder="Enter full name" />
           </Form.Item>
-          <Form.Item name="email" label="Email" rules={[{ required: true, type: 'email' }]}>
-            <Input />
+          <Form.Item
+            name="email"
+            label="Email"
+            rules={[
+              { required: true, message: 'Email is required' },
+              { type: 'email', message: 'Please enter a valid email address' },
+              {
+                validator: async (_, value) => {
+                  if (!value) return Promise.resolve();
+                  // Check if email already exists (excluding current user being edited)
+                  const existingUser = users.find(u =>
+                    u.email?.toLowerCase() === value.toLowerCase() &&
+                    (!editingUser || u.id !== editingUser.id)
+                  );
+                  if (existingUser) {
+                    return Promise.reject(new Error('This email is already in use'));
+                  }
+                  return Promise.resolve();
+                }
+              }
+            ]}
+          >
+            <Input placeholder="Enter email address" disabled={!!editingUser} />
           </Form.Item>
-          <Form.Item name="phone" label="Phone Number">
-            <Input placeholder="Enter phone number" />
+          <Form.Item
+            name="phone"
+            label="Phone Number"
+            rules={[
+              {
+                pattern: /^[0-9]{10,11}$/,
+                message: 'Phone number must be 10-11 digits'
+              }
+            ]}
+          >
+            <Input placeholder="Enter phone number (10-11 digits)" />
           </Form.Item>
-          <Form.Item name="role" label="Role" rules={[{ required: true }]}>
-            <Select onChange={(value) => setSelectedRole(value)}>
-              <Option value="student">Student</Option>
+          <Form.Item
+            name="role"
+            label="Role"
+            rules={[{ required: true, message: 'Role is required' }]}
+          >
+            <Select onChange={(value) => setSelectedRole(value)} placeholder="Select a role">
               <Option value="lecturer">Lecturer</Option>
-              <Option value="admin">Admin</Option>
-              <Option value="academic">Academic Affairs</Option>
-              <Option value="leader">Leader</Option>
-              <Option value="member">Member</Option>
-              <Option value="parent">Parent</Option>
+              <Option value="academic">Academic</Option>
+              <Option value="student">Student</Option>
             </Select>
           </Form.Item>
           {selectedRole === 'student' && (
-            <Form.Item name="studentCode" label="Student Code" rules={[{ required: true, message: 'Student Code is required for students' }]}>
+            <Form.Item
+              name="studentCode"
+              label="Student Code"
+              rules={[
+                { required: true, message: 'Student Code is required for students' },
+                { min: 3, message: 'Student Code must be at least 3 characters' },
+                { max: 20, message: 'Student Code must not exceed 20 characters' },
+                {
+                  validator: async (_, value) => {
+                    if (!value) return Promise.resolve();
+                    // Check if student code already exists (excluding current user being edited)
+                    const existingUser = users.find(u =>
+                      u.studentCode?.toLowerCase() === value.toLowerCase() &&
+                      (!editingUser || u.id !== editingUser.id)
+                    );
+                    if (existingUser) {
+                      return Promise.reject(new Error('This student code is already in use'));
+                    }
+                    return Promise.resolve();
+                  }
+                }
+              ]}
+            >
               <Input placeholder="Enter student code" />
             </Form.Item>
           )}
           {!editingUser && (
-            <Form.Item name="password" label="Password" rules={[{ required: true }]}>
-              <Input.Password />
+            <Form.Item
+              name="password"
+              label="Password"
+              rules={[
+                { required: true, message: 'Password is required' },
+                { min: 6, message: 'Password must be at least 6 characters' },
+                { max: 50, message: 'Password must not exceed 50 characters' }
+              ]}
+            >
+              <Input.Password placeholder="Enter password (min 6 characters)" />
             </Form.Item>
           )}
           <Form.Item>
@@ -5835,9 +6739,6 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
             </Descriptions.Item>
             <Descriptions.Item label="User Name">{selectedTransaction.userName || 'N/A'}</Descriptions.Item>
             <Descriptions.Item label="User Email">{selectedTransaction.email || selectedTransaction.userEmail || 'N/A'}</Descriptions.Item>
-            <Descriptions.Item label="User Role">
-              <Tag color="blue">{selectedTransaction.userRole || 'N/A'}</Tag>
-            </Descriptions.Item>
             <Descriptions.Item label="Transaction Type">
               <Tag color={getTransactionTypeColor(selectedTransaction.type)} icon={getTransactionTypeIcon(selectedTransaction.type)}>
                 {selectedTransaction.type ? selectedTransaction.type.replace(/_/g, ' ') : selectedTransaction.transactionType ? selectedTransaction.transactionType.replace(/_/g, ' ') : 'N/A'}
@@ -5867,118 +6768,6 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
         )}
       </Modal>
     </div>
-  );
-};
-
-// Settings Component
-const Settings = () => {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5 }}
-    >
-      <Card
-        title="System Settings"
-        style={{
-          borderRadius: '20px',
-          background: 'rgba(255, 255, 255, 0.95)',
-          backdropFilter: 'blur(10px)',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
-          border: '1px solid rgba(255,255,255,0.2)',
-          overflow: 'hidden'
-        }}
-        headStyle={{
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          color: '#fff',
-          borderBottom: 'none',
-          borderRadius: '20px 20px 0 0'
-        }}
-      >
-        <Row gutter={[16, 16]}>
-          <Col span={12}>
-            <motion.div
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.2, duration: 0.5 }}
-            >
-              <Card
-                title="General Settings"
-                size="small"
-                style={{
-                  borderRadius: '16px',
-                  background: 'rgba(255, 255, 255, 0.9)',
-                  backdropFilter: 'blur(10px)',
-                  boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-                  border: '1px solid rgba(255,255,255,0.3)',
-                  overflow: 'hidden'
-                }}
-                headStyle={{
-                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  color: '#fff',
-                  borderBottom: 'none',
-                  borderRadius: '16px 16px 0 0'
-                }}
-              >
-                <Form layout="vertical">
-                  <Form.Item label="System Name">
-                    <Input defaultValue="IoT Kit Rental System" />
-                  </Form.Item>
-                  <Form.Item label="Email Notifications">
-                    <Switch defaultChecked />
-                  </Form.Item>
-                  <Form.Item label="Auto Approve Requests">
-                    <Switch />
-                  </Form.Item>
-                </Form>
-              </Card>
-            </motion.div>
-          </Col>
-          <Col span={12}>
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.4, duration: 0.5 }}
-            >
-              <Card
-                title="Security Settings"
-                size="small"
-                style={{
-                  borderRadius: '16px',
-                  background: 'rgba(255, 255, 255, 0.9)',
-                  backdropFilter: 'blur(10px)',
-                  boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-                  border: '1px solid rgba(255,255,255,0.3)',
-                  overflow: 'hidden'
-                }}
-                headStyle={{
-                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  color: '#fff',
-                  borderBottom: 'none',
-                  borderRadius: '16px 16px 0 0'
-                }}
-              >
-                <Form layout="vertical">
-                  <Form.Item label="Session Timeout (minutes)">
-                    <Input type="number" defaultValue={30} />
-                  </Form.Item>
-                  <Form.Item label="Password Policy">
-                    <Select defaultValue="medium">
-                      <Option value="low">Low</Option>
-                      <Option value="medium">Medium</Option>
-                      <Option value="high">High</Option>
-                    </Select>
-                  </Form.Item>
-                  <Form.Item label="Two-Factor Authentication">
-                    <Switch />
-                  </Form.Item>
-                </Form>
-              </Card>
-            </motion.div>
-          </Col>
-        </Row>
-      </Card>
-    </motion.div>
   );
 };
 
