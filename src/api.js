@@ -1,5 +1,5 @@
+// const API_BASE_URL = 'https://rental-kit-fvcrenhrbva3e4f2.eastasia-01.azurewebsites.net';
 const API_BASE_URL = 'https://iot-system-kit.azurewebsites.net';
-// const API_BASE_URL = 'http://localhost:8080';
 
 // Helper function to get JWT token from localStorage
 const getAuthToken = () => {
@@ -235,6 +235,31 @@ export const userAPI = {
     });
   },
 
+  updateStudent: async (id, studentData) => {
+    // Map FE data to BE RegisterRequest format for update
+    console.log('Updating student with data:', studentData);
+
+    if (!studentData.email) {
+      throw new Error('Email is required');
+    }
+
+    const requestData = {
+      username: studentData.email,  // username is email in RegisterRequest
+      password: studentData.password || '1',  // Password may not be changed, but required by API
+      studentCode: studentData.studentCode || '',
+      roles: 'STUDENT',
+      phoneNumber: studentData.phoneNumber || '',
+      fullName: studentData.name
+    };
+
+    console.log('Update request data:', requestData);
+
+    return apiRequest(`/api/register/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(requestData),
+    });
+  },
+
   createSingleLecturer: async (lecturerData) => {
     // Map FE data to BE RegisterRequest format
     // Note: username in BE is actually email
@@ -257,6 +282,31 @@ export const userAPI = {
 
     return apiRequest('/api/aas/create-single-lecturer', {
       method: 'POST',
+      body: JSON.stringify(requestData),
+    });
+  },
+
+  updateLecturer: async (id, lecturerData) => {
+    // Map FE data to BE RegisterRequest format for update
+    console.log('Updating lecturer with data:', lecturerData);
+
+    if (!lecturerData.email) {
+      throw new Error('Email is required');
+    }
+
+    const requestData = {
+      username: lecturerData.email,  // username is email in RegisterRequest
+      password: lecturerData.password || '1',  // Password may not be changed, but required by API
+      studentCode: lecturerData.studentCode || '',
+      roles: 'LECTURER',
+      phoneNumber: lecturerData.phoneNumber || '',
+      fullName: lecturerData.name
+    };
+
+    console.log('Update request data:', requestData);
+
+    return apiRequest(`/api/register/${id}`, {
+      method: 'PUT',
       body: JSON.stringify(requestData),
     });
   },
@@ -1082,6 +1132,16 @@ export const classAssignmentAPI = {
     return apiRequest(`/api/class-assignments/${id}`, {
       method: 'DELETE',
     });
+  },
+
+  getUnassignedClasses: async () => {
+    const response = await apiRequest('/api/class-assignments/unassigned-classes');
+    // Handle ApiResponse format
+    if (response && response.data) {
+      return response.data;
+    }
+    // Fallback to direct array
+    return Array.isArray(response) ? response : [];
   }
 };
 
@@ -1204,6 +1264,13 @@ export const notificationAPI = {
       method: 'POST',
       body: JSON.stringify(payloads),
     });
+  },
+
+  markAsRead: async (notificationId) => {
+    const response = await apiRequest(`/api/notifications/mark-as-read/${notificationId}`, {
+      method: 'PUT',
+    });
+    return response.data || response;
   },
 };
 
