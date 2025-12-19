@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Card,
@@ -19,18 +19,63 @@ import {
   DialogActions,
   Alert,
   Grid,
-  Divider
+  Divider,
+  Snackbar
 } from '@mui/material';
 import { borrowingRequestAPI, notificationAPI } from './api';
+import webSocketService from './utils/websocket';
 
 function AdminRentalApprovalPage() {
   const [rentalRequests, setRentalRequests] = useState([]);
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [detailDialog, setDetailDialog] = useState(false);
   const [message, setMessage] = useState('');
+  const [snackbar, setSnackbar] = useState({ open: false, message: '' });
+  const subscriptionRef = useRef(null);
 
   useEffect(() => {
     fetchRentalRequests();
+
+    // Connect to WebSocket and subscribe to rental request updates
+    webSocketService.connect(
+      () => {
+        console.log('WebSocket connected for admin rental requests');
+        // Subscribe to new rental requests
+        subscriptionRef.current = webSocketService.subscribeToAdminRentalRequests((data) => {
+          console.log('Received new rental request via WebSocket:', data);
+          // Update the rental requests list
+          setRentalRequests(prev => {
+            // Check if request already exists
+            const exists = prev.find(req => req.id === data.id);
+            if (exists) {
+              // Update existing request
+              return prev.map(req => req.id === data.id ? data : req);
+            } else {
+              // Add new request if status is PENDING
+              if (data.status === 'PENDING') {
+                setSnackbar({
+                  open: true,
+                  message: `New rental request from ${data.requestedBy?.fullName || 'User'}`
+                });
+                return [data, ...prev];
+              }
+              return prev;
+            }
+          });
+        });
+      },
+      (error) => {
+        console.error('WebSocket connection error:', error);
+      }
+    );
+
+    // Cleanup on unmount
+    return () => {
+      if (subscriptionRef.current) {
+        webSocketService.unsubscribe(subscriptionRef.current);
+      }
+      webSocketService.disconnect();
+    };
   }, []);
 
   const fetchRentalRequests = async () => {
@@ -204,6 +249,15 @@ function AdminRentalApprovalPage() {
           </TableContainer>
         </CardContent>
       </Card>
+
+      {/* Snackbar for real-time notifications */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        message={snackbar.message}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+      />
 
       {/* Detail Dialog */}
       <Dialog open={detailDialog} onClose={() => setDetailDialog(false)} maxWidth="md" fullWidth>
