@@ -98,11 +98,13 @@ function TopUpPage({ user, onLogout }) {
   }, []);
 
   const handlePayPalReturn = async (paymentId, payerId) => {
+    setLoading(true);
     try {
       // Get stored payment info
       const storedPayment = sessionStorage.getItem('pendingPayPalPayment');
       if (!storedPayment) {
         message.error('Payment information not found');
+        setLoading(false);
         return;
       }
 
@@ -118,23 +120,36 @@ function TopUpPage({ user, onLogout }) {
       if (response && response.data) {
         message.success('Payment successful! Wallet balance has been updated.');
 
+        // Set transaction result for display
+        setTransactionResult({
+          transactionId: response.data.transactionId || paymentInfo.transactionId,
+          amount: paymentInfo.originalAmountVND || paymentInfo.amount
+        });
+
         // Clear stored payment info
         sessionStorage.removeItem('pendingPayPalPayment');
 
         // Clean URL
         window.history.replaceState({}, document.title, window.location.pathname);
 
-        // Redirect to portal after 1 second
-        setTimeout(() => {
-          handleBackToPortal();
-        }, 1000);
+        // Redirect to portal immediately after successful payment
+        handleBackToPortal();
       } else {
         message.error('Payment execution failed. Please try again.');
       }
     } catch (error) {
       console.error('PayPal payment execution error:', error);
-      message.error(error.message || 'Payment execution failed. Please try again.');
+      // Check if error is about payment already done
+      if (error.message && error.message.includes('PAYMENT_ALREADY_DONE')) {
+        message.success('Payment was already completed successfully!');
+        // Redirect to portal immediately
+        handleBackToPortal();
+      } else {
+        message.error(error.message || 'Payment execution failed. Please try again.');
+      }
       sessionStorage.removeItem('pendingPayPalPayment');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -195,7 +210,7 @@ function TopUpPage({ user, onLogout }) {
       const exchangeRate = 24000;
       const amountUSD = (topUpAmount / exchangeRate).toFixed(2);
 
-      // Get return URL based on user role
+      // Get return URL based on user role - return to portal so it can handle payment execution
       const userRole = user?.role?.toLowerCase();
       let returnPath = '/member'; // default
       switch (userRole) {

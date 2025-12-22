@@ -12,90 +12,26 @@ import {
   Typography,
   Space,
   Avatar,
-  Badge,
   Divider,
   List,
   Steps,
   Alert,
   Descriptions,
   Statistic,
-  Progress,
-  Switch,
   DatePicker,
   Select,
-  Modal,
-  Drawer,
-  Tabs,
-  Result,
   Empty,
-  Skeleton,
-  Spin,
-  notification
+  Spin
 } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeftOutlined,
   ShoppingOutlined,
   DollarOutlined,
-  CalendarOutlined,
   UserOutlined,
-  ToolOutlined,
   CheckCircleOutlined,
-  CloseCircleOutlined,
-  ClockCircleOutlined,
-  ExclamationCircleOutlined,
-  ReloadOutlined,
-  DownloadOutlined,
-  UploadOutlined,
-  SearchOutlined,
-  FilterOutlined,
-  BarChartOutlined,
-  PieChartOutlined,
-  LineChartOutlined,
-  BellOutlined,
-  MailOutlined,
-  EnvironmentOutlined,
-  TrophyOutlined,
-  SafetyCertificateOutlined,
-  BugOutlined,
-  BuildOutlined,
-  CarOutlined,
-  HomeOutlined,
-  BookOutlined,
-  ExperimentOutlined,
-  RobotOutlined,
-  WifiOutlined,
-  ThunderboltOutlined,
-  BulbOutlined,
-  HeartOutlined,
-  StarOutlined,
-  LikeOutlined,
-  DislikeOutlined,
-  QuestionCircleOutlined,
-  InfoCircleOutlined,
-  WarningOutlined,
-  CheckOutlined,
-  StopOutlined,
-  PlayCircleOutlined,
-  PauseCircleOutlined,
   StepForwardOutlined,
-  StepBackwardOutlined,
-  FastForwardOutlined,
-  FastBackwardOutlined,
-  ShuffleOutlined,
-  RetweetOutlined,
-  SwapOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
   LoadingOutlined,
-  RollbackOutlined,
-  WalletOutlined,
-  GiftOutlined,
-  CrownOutlined,
-  PlusOutlined,
-  EditOutlined,
-  DeleteOutlined,
-  EyeOutlined,
   LogoutOutlined
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -112,7 +48,6 @@ const { Header, Content } = Layout;
 const { Title, Text } = Typography;
 const { Option } = Select;
 const { TextArea } = Input;
-const { Step } = Steps;
 
 // Animation variants
 const pageVariants = {
@@ -163,22 +98,10 @@ function RentalRequestPage() {
     totalCost: 0
   });
   const [wallet, setWallet] = useState({ balance: 0, transactions: [] });
-  const [statusMessage, setStatusMessage] = useState('');
   const [loading, setLoading] = useState(false);
-  const [form] = Form.useForm();
   const [qrCodeData, setQrCodeData] = useState(null);
-  const [showQRCode, setShowQRCode] = useState(false);
 
-  useEffect(() => {
-    if (!selectedKitId || !user) {
-      navigate('/');
-      return;
-    }
-    fetchKitDetails();
-    fetchWallet();
-  }, [selectedKitId, user, navigate]);
-
-  const fetchKitDetails = async () => {
+  const fetchKitDetails = React.useCallback(async () => {
     try {
       setLoading(true);
       const response = await kitAPI.getKitById(selectedKitId);
@@ -202,7 +125,25 @@ function RentalRequestPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedKitId]);
+
+  useEffect(() => {
+    if (!selectedKitId || !user) {
+      navigate('/');
+      return;
+    }
+    fetchKitDetails();
+    fetchWallet();
+  }, [selectedKitId, user, navigate, fetchKitDetails]);
+
+  // Recalculate total cost when selectedKit changes
+  useEffect(() => {
+    if (selectedKit) {
+      // Calculate total cost as deposit amount (100% of kit amount)
+      const depositAmount = selectedKit.amount || 0;
+      setRentalData(prev => ({ ...prev, totalCost: depositAmount }));
+    }
+  }, [selectedKit]);
 
   const fetchWallet = async () => {
     try {
@@ -224,9 +165,10 @@ function RentalRequestPage() {
   };
 
   const calculateTotalCost = () => {
-    // Bỏ tính daily rate: không tự động tính totalCost theo ngày nữa
-    // Giữ nguyên totalCost hiện có (có thể điền/tính từ nơi khác), hoặc để 0
-    setRentalData(prev => ({ ...prev, totalCost: prev.totalCost || 0 }));
+    // Calculate total cost as deposit amount (100% of kit amount)
+    // This matches backend logic: deposit_amount = kit.getAmount()
+    const depositAmount = selectedKit ? (selectedKit.amount || 0) : 0;
+    setRentalData(prev => ({ ...prev, totalCost: depositAmount }));
   };
 
   const formatDateTimeForDisplay = (dateString) => {
@@ -248,7 +190,7 @@ function RentalRequestPage() {
   const handleNext = () => {
     if (currentStep === 0) {
       // Validate rental details
-      if (!rentalData.reason || !rentalData.expectReturnDate || !rentalData.requestType) {
+      if (!rentalData.reason || !rentalData.expectReturnDate) {
         message.error('Please fill in all required fields');
         return;
       }
@@ -264,21 +206,18 @@ function RentalRequestPage() {
       calculateTotalCost();
     }
     setCurrentStep(currentStep + 1);
-    setStatusMessage('');
   };
 
   const handleBack = () => {
     setCurrentStep(currentStep - 1);
-    setStatusMessage('');
   };
 
   const handleSubmitRental = async () => {
     setLoading(true);
-    setStatusMessage('');
 
     try {
-      // Check if wallet has enough balance for deposit (kit amount / 2)
-      const requiredAmount = selectedKit ? selectedKit.amount / 2 : 0;
+      // Check if wallet has enough balance for deposit (100% of kit amount)
+      const requiredAmount = selectedKit ? selectedKit.amount : 0;
       if (wallet.balance < requiredAmount) {
         message.error('Insufficient wallet balance. Please top up your wallet.');
         setLoading(false);
@@ -297,7 +236,6 @@ function RentalRequestPage() {
       });
 
       setQrCodeData(qrData);
-      setShowQRCode(true);
       setCurrentStep(2); // Move to QR code step
 
       // Submit borrowing request
@@ -326,8 +264,9 @@ function RentalRequestPage() {
         console.error('Error sending notifications:', notifyError);
       }
 
-      // Deduct money from wallet
-      await walletAPI.deduct(rentalData.totalCost, `Rental request for ${selectedKit.kitName}`);
+      // Deduct money from wallet (deposit amount = 100% of kit amount)
+      const depositAmount = selectedKit ? (selectedKit.amount || 0) : 0;
+      await walletAPI.deduct(depositAmount, `Rental request for ${selectedKit.kitName}`);
 
       message.success('Rental request submitted successfully! QR code generated.');
     } catch (error) {
@@ -422,17 +361,6 @@ function RentalRequestPage() {
                     </Form.Item>
                   </Col>
                   <Col xs={24} md={12}>
-                    <Form.Item label="Request Type" required>
-                      <Select
-                        value={rentalData.requestType}
-                        onChange={(value) => setRentalData({ ...rentalData, requestType: value })}
-                      >
-                        <Option value="BORROW_KIT">Borrow Kit</Option>
-                        <Option value="BORROW_COMPONENT">Borrow Component</Option>
-                      </Select>
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} md={12}>
                     <Form.Item label="Expected Return Date" required>
                       <DatePicker
                         showTime
@@ -507,7 +435,7 @@ function RentalRequestPage() {
                 <Col xs={24} md={8}>
                   <Statistic
                     title="Required Amount (Deposit)"
-                    value={selectedKit?.amount ? selectedKit.amount / 2 : 0}
+                    value={selectedKit?.amount ? selectedKit.amount : 0}
                     prefix={<DollarOutlined />}
                     suffix="VND"
                     valueStyle={{ color: '#fa8c16' }}
@@ -516,10 +444,10 @@ function RentalRequestPage() {
                 <Col xs={24} md={8}>
                   <Statistic
                     title="Remaining Balance"
-                    value={selectedKit ? wallet.balance - (selectedKit.amount / 2) : wallet.balance}
+                    value={selectedKit ? wallet.balance - selectedKit.amount : wallet.balance}
                     prefix={<DollarOutlined />}
                     suffix="VND"
-                    valueStyle={{ color: selectedKit && wallet.balance >= (selectedKit.amount / 2) ? '#52c41a' : '#f5222d' }}
+                    valueStyle={{ color: selectedKit && wallet.balance >= selectedKit.amount ? '#52c41a' : '#f5222d' }}
                   />
                 </Col>
               </Row>
@@ -529,15 +457,15 @@ function RentalRequestPage() {
               <Space direction="vertical" style={{ width: '100%' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Text>Balance Status:</Text>
-                  <Tag color={selectedKit && wallet.balance >= (selectedKit.amount / 2) ? 'success' : 'error'}>
-                    {selectedKit && wallet.balance >= (selectedKit.amount / 2) ? 'Sufficient' : 'Insufficient'}
+                  <Tag color={selectedKit && wallet.balance >= selectedKit.amount ? 'success' : 'error'}>
+                    {selectedKit && wallet.balance >= selectedKit.amount ? 'Sufficient' : 'Insufficient'}
                   </Tag>
                 </div>
 
-                {selectedKit && wallet.balance < (selectedKit.amount / 2) && (
+                {selectedKit && wallet.balance < selectedKit.amount && (
                   <Alert
                     message="Insufficient Balance"
-                    description={`You need ${(((selectedKit.amount / 2) || 0) - (wallet.balance || 0)).toLocaleString()} VND more to complete this rental.`}
+                    description={`You need ${((selectedKit.amount || 0) - (wallet.balance || 0)).toLocaleString()} VND more to complete this rental.`}
                     type="warning"
                     showIcon
                   />
@@ -914,7 +842,7 @@ function RentalRequestPage() {
                       type="primary"
                       size="large"
                       onClick={handleSubmitRental}
-                      disabled={loading || (selectedKit && wallet.balance < (selectedKit.amount / 2))}
+                      disabled={loading || (selectedKit && wallet.balance < selectedKit.amount)}
                       icon={<CheckCircleOutlined />}
                       style={{
                         borderRadius: '12px',
