@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Layout,
   Menu,
@@ -25,7 +25,9 @@ import {
   Modal,
   DatePicker,
   Switch,
-  Divider
+  Divider,
+  Select,
+  Pagination
 } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -52,10 +54,12 @@ import {
   EditOutlined,
   CheckCircleOutlined,
   UploadOutlined,
-  FileTextOutlined
+  SearchOutlined,
+  FilterOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { kitAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, walletTransactionAPI, borrowingRequestAPI, penaltiesAPI, penaltyDetailAPI, notificationAPI, authAPI, classAssignmentAPI, paymentAPI } from './api';
+import { kitAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, walletTransactionAPI, borrowingRequestAPI, penaltiesAPI, penaltyDetailAPI, notificationAPI, authAPI, classAssignmentAPI, paymentAPI, classesAPI } from './api';
+import webSocketService from './utils/websocket';
 import dayjs from 'dayjs';
 
 // Default wallet structure
@@ -91,6 +95,7 @@ const formatDateTimeDisplay = (dateString) => {
   return date.isValid() ? date.format('DD/MM/YYYY HH:mm') : 'N/A';
 };
 
+
 const getStatusColor = (status) => {
   switch (status?.toLowerCase()) {
     case 'available':
@@ -120,9 +125,7 @@ function LecturerPortal({ user, onLogout }) {
   const [groupDetailModal, setGroupDetailModal] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState(null);
 
-  // New state for fines/refunds and borrow status
-  const [lecturerFines, setLecturerFines] = useState([]);
-  const [lecturerRefunds, setLecturerRefunds] = useState([]);
+  // New state for borrow status
   const [borrowStatus, setBorrowStatus] = useState([]);
   const [penalties, setPenalties] = useState([]);
   const [penaltyDetails, setPenaltyDetails] = useState([]);
@@ -135,12 +138,16 @@ function LecturerPortal({ user, onLogout }) {
   // State for detail modal
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [selectedRentalDetail, setSelectedRentalDetail] = useState(null);
+  const [rentalComponents, setRentalComponents] = useState([]);
+  const [loadingComponents, setLoadingComponents] = useState(false);
 
   // State for kit detail modal
   const [kitDetailModalVisible, setKitDetailModalVisible] = useState(false);
   const [selectedKitDetail, setSelectedKitDetail] = useState(null);
   const [kitDetailModalType, setKitDetailModalType] = useState('kit-rental'); // 'kit-rental' or 'component-rental'
   const [componentQuantities, setComponentQuantities] = useState({}); // Store quantities for each component
+  const [componentPage, setComponentPage] = useState(1);
+  const [componentPageSize] = useState(6);
 
   // State for rent component modal
   const [rentComponentModalVisible, setRentComponentModalVisible] = useState(false);
@@ -162,15 +169,7 @@ function LecturerPortal({ user, onLogout }) {
     duration: 0.4
   };
 
-  useEffect(() => {
-    console.log('===== LecturerPortal useEffect triggered =====');
-    console.log('User:', user);
-    if (user) {
-      loadData();
-    }
-  }, [user]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     if (!user || !user.id) {
       console.warn('User or user.id is missing');
       setLoading(false);
@@ -314,6 +313,18 @@ function LecturerPortal({ user, onLogout }) {
           console.error('Error loading class assignments:', caError);
         }
 
+        // Load all classes to get semester information
+        let allClasses = [];
+        try {
+          const classesResponse = await classesAPI.getAllClasses();
+          allClasses = Array.isArray(classesResponse)
+            ? classesResponse
+            : (classesResponse?.data || []);
+          console.log('All classes:', allClasses);
+        } catch (classesError) {
+          console.error('Error loading classes:', classesError);
+        }
+
         // Load borrowing groups for each lecturer group
         const groupsWithMembers = await Promise.all(
           lecturerGroups.map(async (group) => {
@@ -322,7 +333,8 @@ function LecturerPortal({ user, onLogout }) {
               id: bg.accountId,
               name: bg.accountName,
               email: bg.accountEmail,
-              role: bg.roles
+              role: bg.roles,
+              studentCode: bg.studentCode || null
             }));
 
             const leaderMember = members.find(member => (member.role || '').toUpperCase() === 'LEADER');
@@ -331,6 +343,11 @@ function LecturerPortal({ user, onLogout }) {
             const classAssignments = group.classId
               ? allClassAssignments.filter(ca => ca.classId === group.classId)
               : [];
+
+            // Find class to get semester
+            const classInfo = group.classId
+              ? allClasses.find(cls => cls.id === group.classId)
+              : null;
 
             return {
               id: group.id,
@@ -344,6 +361,7 @@ function LecturerPortal({ user, onLogout }) {
               status: group.status ? 'active' : 'inactive',
               classId: group.classId,
               className: group.className,
+              semester: classInfo?.semester || null,
               classAssignments: classAssignments
             };
           })
@@ -399,10 +417,7 @@ function LecturerPortal({ user, onLogout }) {
         setBorrowStatus([]);
       }
 
-      // Set empty arrays for now (can be implemented with API later)
-      setLecturerFines([]);
-      setLecturerRefunds([]);
-      // borrowStatus is already set from API above (line 348)
+      // borrowStatus is already set from API above
 
       console.log('Lecturer data loaded successfully');
     } catch (error) {
@@ -411,14 +426,219 @@ function LecturerPortal({ user, onLogout }) {
     } finally {
       setLoading(false);
     }
+  }, [user]);
+
+  const handlePayPalReturn = useCallback(async (paymentId, payerId, loadDataFn) => {
+    try {
+      // Get stored payment info
+      const storedPayment = sessionStorage.getItem('pendingPayPalPayment');
+      if (!storedPayment) {
+        message.error('Payment information not found');
+        return;
+      }
+
+      const paymentInfo = JSON.parse(storedPayment);
+
+      // Execute PayPal payment
+      const response = await paymentAPI.executePayPalPayment(
+        paymentId,
+        payerId,
+        paymentInfo.transactionId
+      );
+
+      if (response && response.data) {
+        message.success('Payment successful! Wallet balance has been updated.');
+
+        // Clear stored payment info
+        sessionStorage.removeItem('pendingPayPalPayment');
+
+        // Clean URL immediately
+        window.history.replaceState({}, document.title, window.location.pathname);
+
+        // Wait a moment for backend to process the payment
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Reload wallet and data - reload wallet directly first
+        console.log('Reloading wallet after payment success...');
+        try {
+          // Reload wallet manually first
+          const walletResponse = await walletAPI.getMyWallet();
+          const walletData = walletResponse?.data || walletResponse || {};
+
+          // Fetch transaction history
+          let transactions = [];
+          try {
+            const transactionHistoryResponse = await walletTransactionAPI.getHistory();
+            const transactionData = Array.isArray(transactionHistoryResponse)
+              ? transactionHistoryResponse
+              : (transactionHistoryResponse?.data || []);
+
+            transactions = transactionData.map(txn => ({
+              type: txn.type || txn.transactionType || 'UNKNOWN',
+              amount: txn.amount || 0,
+              date: txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('vi-VN') : 'N/A',
+              description: txn.description || '',
+              status: txn.status || txn.transactionStatus || 'COMPLETED',
+              id: txn.id
+            }));
+          } catch (txnError) {
+            console.error('Error loading transaction history:', txnError);
+          }
+
+          setWallet({
+            balance: walletData.balance || 0,
+            transactions: transactions
+          });
+
+          // Call loadData to reload all data (kits, groups, penalties, etc.)
+          console.log('Calling loadData to reload all data...');
+          const loadDataToCall = loadDataFn || loadData;
+          console.log('loadData available:', loadDataToCall, 'Type:', typeof loadDataToCall);
+          if (loadDataToCall && typeof loadDataToCall === 'function') {
+            try {
+              await loadDataToCall();
+              console.log('loadData completed - all data reloaded');
+            } catch (loadError) {
+              console.error('Error calling loadData:', loadError);
+            }
+          } else {
+            console.warn('loadData not available, reloading page to ensure all data is refreshed');
+            // Force reload page to ensure all data is refreshed
+            setTimeout(() => {
+              window.location.reload();
+            }, 1000);
+          }
+        } catch (error) {
+          console.error('Error reloading wallet:', error);
+          // Fallback: reload the page
+          window.location.reload();
+        }
+      } else {
+        message.error('Payment execution failed. Please try again.');
+      }
+    } catch (error) {
+      console.error('PayPal payment execution error:', error);
+
+      // Check if error is about payment already done
+      if (error.message && (error.message.includes('PAYMENT_ALREADY_DONE') || error.message.includes('already completed'))) {
+        message.success('Payment was already completed successfully!');
+
+        // Clear stored payment info
+        sessionStorage.removeItem('pendingPayPalPayment');
+
+        // Clean URL immediately
+        window.history.replaceState({}, document.title, window.location.pathname);
+
+        // Wait a moment for backend to process
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Reload wallet and data
+        console.log('Reloading wallet after PAYMENT_ALREADY_DONE...');
+        try {
+          // Reload wallet manually first
+          const walletResponse = await walletAPI.getMyWallet();
+          const walletData = walletResponse?.data || walletResponse || {};
+
+          // Fetch transaction history
+          let transactions = [];
+          try {
+            const transactionHistoryResponse = await walletTransactionAPI.getHistory();
+            const transactionData = Array.isArray(transactionHistoryResponse)
+              ? transactionHistoryResponse
+              : (transactionHistoryResponse?.data || []);
+
+            transactions = transactionData.map(txn => ({
+              type: txn.type || txn.transactionType || 'UNKNOWN',
+              amount: txn.amount || 0,
+              date: txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('vi-VN') : 'N/A',
+              description: txn.description || '',
+              status: txn.status || txn.transactionStatus || 'COMPLETED',
+              id: txn.id
+            }));
+          } catch (txnError) {
+            console.error('Error loading transaction history:', txnError);
+          }
+
+          setWallet({
+            balance: walletData.balance || 0,
+            transactions: transactions
+          });
+
+          // Call loadData to reload all data (kits, groups, penalties, etc.)
+          console.log('Calling loadData to reload all data...');
+          const loadDataToCall = loadDataFn || loadData;
+          console.log('loadData available:', loadDataToCall, 'Type:', typeof loadDataToCall);
+          if (loadDataToCall && typeof loadDataToCall === 'function') {
+            try {
+              await loadDataToCall();
+              console.log('loadData completed - all data reloaded');
+            } catch (loadError) {
+              console.error('Error calling loadData:', loadError);
+            }
+          } else {
+            console.warn('loadData not available, reloading page to ensure all data is refreshed');
+            // Force reload page to ensure all data is refreshed
+            setTimeout(() => {
+              window.location.reload();
+            }, 1000);
+          }
+        } catch (error) {
+          console.error('Error reloading wallet:', error);
+          // Fallback: reload the page
+          window.location.reload();
+        }
+      } else {
+        message.error(error.message || 'Payment execution failed. Please try again.');
+        sessionStorage.removeItem('pendingPayPalPayment');
+      }
+    }
+  }, [loadData]);
+
+  const handlePayPalCancel = () => {
+    message.warning('Payment was cancelled');
+    sessionStorage.removeItem('pendingPayPalPayment');
+    window.history.replaceState({}, document.title, window.location.pathname);
   };
+
+  // Handle PayPal return callback at portal level
+  useEffect(() => {
+    if (!loadData) return; // Wait for loadData to be available
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const paymentId = urlParams.get('paymentId');
+    const payerId = urlParams.get('PayerID');
+
+    // Check if this is a PayPal return
+    if (paymentId && payerId) {
+      handlePayPalReturn(paymentId, payerId);
+    } else if (urlParams.get('cancel') === 'true' || window.location.pathname.includes('paypal-cancel')) {
+      handlePayPalCancel();
+    }
+  }, [loadData, handlePayPalReturn]);
+
+  useEffect(() => {
+    console.log('===== LecturerPortal useEffect triggered =====');
+    console.log('User:', user);
+    if (user) {
+      loadData();
+    }
+  }, [user, loadData]);
 
   const loadNotifications = async () => {
     try {
       setNotificationLoading(true);
       const response = await notificationAPI.getMyNotifications();
       const data = response?.data ?? response;
-      setNotifications(Array.isArray(data) ? data : []);
+      const notificationsArray = Array.isArray(data) ? data : [];
+
+      // Sort notifications by createdAt descending (newest first)
+      const sortedNotifications = notificationsArray.sort((a, b) => {
+        const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0);
+        const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0);
+        return dateB - dateA; // Descending order (newest first)
+      });
+
+      setNotifications(sortedNotifications);
     } catch (error) {
       console.error('Error loading notifications:', error);
       setNotifications([]);
@@ -427,11 +647,275 @@ function LecturerPortal({ user, onLogout }) {
     }
   };
 
+  const notificationSubscriptionRef = useRef(null);
+  const rentalRequestSubscriptionRef = useRef(null);
+  const walletSubscriptionRef = useRef(null);
+  const walletTransactionSubscriptionRef = useRef(null);
+  const penaltySubscriptionRef = useRef(null);
+  const groupSubscriptionRef = useRef(null);
+
   useEffect(() => {
     if (user && user.id) {
       loadNotifications();
+
+      // Connect to WebSocket and subscribe to user notifications
+      webSocketService.connect(
+        () => {
+          console.log('WebSocket connected for lecturer notifications');
+          const userId = user.id.toString();
+
+          // Subscribe to user notifications
+          notificationSubscriptionRef.current = webSocketService.subscribeToUserNotifications(userId, (data) => {
+            console.log('Received new notification via WebSocket:', data);
+            // Add new notification to the list
+            setNotifications(prev => {
+              const exists = prev.find(notif => notif.id === data.id);
+              if (!exists) {
+                // Show browser notification
+                notification.info({
+                  message: data.title || 'New Notification',
+                  description: data.message,
+                  placement: 'topRight',
+                  duration: 5,
+                });
+                // Add new notification at the beginning
+                return [data, ...prev];
+              }
+              return prev;
+            });
+          });
+
+          // Subscribe to rental request updates
+          rentalRequestSubscriptionRef.current = webSocketService.subscribeToUserRentalRequests(userId, (data) => {
+            console.log('Received rental request update via WebSocket:', data);
+
+            // Update borrowStatus when rental request status changes
+            setBorrowStatus(prev => {
+              const exists = prev.find(req => req.id === data.id);
+              if (exists) {
+                // Update existing request
+                const updated = prev.map(req => {
+                  if (req.id === data.id) {
+                    const borrowDate = data.borrowDate || data.startDate || data.createdAt;
+                    const dueDate = data.dueDate || data.expectReturnDate;
+                    const returnDate = data.returnDate || data.actualReturnDate || null;
+                    const normalizedStatus = (data.status || '').toUpperCase();
+
+                    let duration = data.duration;
+                    if (!duration && borrowDate && (returnDate || dueDate)) {
+                      const start = dayjs(borrowDate);
+                      const end = dayjs(returnDate || dueDate);
+                      if (start.isValid() && end.isValid()) {
+                        const diff = end.diff(start, 'day');
+                        duration = diff >= 0 ? diff : 0;
+                      }
+                    }
+
+                    return {
+                      ...req,
+                      kitName: data.kitName || data.kit?.kitName || req.kitName,
+                      requestType: data.requestType || data.type || req.requestType,
+                      borrowDate,
+                      dueDate,
+                      returnDate,
+                      status: normalizedStatus || req.status,
+                      totalCost: data.totalCost || data.cost || req.totalCost,
+                      depositAmount: data.depositAmount || data.deposit || req.depositAmount,
+                      duration: duration ?? req.duration,
+                      raw: data
+                    };
+                  }
+                  return req;
+                });
+
+                // Show notification if status changed to APPROVED or REJECTED
+                if (data.status === 'APPROVED' || data.status === 'REJECTED') {
+                  notification.info({
+                    message: data.status === 'APPROVED' ? 'Request Approved' : 'Request Rejected',
+                    description: `Your rental request for ${data.kit?.kitName || 'kit'} has been ${data.status.toLowerCase()}.`,
+                    placement: 'topRight',
+                    duration: 5,
+                  });
+                }
+
+                return updated;
+              } else {
+                // Add new request if it doesn't exist
+                const borrowDate = data.borrowDate || data.startDate || data.createdAt;
+                const dueDate = data.dueDate || data.expectReturnDate;
+                const returnDate = data.returnDate || data.actualReturnDate || null;
+                const normalizedStatus = (data.status || '').toUpperCase();
+
+                let duration = data.duration;
+                if (!duration && borrowDate && (returnDate || dueDate)) {
+                  const start = dayjs(borrowDate);
+                  const end = dayjs(returnDate || dueDate);
+                  if (start.isValid() && end.isValid()) {
+                    const diff = end.diff(start, 'day');
+                    duration = diff >= 0 ? diff : 0;
+                  }
+                }
+
+                const newRequest = {
+                  id: data.id,
+                  kitName: data.kitName || data.kit?.kitName || 'Unknown Kit',
+                  requestType: data.requestType || data.type || 'BORROW_KIT',
+                  rentalId: data.requestCode || data.rentalId || data.id || 'N/A',
+                  borrowDate,
+                  dueDate,
+                  returnDate,
+                  status: normalizedStatus || 'PENDING',
+                  totalCost: data.totalCost || data.cost || 0,
+                  depositAmount: data.depositAmount || data.deposit || 0,
+                  duration: duration ?? 0,
+                  groupName: data.groupName || data.studentGroupName || data.borrowingGroup?.groupName || 'N/A',
+                  raw: data
+                };
+
+                return [newRequest, ...prev];
+              }
+            });
+          });
+
+          // Subscribe to wallet updates
+          walletSubscriptionRef.current = webSocketService.subscribeToUserWallet(userId, async (data) => {
+            console.log('Received wallet update via WebSocket:', data);
+            if (data.balance !== undefined) {
+              setWallet(prev => ({
+                ...prev,
+                balance: data.balance
+              }));
+
+              // Reload wallet to ensure data is synchronized
+              try {
+                const walletResponse = await walletAPI.getMyWallet();
+                const walletData = walletResponse?.data || walletResponse;
+                if (walletData) {
+                  setWallet({
+                    balance: walletData.balance || 0,
+                    transactions: walletData.transactions || []
+                  });
+                }
+              } catch (error) {
+                console.error('Error reloading wallet after WebSocket update:', error);
+              }
+            }
+          });
+
+          // Subscribe to wallet transactions
+          walletTransactionSubscriptionRef.current = webSocketService.subscribeToUserWalletTransactions(userId, (data) => {
+            console.log('Received wallet transaction via WebSocket:', data);
+            setWallet(prev => {
+              const newTransaction = {
+                type: data.type || data.transactionType || 'UNKNOWN',
+                amount: data.amount || 0,
+                date: data.createdAt ? new Date(data.createdAt).toLocaleDateString('vi-VN') : 'N/A',
+                description: data.description || '',
+                status: data.status || data.transactionStatus || 'COMPLETED',
+                id: data.id
+              };
+
+              // Check if transaction already exists
+              const exists = prev.transactions.find(txn => txn.id === data.id);
+              if (!exists) {
+                // Add new transaction at the beginning
+                return {
+                  ...prev,
+                  transactions: [newTransaction, ...prev.transactions]
+                };
+              }
+              return prev;
+            });
+          });
+
+          // Subscribe to penalty updates
+          penaltySubscriptionRef.current = webSocketService.subscribeToUserPenalties(userId, (data) => {
+            console.log('Received penalty update via WebSocket:', data);
+            setPenalties(prev => {
+              const exists = prev.find(penalty => penalty.id === data.id);
+              if (!exists) {
+                // Add new penalty
+                notification.info({
+                  message: 'New Penalty',
+                  description: `You have a new penalty: ${data.note || 'Penalty assigned'}`,
+                  placement: 'topRight',
+                  duration: 5,
+                });
+                return [data, ...prev];
+              } else {
+                // Update existing penalty
+                return prev.map(penalty => penalty.id === data.id ? data : penalty);
+              }
+            });
+          });
+
+          // Subscribe to group updates (for lecturers)
+          groupSubscriptionRef.current = webSocketService.subscribeToUserGroups(userId, (data) => {
+            console.log('Received group update via WebSocket:', data);
+            setLecturerGroups(prev => {
+              const exists = prev.find(group => group.id === data.id);
+              if (exists) {
+                // Update existing group
+                return prev.map(group => {
+                  if (group.id === data.id) {
+                    return {
+                      ...group,
+                      name: data.groupName || group.name,
+                      lecturer: data.lecturerEmail || group.lecturer,
+                      lecturerName: data.lecturerName || group.lecturerName,
+                      status: data.status ? 'active' : 'inactive',
+                      classId: data.classId || group.classId,
+                      className: data.className || group.className
+                    };
+                  }
+                  return group;
+                });
+              } else {
+                // Add new group if lecturer matches
+                if (data.lecturerEmail === user.email || data.accountId === user.id) {
+                  notification.info({
+                    message: 'New Group',
+                    description: `A new group "${data.groupName}" has been assigned to you.`,
+                    placement: 'topRight',
+                    duration: 5,
+                  });
+                  // Note: We need to load full group details, so reload data
+                  loadData();
+                }
+                return prev;
+              }
+            });
+          });
+        },
+        (error) => {
+          console.error('WebSocket connection error:', error);
+        }
+      );
     }
-  }, [user]);
+
+    // Cleanup on unmount
+    return () => {
+      if (notificationSubscriptionRef.current) {
+        webSocketService.unsubscribe(notificationSubscriptionRef.current);
+      }
+      if (rentalRequestSubscriptionRef.current) {
+        webSocketService.unsubscribe(rentalRequestSubscriptionRef.current);
+      }
+      if (walletSubscriptionRef.current) {
+        webSocketService.unsubscribe(walletSubscriptionRef.current);
+      }
+      if (walletTransactionSubscriptionRef.current) {
+        webSocketService.unsubscribe(walletTransactionSubscriptionRef.current);
+      }
+      if (penaltySubscriptionRef.current) {
+        webSocketService.unsubscribe(penaltySubscriptionRef.current);
+      }
+      if (groupSubscriptionRef.current) {
+        webSocketService.unsubscribe(groupSubscriptionRef.current);
+      }
+      webSocketService.disconnect();
+    };
+  }, [user, loadData]);
 
   const unreadNotificationsCount = notifications.filter((item) => !item.isRead).length;
 
@@ -449,8 +933,27 @@ function LecturerPortal({ user, onLogout }) {
     }
   };
 
+  const handleNotificationClick = async (notification) => {
+    // Only mark as read if not already read
+    if (!notification.isRead && notification.id) {
+      try {
+        await notificationAPI.markAsRead(notification.id);
+        // Update notification state to mark as read
+        setNotifications(prev =>
+          prev.map(item =>
+            item.id === notification.id
+              ? { ...item, isRead: true }
+              : item
+          )
+        );
+      } catch (error) {
+        console.error('Error marking notification as read:', error);
+      }
+    }
+  };
+
   const renderNotificationContent = () => (
-    <div style={{ width: 320 }}>
+    <div style={{ width: 320, maxHeight: '400px', overflowY: 'auto' }}>
       <Spin spinning={notificationLoading}>
         {notifications.length > 0 ? (
           <List
@@ -459,13 +962,23 @@ function LecturerPortal({ user, onLogout }) {
             renderItem={(item) => {
               const typeInfo = notificationTypeStyles[item.type] || { color: 'blue', label: item.type };
               const notificationDate = item.createdAt ? formatDateTimeDisplay(item.createdAt) : 'N/A';
+              const isUnread = !item.isRead;
               return (
-                <List.Item style={{ alignItems: 'flex-start' }}>
+                <List.Item
+                  style={{
+                    alignItems: 'flex-start',
+                    backgroundColor: isUnread ? '#f0f7ff' : 'transparent',
+                    cursor: 'pointer',
+                    padding: '12px'
+                  }}
+                  onClick={() => handleNotificationClick(item)}
+                >
                   <List.Item.Meta
                     title={
                       <Space size={8} align="start">
                         <Tag color={typeInfo.color}>{typeInfo.label}</Tag>
-                        <Text strong>{item.title || item.subType}</Text>
+                        <Text strong={isUnread}>{item.title || item.subType}</Text>
+                        {isUnread && <Badge dot color="blue" />}
                       </Space>
                     }
                     description={
@@ -494,10 +1007,8 @@ function LecturerPortal({ user, onLogout }) {
     { key: 'kits', icon: <ToolOutlined />, label: 'Kit Rental' },
     { key: 'kit-component-rental', icon: <BuildOutlined />, label: 'Kit Component Rental' },
     { key: 'borrow-status', icon: <ShoppingOutlined />, label: 'Borrow Status' },
-    { key: 'fines-refunds', icon: <DollarOutlined />, label: 'Fines & Refunds' },
     { key: 'wallet', icon: <WalletOutlined />, label: 'Wallet' },
     { key: 'profile', icon: <UserOutlined />, label: 'Profile' },
-    { key: 'settings', icon: <SettingOutlined />, label: 'Settings' },
   ];
 
   const handleMenuClick = ({ key }) => {
@@ -513,6 +1024,46 @@ function LecturerPortal({ user, onLogout }) {
   };
 
   const handleRent = (kit) => {
+    // Check if lecturer has an approved or pending borrow request for a kit (kitType = Kit)
+    const activeKitRequest = borrowStatus.find(request => {
+      const requestType = (request.requestType || '').toUpperCase();
+      const status = (request.status || '').toUpperCase();
+      return requestType === 'BORROW_KIT' && (status === 'APPROVED' || status === 'PENDING');
+    });
+
+    if (activeKitRequest) {
+      const statusText = activeKitRequest.status === 'APPROVED'
+        ? 'approved'
+        : 'pending';
+      message.warning(`You already have a ${statusText} kit rental request. Please wait for the current request to be processed or rejected before renting a new one.`);
+      return;
+    }
+
+    // Check the most recent request for kit (kitType = Kit)
+    const kitRequests = borrowStatus
+      .filter(request => {
+        const requestType = (request.requestType || '').toUpperCase();
+        return requestType === 'BORROW_KIT';
+      })
+      .sort((a, b) => {
+        // Sort by createdAt descending (most recent first)
+        const dateA = a.raw?.createdAt ? new Date(a.raw.createdAt) : new Date(a.borrowDate || 0);
+        const dateB = b.raw?.createdAt ? new Date(b.raw.createdAt) : new Date(b.borrowDate || 0);
+        return dateB - dateA;
+      });
+
+    if (kitRequests.length > 0) {
+      const mostRecentRequest = kitRequests[0];
+      const mostRecentStatus = (mostRecentRequest.status || '').toUpperCase();
+
+      // Only allow if the most recent request is REJECTED
+      if (mostRecentStatus !== 'REJECTED') {
+        message.warning(`You cannot rent a new kit. Your most recent request status is: ${mostRecentRequest.status}. Please wait for the current request to be processed or rejected.`);
+        return;
+      }
+    }
+
+    // Validation passed, proceed to rental request page
     navigate('/rental-request', {
       state: {
         kitId: kit?.id,
@@ -535,14 +1086,32 @@ function LecturerPortal({ user, onLogout }) {
     setGroupDetailModal(true);
   };
 
-  const handleViewDetail = (rental) => {
+  const handleViewDetail = async (rental) => {
     setSelectedRentalDetail(rental);
     setDetailModalVisible(true);
+
+    // Fetch components if this is a component rental request
+    if (rental.requestType === 'BORROW_COMPONENT' && rental.id) {
+      setLoadingComponents(true);
+      try {
+        const components = await borrowingRequestAPI.getRequestComponents(rental.id);
+        console.log('Rental components:', components);
+        setRentalComponents(Array.isArray(components) ? components : []);
+      } catch (error) {
+        console.error('Error loading rental components:', error);
+        setRentalComponents([]);
+      } finally {
+        setLoadingComponents(false);
+      }
+    } else {
+      setRentalComponents([]);
+    }
   };
 
   const handleCloseDetailModal = () => {
     setDetailModalVisible(false);
     setSelectedRentalDetail(null);
+    setRentalComponents([]);
   };
 
   const handleViewKitDetail = (kit, modalType = 'kit-rental') => {
@@ -555,6 +1124,7 @@ function LecturerPortal({ user, onLogout }) {
     setKitDetailModalVisible(false);
     setSelectedKitDetail(null);
     setComponentQuantities({});
+    setComponentPage(1);
   };
 
   const handleComponentQuantityChange = (componentId, quantity) => {
@@ -959,10 +1529,8 @@ function LecturerPortal({ user, onLogout }) {
                 {selectedKey === 'kits' && <KitRental kits={kits} user={user} onRent={handleRent} onViewKitDetail={(kit) => handleViewKitDetail(kit, 'kit-rental')} />}
                 {selectedKey === 'kit-component-rental' && <KitComponentRental kits={kits} user={user} onViewKitDetail={(kit) => handleViewKitDetail(kit, 'component-rental')} onRentComponent={handleRentComponent} />}
                 {selectedKey === 'borrow-status' && <BorrowStatus borrowStatus={borrowStatus} onViewDetail={handleViewDetail} />}
-                {selectedKey === 'fines-refunds' && <FinesRefunds lecturerFines={lecturerFines} lecturerRefunds={lecturerRefunds} />}
                 {selectedKey === 'wallet' && <WalletManagement wallet={wallet} setWallet={setWallet} onTopUp={handleTopUp} onPayPenalties={handlePayPenalties} />}
                 {selectedKey === 'profile' && <ProfileManagement profile={profile} setProfile={setProfile} loading={profileLoading} setLoading={setProfileLoading} user={user} />}
-                {selectedKey === 'settings' && <Settings />}
               </motion.div>
             </AnimatePresence>
           </Spin>
@@ -1036,148 +1604,352 @@ function LecturerPortal({ user, onLogout }) {
 
       {/* Kit Detail Modal */}
       <Modal
-        title="Kit Details"
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <InfoCircleOutlined style={{ color: '#1890ff', fontSize: '20px' }} />
+            <span style={{ fontSize: '18px', fontWeight: 'bold' }}>Kit Details</span>
+          </div>
+        }
         open={kitDetailModalVisible}
         onCancel={handleCloseKitDetailModal}
         footer={[
-          <Button key="close" onClick={handleCloseKitDetailModal}>
+          <Button
+            key="close"
+            onClick={handleCloseKitDetailModal}
+            style={{
+              borderRadius: '8px',
+              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              border: 'none',
+              color: '#fff'
+            }}
+          >
             Close
           </Button>
         ]}
-        width={800}
+        width={900}
+        centered
+        destroyOnClose
       >
         {selectedKitDetail && (
           <div>
-            <Descriptions bordered column={2} style={{ marginBottom: 24 }}>
-              <Descriptions.Item label="Kit Name" span={2}>
-                <Text strong style={{ fontSize: '18px' }}>{selectedKitDetail.name}</Text>
+            <Descriptions bordered column={2} style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="Kit ID" span={2}>
+                <Text code style={{ fontSize: '14px' }}>{selectedKitDetail.id}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Kit Name">
+                <Text strong style={{ fontSize: '16px' }}>{selectedKitDetail.name || selectedKitDetail.kitName || 'N/A'}</Text>
               </Descriptions.Item>
               <Descriptions.Item label="Type">
-                <Tag color="blue">{selectedKitDetail.type || 'N/A'}</Tag>
+                <Tag
+                  color={selectedKitDetail.type === 'LECTURER_KIT' ? 'red' : selectedKitDetail.type === 'STUDENT_KIT' ? 'blue' : 'default'}
+                  style={{ fontSize: '13px', padding: '4px 12px' }}
+                >
+                  {selectedKitDetail.type || 'N/A'}
+                </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="Status">
-                <Tag color={getStatusColor(selectedKitDetail.status)}>
+                <Tag
+                  color={selectedKitDetail.status === 'AVAILABLE' ? 'green' : selectedKitDetail.status === 'BORROWED' ? 'orange' : 'red'}
+                  style={{ fontSize: '13px', padding: '4px 12px' }}
+                >
                   {selectedKitDetail.status || 'N/A'}
                 </Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="Available">
-                {selectedKitDetail.quantityAvailable || 0} / {selectedKitDetail.quantityTotal || 0}
+              <Descriptions.Item label="Total Quantity">
+                <Text strong style={{ fontSize: '15px', color: '#1890ff' }}>
+                  {selectedKitDetail.quantityTotal || 0}
+                </Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Available Quantity">
+                <Text strong style={{ fontSize: '15px', color: '#52c41a' }}>
+                  {selectedKitDetail.quantityAvailable || 0}
+                </Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="In Use Quantity">
+                <Text strong style={{ fontSize: '15px', color: '#faad14' }}>
+                  {(selectedKitDetail.quantityTotal || 0) - (selectedKitDetail.quantityAvailable || 0)}
+                </Text>
               </Descriptions.Item>
               <Descriptions.Item label="Amount">
-                <Text strong style={{ color: '#1890ff', fontSize: '16px' }}>
-                  {selectedKitDetail.amount?.toLocaleString() || '0'} VND
+                <Text strong style={{ fontSize: '15px', color: '#1890ff' }}>
+                  {selectedKitDetail.amount ? `${Number(selectedKitDetail.amount).toLocaleString()} VND` : '0 VND'}
+                </Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Total Components">
+                <Text strong style={{ fontSize: '15px' }}>
+                  {selectedKitDetail.components?.length || 0} components
                 </Text>
               </Descriptions.Item>
               <Descriptions.Item label="Description" span={2}>
-                {selectedKitDetail.description || 'No description'}
+                <Text>{selectedKitDetail.description || 'No description available'}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Image" span={2}>
+                {selectedKitDetail.imageUrl && selectedKitDetail.imageUrl !== 'null' && selectedKitDetail.imageUrl !== 'undefined' ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    {selectedKitDetail.imageUrl.startsWith('http') && (
+                      <img
+                        src={selectedKitDetail.imageUrl}
+                        alt="Kit"
+                        style={{
+                          maxWidth: '200px',
+                          maxHeight: '150px',
+                          borderRadius: '8px',
+                          border: '1px solid #d9d9d9',
+                          objectFit: 'cover'
+                        }}
+                        onError={(e) => {
+                          e.target.style.display = 'none';
+                        }}
+                      />
+                    )}
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<EyeOutlined />}
+                      onClick={() => window.open(selectedKitDetail.imageUrl, '_blank')}
+                      style={{
+                        borderRadius: '6px',
+                        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                        border: 'none',
+                        marginLeft: 'auto'
+                      }}
+                    >
+                      View Image
+                    </Button>
+                  </div>
+                ) : (
+                  <Text type="secondary">No image available</Text>
+                )}
               </Descriptions.Item>
             </Descriptions>
 
-            <Divider orientation="left">Kit Components</Divider>
+            <Divider orientation="left">
+              <Space>
+                <BuildOutlined style={{ color: '#1890ff' }} />
+                <Text strong style={{ fontSize: '16px' }}>Components ({selectedKitDetail.components?.length || 0})</Text>
+              </Space>
+            </Divider>
 
             {selectedKitDetail.components && selectedKitDetail.components.length > 0 ? (
-              <Table
-                dataSource={selectedKitDetail.components}
-                columns={[
-                  {
-                    title: 'Component Name',
-                    dataIndex: 'componentName',
-                    key: 'componentName',
-                  },
-                  {
-                    title: 'Amount',
-                    dataIndex: 'pricePerCom',
-                    key: 'pricePerCom',
-                    render: (pricePerCom) => (
-                      <Text strong style={{ color: '#1890ff' }}>
-                        {pricePerCom ? pricePerCom.toLocaleString() : '0'} VND
-                      </Text>
-                    )
-                  },
-                  {
-                    title: 'Type',
-                    dataIndex: 'componentType',
-                    key: 'componentType',
-                    render: (type) => <Tag color="purple">{type || 'N/A'}</Tag>
-                  },
-                  // Only show Available column for component-rental modal type
-                  ...(kitDetailModalType === 'component-rental' ? [
-                    {
-                      title: 'Available',
-                      dataIndex: 'quantityAvailable',
-                      key: 'quantityAvailable',
-                    }
-                  ] : []),
-                  {
-                    title: 'Description',
-                    dataIndex: 'description',
-                    key: 'description',
-                    ellipsis: true,
-                  },
-                  // Only show Quantity input and Actions column for component-rental modal type
-                  ...(kitDetailModalType === 'component-rental' ? [
-                    {
-                      title: 'Rent Quantity',
-                      key: 'rentQuantity',
-                      render: (_, record) => (
-                        <Input
-                          type="number"
-                          min={1}
-                          max={record.quantityAvailable || 0}
-                          value={componentQuantities[record.id] || 1}
-                          onChange={(e) => {
-                            const qty = parseInt(e.target.value) || 1;
-                            // Validate: ensure quantity doesn't exceed available
-                            const validQty = Math.min(qty, record.quantityAvailable || 0);
-                            handleComponentQuantityChange(record.id, validQty > 0 ? validQty : 1);
-                          }}
-                          onBlur={(e) => {
-                            const qty = parseInt(e.target.value) || 1;
-                            const available = record.quantityAvailable || 0;
-                            if (qty > available) {
-                              message.warning(`Quantity cannot exceed available amount (${available})`);
-                              handleComponentQuantityChange(record.id, available);
-                            }
-                          }}
-                          style={{ width: 80 }}
+              <div style={{ marginTop: 16 }}>
+                {/* Calculate pagination */}
+                {(() => {
+                  const startIndex = (componentPage - 1) * componentPageSize;
+                  const endIndex = startIndex + componentPageSize;
+                  const currentComponents = selectedKitDetail.components.slice(startIndex, endIndex);
+
+                  return (
+                    <>
+                      <Row gutter={[16, 16]}>
+                        {currentComponents.map((component, index) => (
+                          <Col xs={24} sm={12} md={8} key={component.id || index}>
+                            <motion.div
+                              initial={{ opacity: 0, y: 20 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ duration: 0.3, delay: index * 0.1 }}
+                              whileHover={{ y: -8 }}
+                            >
+                              <Card
+                                hoverable
+                                style={{
+                                  borderRadius: '16px',
+                                  overflow: 'hidden',
+                                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                                  border: '1px solid rgba(0,0,0,0.06)',
+                                  height: '100%',
+                                  display: 'flex',
+                                  flexDirection: 'column'
+                                }}
+                                cover={
+                                  <div
+                                    style={{
+                                      height: 200,
+                                      background: component.imageUrl
+                                        ? `url(${component.imageUrl}) center/cover`
+                                        : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      position: 'relative'
+                                    }}
+                                  >
+                                    {!component.imageUrl && (
+                                      <BuildOutlined style={{ fontSize: 48, color: '#fff', opacity: 0.8 }} />
+                                    )}
+                                    <div style={{
+                                      position: 'absolute',
+                                      top: 12,
+                                      right: 12
+                                    }}>
+                                      <Tag
+                                        color={
+                                          component.status === 'AVAILABLE' ? 'green' :
+                                          component.status === 'IN_USE' ? 'orange' :
+                                          component.status === 'MAINTENANCE' ? 'blue' :
+                                          component.status === 'DAMAGED' ? 'red' : 'default'
+                                        }
+                                        style={{
+                                          fontSize: '12px',
+                                          padding: '4px 12px',
+                                          borderRadius: '12px',
+                                          fontWeight: 'bold'
+                                        }}
+                                      >
+                                        {component.status || 'N/A'}
+                                      </Tag>
+                                    </div>
+                                  </div>
+                                }
+                              >
+                                <Card.Meta
+                                  title={
+                                    <Text
+                                      strong
+                                      style={{
+                                        fontSize: '16px',
+                                        color: '#2c3e50',
+                                        display: 'block',
+                                        marginBottom: 8
+                                      }}
+                                    >
+                                      {component.componentName || component.name || 'Unnamed Component'}
+                                    </Text>
+                                  }
+                                  description={
+                                    <div style={{ marginTop: 8 }}>
+                                      <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                                        <div>
+                                          <Tag
+                                            color="purple"
+                                            style={{
+                                              fontSize: '12px',
+                                              padding: '4px 12px',
+                                              borderRadius: '12px',
+                                              marginBottom: 8
+                                            }}
+                                          >
+                                            {component.componentType || 'N/A'}
+                                          </Tag>
+                                        </div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                          <Text type="secondary" style={{ fontSize: '13px' }}>
+                                            <strong>Total:</strong> {component.quantityTotal || component.quantity || 0}
+                                          </Text>
+                                          <Text type="secondary" style={{ fontSize: '13px', color: '#52c41a' }}>
+                                            <strong>Available:</strong> {component.quantityAvailable || 0}
+                                          </Text>
+                                        </div>
+                                        <div style={{ marginTop: 4 }}>
+                                          <Text strong style={{ color: '#1890ff', fontSize: '14px' }}>
+                                            Price: {component.pricePerCom ? Number(component.pricePerCom).toLocaleString() : 0} VND
+                                          </Text>
+                                        </div>
+                                        {kitDetailModalType === 'component-rental' && (
+                                          <>
+                                            <div style={{ marginTop: 8 }}>
+                                              <Input
+                                                type="number"
+                                                min={1}
+                                                max={component.quantityAvailable || 0}
+                                                value={componentQuantities[component.id] || 1}
+                                                onChange={(e) => {
+                                                  const qty = parseInt(e.target.value) || 1;
+                                                  const validQty = Math.min(qty, component.quantityAvailable || 0);
+                                                  handleComponentQuantityChange(component.id, validQty > 0 ? validQty : 1);
+                                                }}
+                                                onBlur={(e) => {
+                                                  const qty = parseInt(e.target.value) || 1;
+                                                  const available = component.quantityAvailable || 0;
+                                                  if (qty > available) {
+                                                    message.warning(`Quantity cannot exceed available amount (${available})`);
+                                                    handleComponentQuantityChange(component.id, available);
+                                                  }
+                                                }}
+                                                addonBefore="Qty:"
+                                                style={{ width: '100%' }}
+                                              />
+                                            </div>
+                                            <div style={{ marginTop: 8 }}>
+                                              <Button
+                                                type="primary"
+                                                block
+                                                icon={<ShoppingOutlined />}
+                                                onClick={() => {
+                                                  const qty = componentQuantities[component.id] || 1;
+                                                  const available = component.quantityAvailable || 0;
+                                                  if (qty > available) {
+                                                    message.error(`Cannot rent ${qty} items. Only ${available} available.`);
+                                                    return;
+                                                  }
+                                                  const componentWithQty = { ...component, rentQuantity: qty };
+                                                  handleRentComponent(componentWithQty);
+                                                }}
+                                                disabled={!component.quantityAvailable || component.quantityAvailable === 0}
+                                                style={{
+                                                  borderRadius: '8px',
+                                                  background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+                                                  border: 'none',
+                                                  fontWeight: 'bold'
+                                                }}
+                                              >
+                                                {component.quantityAvailable === 0 ? 'Sold Out' : 'Rent Component'}
+                                              </Button>
+                                            </div>
+                                          </>
+                                        )}
+                                        {component.link && (
+                                          <div style={{ marginTop: 8 }}>
+                                            <Button
+                                              type="link"
+                                              size="small"
+                                              onClick={() => window.open(component.link, '_blank')}
+                                              style={{ padding: 0, fontSize: '12px' }}
+                                            >
+                                              View Link →
+                                            </Button>
+                                          </div>
+                                        )}
+                                      </Space>
+                                    </div>
+                                  }
+                                />
+                              </Card>
+                            </motion.div>
+                          </Col>
+                        ))}
+                      </Row>
+
+                      {/* Pagination */}
+                      <div style={{
+                        marginTop: 24,
+                        display: 'flex',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        gap: 16
+                      }}>
+                        <Pagination
+                          current={componentPage}
+                          total={selectedKitDetail.components.length}
+                          pageSize={componentPageSize}
+                          onChange={(page) => setComponentPage(page)}
+                          showSizeChanger={false}
+                          showQuickJumper={false}
+                          showTotal={(total, range) =>
+                            `${range[0]}-${range[1]} of ${total} components`
+                          }
+                          style={{ marginTop: 16 }}
                         />
-                      ),
-                    },
-                    {
-                      title: 'Actions',
-                      key: 'actions',
-                      render: (_, record) => {
-                        const qty = componentQuantities[record.id] || 1;
-                        const available = record.quantityAvailable || 0;
-                        const exceedsAvailable = qty > available;
-                        const isSoldOut = available === 0;
-                        return (
-                          <Button
-                            size="small"
-                            type="primary"
-                            onClick={() => {
-                              if (qty > available) {
-                                message.error(`Cannot rent ${qty} items. Only ${available} available.`);
-                                return;
-                              }
-                              const componentWithQty = { ...record, rentQuantity: qty };
-                              handleRentComponent(componentWithQty);
-                            }}
-                            disabled={!available || available === 0 || exceedsAvailable}
-                          >
-                            {isSoldOut ? 'Sold out' : 'Rent'}
-                          </Button>
-                        );
-                      },
-                    }
-                  ] : []),
-                ]}
-                rowKey={(record, index) => record.id || index}
-                pagination={false}
-                size="small"
-              />
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
             ) : (
-              <Empty description="No components available" />
+              <Empty
+                description="No components available"
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                style={{ margin: '24px 0' }}
+              />
             )}
           </div>
         )}
@@ -1230,6 +2002,45 @@ function LecturerPortal({ user, onLogout }) {
             <Descriptions.Item label="Group" span={2}>
               {selectedRentalDetail.groupName}
             </Descriptions.Item>
+            {selectedRentalDetail.requestType === 'BORROW_COMPONENT' && (
+              <Descriptions.Item label="Kit Components" span={2}>
+                <Spin spinning={loadingComponents}>
+                  {rentalComponents.length > 0 ? (
+                    <div style={{ marginTop: 8 }}>
+                      {rentalComponents.map((component, index) => (
+                        <Card
+                          key={component.id || index}
+                          size="small"
+                          style={{
+                            marginBottom: 8,
+                            borderRadius: '8px',
+                            border: '1px solid #e8e8e8'
+                          }}
+                        >
+                          <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <Text strong style={{ fontSize: '14px' }}>
+                                {component.componentName || 'Unnamed Component'}
+                              </Text>
+                              <Tag color="purple" style={{ fontSize: '12px', fontWeight: 'bold' }}>
+                                Quantity: {component.quantity || 0}
+                              </Tag>
+                            </div>
+                            {component.kitComponentsId && (
+                              <Text type="secondary" style={{ fontSize: '12px' }}>
+                                Component ID: <Text code>{component.kitComponentsId.substring(0, 8)}...</Text>
+                              </Text>
+                            )}
+                          </Space>
+                        </Card>
+                      ))}
+                    </div>
+                  ) : !loadingComponents ? (
+                    <Text type="secondary">No components found for this rental</Text>
+                  ) : null}
+                </Spin>
+              </Descriptions.Item>
+            )}
           </Descriptions>
         )}
       </Modal>
@@ -1279,6 +2090,11 @@ function LecturerPortal({ user, onLogout }) {
                     <Descriptions.Item label="Class Name">
                       <Tag color="cyan">
                         {selectedGroup.className || 'N/A'}
+                      </Tag>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Semester">
+                      <Tag color="purple">
+                        {selectedGroup.semester || 'N/A'}
                       </Tag>
                     </Descriptions.Item>
                     <Descriptions.Item label="Group Leader">
@@ -1335,23 +2151,23 @@ function LecturerPortal({ user, onLogout }) {
                             )
                           ]}
                         >
-                          <List.Item.Meta
+                        <List.Item.Meta
                             avatar={
                               <Avatar style={{ backgroundColor: isLeader ? '#1890ff' : '#52c41a' }}>
                                 {isLeader ? 'L' : 'M'}
                               </Avatar>
                             }
-                            title={
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          title={
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <span>{member.accountName || member.accountEmail}</span>
                                 <Tag color={isLeader ? 'gold' : 'blue'} size="small">
                                   {member.roles}
-                                </Tag>
-                              </div>
-                            }
+                              </Tag>
+                            </div>
+                          }
                             description={`Email: ${member.accountEmail}`}
-                          />
-                        </List.Item>
+                        />
+                      </List.Item>
                       );
                     }}
                   />
@@ -1583,13 +2399,101 @@ const DashboardContent = ({ lecturerGroups, wallet, kits, penalties, penaltyDeta
 );
 
 // Groups Management Component
-const GroupsManagement = ({ lecturerGroups, onViewGroupDetails }) => (
-  <div>
-    <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-      <Card title="My Groups" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-        {lecturerGroups.length > 0 ? (
-          <Row gutter={[24, 24]}>
-            {lecturerGroups.map((group) => (
+const GroupsManagement = ({ lecturerGroups, onViewGroupDetails }) => {
+  const [searchText, setSearchText] = useState('');
+  const [selectedClassCode, setSelectedClassCode] = useState(null);
+  const [studentCodeSearch, setStudentCodeSearch] = useState('');
+
+  // Get unique class codes from groups
+  const classCodes = [...new Set(lecturerGroups
+    .map(group => group.className)
+    .filter(className => className && className.trim() !== '')
+  )].sort();
+
+  // Filter groups based on search and filters
+  const filteredGroups = lecturerGroups.filter(group => {
+    // Filter by search text (GroupName)
+    if (searchText && searchText.trim() !== '') {
+      const groupName = (group.name || '').toLowerCase();
+      if (!groupName.includes(searchText.toLowerCase())) {
+        return false;
+      }
+    }
+
+    // Filter by ClassCode
+    if (selectedClassCode) {
+      if (group.className !== selectedClassCode) {
+        return false;
+      }
+    }
+
+    // Filter by StudentCode (search)
+    if (studentCodeSearch && studentCodeSearch.trim() !== '') {
+      const searchLower = studentCodeSearch.toLowerCase();
+      const hasStudent = (group.members || []).some(
+        member => {
+          const memberStudentCode = (member.studentCode || '').toLowerCase();
+          return memberStudentCode.includes(searchLower);
+        }
+      );
+      if (!hasStudent) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  return (
+    <div>
+      <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+        <Card
+          title="My Groups"
+          style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+        >
+          {/* Filter and Search Section */}
+          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+            <Col xs={24} sm={24} md={8} lg={8}>
+              <Input
+                placeholder="Search by Group Name"
+                prefix={<SearchOutlined />}
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                allowClear
+                style={{ width: '100%' }}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8} lg={8}>
+              <Select
+                placeholder="Filter by Class Code"
+                value={selectedClassCode}
+                onChange={setSelectedClassCode}
+                allowClear
+                style={{ width: '100%' }}
+                suffixIcon={<FilterOutlined />}
+              >
+                {classCodes.map(classCode => (
+                  <Select.Option key={classCode} value={classCode}>
+                    {classCode}
+                  </Select.Option>
+                ))}
+              </Select>
+            </Col>
+            <Col xs={24} sm={12} md={8} lg={8}>
+              <Input
+                placeholder="Search by Student Code"
+                prefix={<SearchOutlined />}
+                value={studentCodeSearch}
+                onChange={(e) => setStudentCodeSearch(e.target.value)}
+                allowClear
+                style={{ width: '100%' }}
+              />
+            </Col>
+          </Row>
+
+          {filteredGroups.length > 0 ? (
+            <Row gutter={[24, 24]}>
+              {filteredGroups.map((group) => (
               <Col xs={24} md={12} lg={8} key={group.id}>
                 <motion.div
                   whileHover={{ scale: 1.02 }}
@@ -1618,6 +2522,9 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails }) => (
                     <Descriptions column={1} size="small">
                       <Descriptions.Item label="Class Name">
                         <Tag color="cyan">{group.className || 'N/A'}</Tag>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Semester">
+                        <Tag color="purple">{group.semester || 'N/A'}</Tag>
                       </Descriptions.Item>
                       <Descriptions.Item label="Class Assignments">
                         <Badge
@@ -1650,295 +2557,586 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails }) => (
                   </Card>
                 </motion.div>
               </Col>
-            ))}
-          </Row>
-        ) : (
-          <Empty description="No groups assigned yet" />
-        )}
-      </Card>
-    </motion.div>
-  </div>
-);
+              ))}
+            </Row>
+          ) : (
+            <Empty
+              description={
+                lecturerGroups.length === 0
+                  ? "No groups assigned yet"
+                  : "No groups found matching the filters"
+              }
+            />
+          )}
+        </Card>
+      </motion.div>
+    </div>
+  );
+};
 
 // Kit Rental Component
-const KitRental = ({ kits, user, onRent, onViewKitDetail }) => (
-  <div>
-    <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-      <Card title="Available Kits" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-        <Table
-          dataSource={kits.filter(kit => kit.quantityAvailable > 0)}
-          columns={[
-            {
-              title: 'Name',
-              dataIndex: 'name',
-              key: 'name',
-            },
-            {
-              title: 'Type',
-              dataIndex: 'type',
-              key: 'type',
-              render: (type) => (
-                <Tag color="blue">{type || 'N/A'}</Tag>
-              ),
-            },
-            {
-              title: 'Available',
-              dataIndex: 'quantityAvailable',
-              key: 'quantityAvailable',
-              render: (available, record) => `${available}/${record.quantityTotal || 0}`,
-            },
-            {
-              title: 'Amount',
-              dataIndex: 'amount',
-              key: 'amount',
-              render: (amount) => (amount !== undefined && amount !== null) ? `${Number(amount).toLocaleString()} VND` : '0 VND',
-              align: 'right',
-            },
-            {
-              title: 'Status',
-              dataIndex: 'status',
-              key: 'status',
-              render: (status) => {
-                const colors = {
-                  'AVAILABLE': 'success',
-                  'BORROWED': 'warning',
-                  'DAMAGED': 'error',
-                  'MAINTENANCE': 'processing'
-                };
-                return <Tag color={colors[status] || 'default'}>{status}</Tag>;
-              },
-            },
-            {
-              title: 'Description',
-              dataIndex: 'description',
-              key: 'description',
-              ellipsis: true,
-              width: 200,
-            },
-            {
-              title: 'Actions',
-              key: 'actions',
-              render: (_, record) => (
-                <Space>
-                  <Button
-                    type="primary"
-                    size="small"
-                    onClick={() => onRent(record)}
-                    disabled={record.quantityAvailable === 0}
-                  >
-                    Rent
-                  </Button>
-                  <Button
-                    size="small"
-                    icon={<EyeOutlined />}
-                    onClick={() => onViewKitDetail(record)}
-                  >
-                    Details
-                  </Button>
-                </Space>
-              ),
-            },
-          ]}
-          rowKey="id"
-          pagination={{
-            pageSize: 10,
-            showSizeChanger: true,
-            showTotal: (total) => `Total ${total} kits`,
+const KitRental = ({ kits, user, onRent, onViewKitDetail }) => {
+  const [searchText, setSearchText] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterType, setFilterType] = useState('all');
+
+  const { Option } = Select;
+
+  // Filter kits
+  const filteredKits = kits.filter(kit => {
+    // Filter by available quantity
+    if (kit.quantityAvailable <= 0) return false;
+
+    // Filter by search text
+    if (searchText && searchText.trim() !== '') {
+      const searchLower = searchText.toLowerCase();
+      const kitName = (kit.name || kit.kitName || '').toLowerCase();
+      const kitId = (kit.id || '').toString().toLowerCase();
+      if (!kitName.includes(searchLower) && !kitId.includes(searchLower)) {
+        return false;
+      }
+    }
+
+    // Filter by status
+    if (filterStatus !== 'all') {
+      if (kit.status !== filterStatus) {
+        return false;
+      }
+    }
+
+    // Filter by type
+    if (filterType !== 'all') {
+      if (kit.type !== filterType) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  return (
+    <div>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+      >
+        <Card
+          title="Kit Rental"
+          style={{
+            borderRadius: '20px',
+            background: 'rgba(255, 255, 255, 0.95)',
+            backdropFilter: 'blur(10px)',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            overflow: 'hidden'
           }}
-        />
-      </Card>
-    </motion.div>
-  </div>
-);
+          headStyle={{
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: '#fff',
+            borderBottom: 'none',
+            borderRadius: '20px 20px 0 0'
+          }}
+        >
+          {/* Search and Filter Section */}
+          <div style={{ marginBottom: 24 }}>
+            <Row gutter={16}>
+              <Col xs={24} sm={12} md={8}>
+                <Input
+                  placeholder="Search by name or ID..."
+                  prefix={<SearchOutlined />}
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  allowClear
+                  style={{
+                    borderRadius: '8px',
+                    height: 40
+                  }}
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Select
+                  placeholder="Filter by Status"
+                  value={filterStatus}
+                  onChange={setFilterStatus}
+                  style={{ width: '100%', borderRadius: '8px' }}
+                >
+                  <Option value="all">All Status</Option>
+                  <Option value="AVAILABLE">Available</Option>
+                  <Option value="BORROWED">Borrowed</Option>
+                  <Option value="MAINTENANCE">Maintenance</Option>
+                </Select>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Select
+                  placeholder="Filter by Type"
+                  value={filterType}
+                  onChange={setFilterType}
+                  style={{ width: '100%', borderRadius: '8px' }}
+                >
+                  <Option value="all">All Types</Option>
+                  <Option value="STUDENT_KIT">Student Kit</Option>
+                  <Option value="LECTURER_KIT">Lecturer Kit</Option>
+                </Select>
+              </Col>
+            </Row>
+          </div>
+
+          {/* Kit Catalog Grid */}
+          {filteredKits.length === 0 ? (
+            <Empty
+              description="No kits available for rental"
+              style={{ padding: '60px 0' }}
+            />
+          ) : (
+            <Row gutter={[24, 24]}>
+              {filteredKits.map((kit) => (
+                <Col xs={24} sm={12} md={8} lg={6} key={kit.id}>
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3 }}
+                    whileHover={{ y: -8 }}
+                  >
+                    <Card
+                      hoverable
+                      style={{
+                        borderRadius: '16px',
+                        overflow: 'hidden',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                        border: '1px solid rgba(0,0,0,0.06)',
+                        height: '100%',
+                        display: 'flex',
+                        flexDirection: 'column'
+                      }}
+                      cover={
+                        <div
+                          style={{
+                            height: 200,
+                            background: kit.imageUrl
+                              ? `url(${kit.imageUrl}) center/cover`
+                              : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            position: 'relative'
+                          }}
+                        >
+                          {!kit.imageUrl && (
+                            <ToolOutlined style={{ fontSize: 64, color: '#fff', opacity: 0.8 }} />
+                          )}
+                          <div style={{
+                            position: 'absolute',
+                            top: 12,
+                            right: 12
+                          }}>
+                            <Tag
+                              color={kit.status === 'AVAILABLE' ? 'green' : kit.status === 'BORROWED' ? 'orange' : 'red'}
+                              style={{
+                                fontSize: '12px',
+                                padding: '4px 12px',
+                                borderRadius: '12px',
+                                fontWeight: 'bold'
+                              }}
+                            >
+                              {kit.status}
+                            </Tag>
+                          </div>
+                        </div>
+                      }
+                      actions={[
+                        <motion.div
+                          key="rent"
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                        >
+                          <Button
+                            type="primary"
+                            icon={<ShoppingOutlined />}
+                            onClick={() => onRent(kit)}
+                            disabled={kit.quantityAvailable === 0}
+                            style={{
+                              color: '#fff',
+                              width: '100%',
+                              borderRadius: '8px',
+                              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                              border: 'none',
+                              fontWeight: 'bold'
+                            }}
+                          >
+                            Rent
+                          </Button>
+                        </motion.div>,
+                        <motion.div
+                          key="view"
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                        >
+                          <Button
+                            type="text"
+                            icon={<EyeOutlined />}
+                            onClick={() => onViewKitDetail(kit)}
+                            style={{ color: '#52c41a' }}
+                          >
+                            View Details
+                          </Button>
+                        </motion.div>
+                      ]}
+                    >
+                      <Card.Meta
+                        title={
+                          <Text
+                            strong
+                            style={{
+                              fontSize: '18px',
+                              cursor: 'pointer',
+                              color: '#2c3e50'
+                            }}
+                            onClick={() => onViewKitDetail(kit)}
+                          >
+                            {kit.name || kit.kitName || 'Unnamed Kit'}
+                          </Text>
+                        }
+                        description={
+                          <div style={{ marginTop: 12 }}>
+                            <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                              <div>
+                                <Tag
+                                  color={kit.type === 'LECTURER_KIT' ? 'red' : 'blue'}
+                                  style={{
+                                    fontSize: '12px',
+                                    padding: '4px 12px',
+                                    borderRadius: '12px',
+                                    marginBottom: 8
+                                  }}
+                                >
+                                  {kit.type === 'LECTURER_KIT' ? 'Lecturer Kit' : 'Student Kit'}
+                                </Tag>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Text type="secondary" style={{ fontSize: '13px' }}>
+                                  <strong>Total:</strong> {kit.quantityTotal || 0}
+                                </Text>
+                                <Text type="secondary" style={{ fontSize: '13px' }}>
+                                  <strong>Available:</strong> {kit.quantityAvailable || 0}
+                                </Text>
+                              </div>
+                              <div style={{ marginTop: 8 }}>
+                                <Text strong style={{ fontSize: '14px', color: '#1890ff' }}>
+                                  {kit.amount ? `${Number(kit.amount).toLocaleString()} VND` : '0 VND'}
+                                </Text>
+                              </div>
+                              {kit.description && (
+                                <div style={{ marginTop: 8 }}>
+                                  <Text type="secondary" style={{ fontSize: '12px' }} ellipsis>
+                                    {kit.description}
+                                  </Text>
+                                </div>
+                              )}
+                            </Space>
+                          </div>
+                        }
+                      />
+                    </Card>
+                  </motion.div>
+                </Col>
+              ))}
+            </Row>
+          )}
+
+          {/* Pagination Info */}
+          {filteredKits.length > 0 && (
+            <div style={{ marginTop: 24, textAlign: 'center' }}>
+              <Text type="secondary">
+                Showing {filteredKits.length} of {kits.filter(k => k.quantityAvailable > 0).length} available kit(s)
+              </Text>
+            </div>
+          )}
+        </Card>
+      </motion.div>
+    </div>
+  );
+};
 
 // Kit Component Rental Component
-const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) => (
-  <div>
-    <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-      <Card title="Available Kits for Component Rental" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-        <Table
-          dataSource={kits.filter(kit => kit.quantityAvailable > 0)}
-          columns={[
-            {
-              title: 'Name',
-              dataIndex: 'name',
-              key: 'name',
-            },
-            {
-              title: 'Type',
-              dataIndex: 'type',
-              key: 'type',
-              render: (type) => (
-                <Tag color="blue">{type || 'N/A'}</Tag>
-              ),
-            },
-            {
-              title: 'Available',
-              dataIndex: 'quantityAvailable',
-              key: 'quantityAvailable',
-              render: (available, record) => `${available}/${record.quantityTotal || 0}`,
-            },
-            {
-              title: 'Amount',
-              dataIndex: 'amount',
-              key: 'amount',
-              render: (amount) => (amount !== undefined && amount !== null) ? `${Number(amount).toLocaleString()} VND` : '0 VND',
-              align: 'right',
-            },
-            {
-              title: 'Status',
-              dataIndex: 'status',
-              key: 'status',
-              render: (status) => {
-                const colors = {
-                  'AVAILABLE': 'success',
-                  'BORROWED': 'warning',
-                  'DAMAGED': 'error',
-                  'MAINTENANCE': 'processing'
-                };
-                return <Tag color={colors[status] || 'default'}>{status}</Tag>;
-              },
-            },
-            {
-              title: 'Description',
-              dataIndex: 'description',
-              key: 'description',
-              ellipsis: true,
-              width: 200,
-            },
-            {
-              title: 'Actions',
-              key: 'actions',
-              render: (_, record) => (
-                <Button
-                  size="small"
-                  icon={<EyeOutlined />}
-                  onClick={() => onViewKitDetail(record)}
-                >
-                  Details
-                </Button>
-              ),
-            },
-          ]}
-          rowKey="id"
-          pagination={{
-            pageSize: 10,
-            showSizeChanger: true,
-            showTotal: (total) => `Total ${total} kits`,
+const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) => {
+  const [searchText, setSearchText] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterType, setFilterType] = useState('all');
+
+  const { Option } = Select;
+
+  // Filter kits
+  const filteredKits = kits.filter(kit => {
+    // Filter by available quantity
+    if (kit.quantityAvailable <= 0) return false;
+
+    // Filter by search text
+    if (searchText && searchText.trim() !== '') {
+      const searchLower = searchText.toLowerCase();
+      const kitName = (kit.name || kit.kitName || '').toLowerCase();
+      const kitId = (kit.id || '').toString().toLowerCase();
+      if (!kitName.includes(searchLower) && !kitId.includes(searchLower)) {
+        return false;
+      }
+    }
+
+    // Filter by status
+    if (filterStatus !== 'all') {
+      if (kit.status !== filterStatus) {
+        return false;
+      }
+    }
+
+    // Filter by type
+    if (filterType !== 'all') {
+      if (kit.type !== filterType) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  return (
+    <div>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+      >
+        <Card
+          title="Kit Component Rental"
+          style={{
+            borderRadius: '20px',
+            background: 'rgba(255, 255, 255, 0.95)',
+            backdropFilter: 'blur(10px)',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            overflow: 'hidden'
           }}
-        />
-      </Card>
-    </motion.div>
-  </div>
-);
+          headStyle={{
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: '#fff',
+            borderBottom: 'none',
+            borderRadius: '20px 20px 0 0'
+          }}
+        >
+          {/* Search and Filter Section */}
+          <div style={{ marginBottom: 24 }}>
+            <Row gutter={16}>
+              <Col xs={24} sm={12} md={8}>
+                <Input
+                  placeholder="Search by name or ID..."
+                  prefix={<SearchOutlined />}
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  allowClear
+                  style={{
+                    borderRadius: '8px',
+                    height: 40
+                  }}
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Select
+                  placeholder="Filter by Status"
+                  value={filterStatus}
+                  onChange={setFilterStatus}
+                  style={{ width: '100%', borderRadius: '8px' }}
+                >
+                  <Option value="all">All Status</Option>
+                  <Option value="AVAILABLE">Available</Option>
+                  <Option value="BORROWED">Borrowed</Option>
+                  <Option value="MAINTENANCE">Maintenance</Option>
+                </Select>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Select
+                  placeholder="Filter by Type"
+                  value={filterType}
+                  onChange={setFilterType}
+                  style={{ width: '100%', borderRadius: '8px' }}
+                >
+                  <Option value="all">All Types</Option>
+                  <Option value="STUDENT_KIT">Student Kit</Option>
+                  <Option value="LECTURER_KIT">Lecturer Kit</Option>
+                </Select>
+              </Col>
+            </Row>
+          </div>
+
+          {/* Kit Catalog Grid */}
+          {filteredKits.length === 0 ? (
+            <Empty
+              description="No kits available for component rental"
+              style={{ padding: '60px 0' }}
+            />
+          ) : (
+            <Row gutter={[24, 24]}>
+              {filteredKits.map((kit) => (
+                <Col xs={24} sm={12} md={8} lg={6} key={kit.id}>
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3 }}
+                    whileHover={{ y: -8 }}
+                  >
+                    <Card
+                      hoverable
+                      style={{
+                        borderRadius: '16px',
+                        overflow: 'hidden',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                        border: '1px solid rgba(0,0,0,0.06)',
+                        height: '100%',
+                        display: 'flex',
+                        flexDirection: 'column'
+                      }}
+                      cover={
+                        <div
+                          style={{
+                            height: 200,
+                            background: kit.imageUrl
+                              ? `url(${kit.imageUrl}) center/cover`
+                              : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            position: 'relative'
+                          }}
+                        >
+                          {!kit.imageUrl && (
+                            <BuildOutlined style={{ fontSize: 64, color: '#fff', opacity: 0.8 }} />
+                          )}
+                          <div style={{
+                            position: 'absolute',
+                            top: 12,
+                            right: 12
+                          }}>
+                            <Tag
+                              color={kit.status === 'AVAILABLE' ? 'green' : kit.status === 'BORROWED' ? 'orange' : 'red'}
+                              style={{
+                                fontSize: '12px',
+                                padding: '4px 12px',
+                                borderRadius: '12px',
+                                fontWeight: 'bold'
+                              }}
+                            >
+                              {kit.status}
+                            </Tag>
+                          </div>
+                        </div>
+                      }
+                      actions={[
+                        <motion.div
+                          key="view"
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                        >
+                          <Button
+                            type="primary"
+                            icon={<EyeOutlined />}
+                            onClick={() => onViewKitDetail(kit)}
+                            style={{
+                              color: '#fff',
+                              width: '100%',
+                              borderRadius: '8px',
+                              background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+                              border: 'none',
+                              fontWeight: 'bold'
+                            }}
+                          >
+                            View Components
+                          </Button>
+                        </motion.div>
+                      ]}
+                    >
+                      <Card.Meta
+                        title={
+                          <Text
+                            strong
+                            style={{
+                              fontSize: '18px',
+                              cursor: 'pointer',
+                              color: '#2c3e50'
+                            }}
+                            onClick={() => onViewKitDetail(kit)}
+                          >
+                            {kit.name || kit.kitName || 'Unnamed Kit'}
+                          </Text>
+                        }
+                        description={
+                          <div style={{ marginTop: 12 }}>
+                            <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                              <div>
+                                <Tag
+                                  color={kit.type === 'LECTURER_KIT' ? 'red' : 'blue'}
+                                  style={{
+                                    fontSize: '12px',
+                                    padding: '4px 12px',
+                                    borderRadius: '12px',
+                                    marginBottom: 8
+                                  }}
+                                >
+                                  {kit.type === 'LECTURER_KIT' ? 'Lecturer Kit' : 'Student Kit'}
+                                </Tag>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Text type="secondary" style={{ fontSize: '13px' }}>
+                                  <strong>Total:</strong> {kit.quantityTotal || 0}
+                                </Text>
+                                <Text type="secondary" style={{ fontSize: '13px' }}>
+                                  <strong>Available:</strong> {kit.quantityAvailable || 0}
+                                </Text>
+                              </div>
+                              <div style={{ marginTop: 8 }}>
+                                <Text type="secondary" style={{ fontSize: '13px' }}>
+                                  <strong>Components:</strong> {kit.components?.length || 0}
+                                </Text>
+                              </div>
+                              {kit.description && (
+                                <div style={{ marginTop: 8 }}>
+                                  <Text type="secondary" style={{ fontSize: '12px' }} ellipsis>
+                                    {kit.description}
+                                  </Text>
+                                </div>
+                              )}
+                            </Space>
+                          </div>
+                        }
+                      />
+                    </Card>
+                  </motion.div>
+                </Col>
+              ))}
+            </Row>
+          )}
+
+          {/* Pagination Info */}
+          {filteredKits.length > 0 && (
+            <div style={{ marginTop: 24, textAlign: 'center' }}>
+              <Text type="secondary">
+                Showing {filteredKits.length} of {kits.filter(k => k.quantityAvailable > 0).length} available kit(s)
+              </Text>
+            </div>
+          )}
+        </Card>
+      </motion.div>
+    </div>
+  );
+};
 
 
 // Wallet Management Component
 const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [detailsModalVisible, setDetailsModalVisible] = useState(false);
+  const [selectedTransaction, setSelectedTransaction] = useState(null);
 
-  useEffect(() => {
-    loadTransactionHistory();
-
-    // Handle PayPal return callback
-    const urlParams = new URLSearchParams(window.location.search);
-    const paymentId = urlParams.get('paymentId');
-    const payerId = urlParams.get('PayerID');
-
-    // Check if this is a PayPal return
-    if (paymentId && payerId) {
-      handlePayPalReturn(paymentId, payerId);
-    } else if (urlParams.get('cancel') === 'true' || window.location.pathname.includes('paypal-cancel')) {
-      handlePayPalCancel();
-    }
-  }, []);
-
-  const handlePayPalReturn = async (paymentId, payerId) => {
-    try {
-      // Get stored payment info
-      const storedPayment = sessionStorage.getItem('pendingPayPalPayment');
-      if (!storedPayment) {
-        message.error('Payment information not found');
-        return;
-      }
-
-      const paymentInfo = JSON.parse(storedPayment);
-
-      // Execute PayPal payment
-      const response = await paymentAPI.executePayPalPayment(
-        paymentId,
-        payerId,
-        paymentInfo.transactionId
-      );
-
-      if (response && response.data) {
-        message.success('Payment successful! Wallet balance has been updated.');
-
-        // Clear stored payment info
-        sessionStorage.removeItem('pendingPayPalPayment');
-
-        // Clean URL
-        window.history.replaceState({}, document.title, window.location.pathname);
-
-        // Wait a moment for backend to process the payment
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        // Reload wallet directly to ensure balance is updated
-        try {
-          const walletResponse = await walletAPI.getMyWallet();
-          console.log('Wallet API response after payment:', walletResponse);
-
-          const walletData = walletResponse?.data || walletResponse || {};
-          console.log('Parsed wallet data:', walletData);
-          console.log('Wallet balance value:', walletData.balance, 'Type:', typeof walletData.balance);
-
-          // Parse balance - handle both number and string formats
-          let balance = 0;
-          if (walletData.balance !== undefined && walletData.balance !== null) {
-            balance = typeof walletData.balance === 'string'
-              ? parseFloat(walletData.balance)
-              : Number(walletData.balance);
-          }
-
-          console.log('Final balance to set:', balance);
-
-          // Update wallet state using setWallet prop
-          if (setWallet) {
-            setWallet(prevWallet => {
-              const updatedWallet = {
-                ...prevWallet,
-                balance: balance || 0
-              };
-              console.log('Updated wallet state:', updatedWallet);
-              return updatedWallet;
-            });
-          }
-        } catch (walletError) {
-          console.error('Error reloading wallet:', walletError);
-          message.warning('Payment successful but failed to refresh wallet. Please refresh the page.');
-        }
-
-        // Reload wallet and transactions
-        await loadTransactionHistory();
-
-        // Also trigger parent component to reload wallet if loadData is available
-        // Note: We already updated wallet state above, but this ensures parent component is in sync
-      } else {
-        message.error('Payment execution failed. Please try again.');
-      }
-    } catch (error) {
-      console.error('PayPal payment execution error:', error);
-      message.error(error.message || 'Payment execution failed. Please try again.');
-      sessionStorage.removeItem('pendingPayPalPayment');
-    }
-  };
-
-  const handlePayPalCancel = () => {
-    message.warning('Payment was cancelled');
-    sessionStorage.removeItem('pendingPayPalPayment');
-    window.history.replaceState({}, document.title, window.location.pathname);
-  };
+  // Note: PayPal return is handled at portal level, not here
+  // Removed handlePayPalReturn from WalletManagement to avoid duplicate notifications
 
   const loadTransactionHistory = async () => {
     try {
@@ -1961,6 +3159,33 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    loadTransactionHistory();
+    // Note: PayPal return is handled at portal level, not here
+  }, []);
+
+  const handleShowDetails = (transaction) => {
+    setSelectedTransaction(transaction);
+    setDetailsModalVisible(true);
+  };
+
+  const handleCloseDetails = () => {
+    setDetailsModalVisible(false);
+    setSelectedTransaction(null);
+  };
+
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'currency',
+      currency: 'VND'
+    }).format(amount || 0);
+  };
+
+  const formatDateTime = (dateTimeString) => {
+    if (!dateTimeString) return 'N/A';
+    return new Date(dateTimeString).toLocaleString('vi-VN');
   };
 
   return (
@@ -2044,22 +3269,22 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
                           border: '1.5px solid #e0e0e0',
                           text: '#333'
                         };
-                        switch ((type || '').toUpperCase()) {
+                        switch ((type||'').toUpperCase()) {
                           case 'TOP_UP':
                           case 'TOPUP':
-                            config = { label: 'Nạp tiền', color: 'success', icon: <DollarOutlined />, bg: '#e8f8ee', border: '1.5px solid #52c41a', text: '#2a8731' }; break;
+                            config = { label: 'Nạp tiền', color: 'success', icon: <DollarOutlined />, bg: '#e8f8ee', border: '1.5px solid #52c41a', text:'#2a8731'}; break;
                           case 'RENTAL_FEE':
-                            config = { label: 'Thuê kit', color: 'geekblue', icon: <ShoppingOutlined />, bg: '#e6f7ff', border: '1.5px solid #177ddc', text: '#177ddc' }; break;
+                            config = { label: 'Thuê kit', color: 'geekblue', icon: <ShoppingOutlined />, bg: '#e6f7ff', border: '1.5px solid #177ddc', text:'#177ddc' }; break;
                           case 'PENALTY_PAYMENT':
                           case 'PENALTY':
                           case 'FINE':
-                            config = { label: 'Phí phạt', color: 'error', icon: <ExclamationCircleOutlined />, bg: '#fff1f0', border: '1.5px solid #ff4d4f', text: '#d4001a' }; break;
+                            config = { label: 'Phí phạt', color: 'error', icon: <ExclamationCircleOutlined />, bg: '#fff1f0', border:'1.5px solid #ff4d4f', text:'#d4001a'}; break;
                           case 'REFUND':
-                            config = { label: 'Hoàn tiền', color: 'purple', icon: <RollbackOutlined />, bg: '#f9f0ff', border: '1.5px solid #722ed1', text: '#722ed1' }; break;
+                            config = { label: 'Hoàn tiền', color:'purple', icon: <RollbackOutlined />, bg:'#f9f0ff', border:'1.5px solid #722ed1', text:'#722ed1' }; break;
                           default:
-                            config = { label: type || 'Khác', color: 'default', icon: <InfoCircleOutlined />, bg: '#fafafa', border: '1.5px solid #bfbfbf', text: '#595959' };
+                            config = { label: type || 'Khác', color:'default', icon:<InfoCircleOutlined/>, bg:'#fafafa', border:'1.5px solid #bfbfbf', text:'#595959'};
                         }
-                        return <Tag color={config.color} style={{ background: config.bg, border: config.border, color: config.text, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, letterSpacing: 1 }}>
+                        return <Tag color={config.color} style={{background: config.bg, border:config.border, color:config.text,fontWeight:'bold', display:'flex', alignItems:'center', gap:4, fontSize:13, letterSpacing:1}}>
                           {config.icon} <span>{config.label}</span>
                         </Tag>;
                       }
@@ -2097,14 +3322,33 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
                       key: 'status',
                       render: (status) => {
                         const statusColor = status === 'COMPLETED' || status === 'SUCCESS' ? 'success' :
-                          status === 'PENDING' ? 'processing' :
-                            status === 'FAILED' ? 'error' : 'default';
+                                          status === 'PENDING' ? 'processing' :
+                                          status === 'FAILED' ? 'error' : 'default';
                         return (
                           <Tag color={statusColor}>
                             {status || 'N/A'}
                           </Tag>
                         );
                       },
+                    },
+                    {
+                      title: 'Details',
+                      key: 'details',
+                      render: (_, record) => (
+                        <motion.div
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                        >
+                          <Button
+                            type="default"
+                            size="small"
+                            icon={<EyeOutlined />}
+                            onClick={() => handleShowDetails(record)}
+                          >
+                            Details
+                          </Button>
+                        </motion.div>
+                      )
                     },
                   ]}
                   rowKey={(record, index) => record.id || record.transactionId || index}
@@ -2120,12 +3364,107 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
           </motion.div>
         </Col>
       </Row>
+
+      {/* Transaction Details Modal */}
+      <Modal
+        title="Transaction Details"
+        open={detailsModalVisible}
+        onCancel={handleCloseDetails}
+        footer={[
+          <Button key="close" onClick={handleCloseDetails}>
+            Close
+          </Button>
+        ]}
+        width={700}
+        centered
+        destroyOnClose
+      >
+        {selectedTransaction && (
+          <Descriptions bordered column={2}>
+            <Descriptions.Item label="Transaction ID" span={2}>
+              <Text code>{selectedTransaction.transactionId || selectedTransaction.id || 'N/A'}</Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="Transaction Type">
+              {(() => {
+                const type = selectedTransaction.type || selectedTransaction.transactionType || 'UNKNOWN';
+                const getTypeColor = (t) => {
+                  switch ((t || '').toUpperCase()) {
+                    case 'TOP_UP':
+                    case 'TOPUP':
+                      return 'green';
+                    case 'PENALTY_PAYMENT':
+                    case 'PENALTY':
+                    case 'FINE':
+                      return 'red';
+                    case 'REFUND':
+                      return 'blue';
+                    case 'RENTAL_FEE':
+                      return 'purple';
+                    default:
+                      return 'default';
+                  }
+                };
+                const getTypeIcon = (t) => {
+                  switch ((t || '').toUpperCase()) {
+                    case 'TOP_UP':
+                    case 'TOPUP':
+                      return <DollarOutlined />;
+                    case 'PENALTY_PAYMENT':
+                    case 'PENALTY':
+                    case 'FINE':
+                      return <ExclamationCircleOutlined />;
+                    case 'REFUND':
+                      return <RollbackOutlined />;
+                    case 'RENTAL_FEE':
+                      return <ShoppingOutlined />;
+                    default:
+                      return <InfoCircleOutlined />;
+                  }
+                };
+                return (
+                  <Tag color={getTypeColor(type)} icon={getTypeIcon(type)}>
+                    {type ? type.replace(/_/g, ' ') : 'N/A'}
+                  </Tag>
+                );
+              })()}
+            </Descriptions.Item>
+            <Descriptions.Item label="Amount" span={2}>
+              <Text strong style={{ fontSize: '18px', color: (selectedTransaction.amount || 0) >= 0 ? '#52c41a' : '#ff4d4f' }}>
+                {formatCurrency(selectedTransaction.amount || 0)}
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="Status">
+              {(() => {
+                const status = selectedTransaction.status || selectedTransaction.transactionStatus || 'N/A';
+                const statusColor = status === 'COMPLETED' || status === 'SUCCESS' ? 'success' :
+                                  status === 'PENDING' ? 'warning' :
+                                  status === 'FAILED' ? 'error' : 'default';
+                return (
+                  <Tag color={statusColor}>
+                    {status}
+                  </Tag>
+                );
+              })()}
+            </Descriptions.Item>
+            <Descriptions.Item label="Description" span={2}>
+              {selectedTransaction.description || 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Transaction Date">
+              {selectedTransaction.transactionDate ? formatDateTime(selectedTransaction.transactionDate) :
+               selectedTransaction.createdAt ? formatDateTime(selectedTransaction.createdAt) : 'N/A'}
+            </Descriptions.Item>
+          </Descriptions>
+        )}
+      </Modal>
     </div>
   );
 };
 
 // Borrow Status Component
 const BorrowStatus = ({ borrowStatus, onViewDetail }) => {
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterDateRange, setFilterDateRange] = useState(null);
+
   const statusColorMap = {
     PENDING: 'orange',
     WAITING_APPROVAL: 'orange',
@@ -2153,6 +3492,35 @@ const BorrowStatus = ({ borrowStatus, onViewDetail }) => {
       </Tag>
     );
   };
+
+  // Filter data based on status and date range
+  const filteredDataSource = (Array.isArray(borrowStatus) ? borrowStatus : []).filter((record) => {
+    // Filter by status
+    if (filterStatus !== 'all') {
+      const recordStatus = (record.status || '').toUpperCase();
+      if (recordStatus !== filterStatus.toUpperCase()) {
+        return false;
+      }
+    }
+
+    // Filter by createdAt date range
+    if (filterDateRange && filterDateRange.length === 2) {
+      const createdAt = record.raw?.createdAt || record.borrowDate || record.createdAt;
+      if (!createdAt) {
+        return false;
+      }
+
+      const recordDate = dayjs(createdAt);
+      const startDate = filterDateRange[0].startOf('day');
+      const endDate = filterDateRange[1].endOf('day');
+
+      if (!recordDate.isValid() || recordDate.isBefore(startDate) || recordDate.isAfter(endDate)) {
+        return false;
+      }
+    }
+
+    return true;
+  });
 
   const columns = [
     {
@@ -2217,7 +3585,8 @@ const BorrowStatus = ({ borrowStatus, onViewDetail }) => {
     }
   ];
 
-  const dataSource = Array.isArray(borrowStatus) ? borrowStatus : [];
+  const { RangePicker } = DatePicker;
+  const { Option } = Select;
 
   return (
     <div>
@@ -2226,11 +3595,64 @@ const BorrowStatus = ({ borrowStatus, onViewDetail }) => {
           title="Borrow Tracking"
           style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
         >
+          {/* Filter Section */}
+          <div style={{ marginBottom: 24 }}>
+            <Row gutter={[16, 16]}>
+              <Col xs={24} sm={12} md={8}>
+                <Select
+                  placeholder="Filter by Status"
+                  value={filterStatus}
+                  onChange={setFilterStatus}
+                  style={{ width: '100%' }}
+                  allowClear
+                >
+                  <Option value="all">All Status</Option>
+                  <Option value="PENDING">Pending</Option>
+                  <Option value="WAITING_APPROVAL">Waiting Approval</Option>
+                  <Option value="APPROVED">Approved</Option>
+                  <Option value="BORROWED">Borrowed</Option>
+                  <Option value="RETURNED">Returned</Option>
+                  <Option value="COMPLETED">Completed</Option>
+                  <Option value="REJECTED">Rejected</Option>
+                  <Option value="CANCELLED">Cancelled</Option>
+                  <Option value="OVERDUE">Overdue</Option>
+                </Select>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <RangePicker
+                  style={{ width: '100%' }}
+                  placeholder={['Start Date', 'End Date']}
+                  value={filterDateRange}
+                  onChange={setFilterDateRange}
+                  format="DD/MM/YYYY"
+                  allowClear
+                />
+              </Col>
+              <Col xs={24} sm={24} md={8}>
+                <Space>
+                  <Button
+                    icon={<ReloadOutlined />}
+                    onClick={() => {
+                      setFilterStatus('all');
+                      setFilterDateRange(null);
+                    }}
+                  >
+                    Reset Filters
+                  </Button>
+                </Space>
+              </Col>
+            </Row>
+          </div>
+
           <Table
-            dataSource={dataSource}
+            dataSource={filteredDataSource}
             columns={columns}
             rowKey={(record, index) => record.id || record.rentalId || index}
-            pagination={{ pageSize: 10 }}
+            pagination={{
+              pageSize: 10,
+              showSizeChanger: true,
+              showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} items`
+            }}
             size="middle"
             scroll={{ x: 900 }}
           />
@@ -2239,184 +3661,6 @@ const BorrowStatus = ({ borrowStatus, onViewDetail }) => {
     </div>
   );
 };
-
-// Fines & Refunds Component
-const FinesRefunds = ({ lecturerFines, lecturerRefunds }) => (
-  <div>
-    <Row gutter={[24, 24]}>
-      {/* Fines Section */}
-      <Col xs={24} lg={12}>
-        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-          <Card title="My Fines" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            <Table
-              dataSource={lecturerFines}
-              columns={[
-                { title: 'Kit Name', dataIndex: 'kitName', key: 'kitName' },
-                { title: 'Rental ID', dataIndex: 'rentalId', key: 'rentalId' },
-                {
-                  title: 'Fine Type',
-                  dataIndex: 'fineType',
-                  key: 'fineType',
-                  render: (type) => <Tag color="orange">{type.replace('_', ' ').toUpperCase()}</Tag>
-                },
-                {
-                  title: 'Amount',
-                  dataIndex: 'fineAmount',
-                  key: 'fineAmount',
-                  render: (amount) => `${amount.toLocaleString()} VND`
-                },
-                {
-                  title: 'Status',
-                  dataIndex: 'status',
-                  key: 'status',
-                  render: (status) => (
-                    <Tag color={status === 'paid' ? 'success' : 'warning'}>
-                      {status.toUpperCase()}
-                    </Tag>
-                  )
-                },
-                {
-                  title: 'Due Date',
-                  dataIndex: 'dueDate',
-                  key: 'dueDate',
-                  render: (date) => formatDate(date)
-                },
-              ]}
-              rowKey="id"
-              pagination={false}
-              size="small"
-            />
-          </Card>
-        </motion.div>
-      </Col>
-
-      {/* Refunds Section */}
-      <Col xs={24} lg={12}>
-        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-          <Card title="My Refunds" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            <Table
-              dataSource={lecturerRefunds}
-              columns={[
-                { title: 'Kit Name', dataIndex: 'kitName', key: 'kitName' },
-                { title: 'Rental ID', dataIndex: 'rentalId', key: 'rentalId' },
-                {
-                  title: 'Refund Type',
-                  dataIndex: 'refundType',
-                  key: 'refundType',
-                  render: (type) => <Tag color="blue">{type.replace('_', ' ').toUpperCase()}</Tag>
-                },
-                {
-                  title: 'Original Amount',
-                  dataIndex: 'originalAmount',
-                  key: 'originalAmount',
-                  render: (amount) => `${amount.toLocaleString()} VND`
-                },
-                {
-                  title: 'Refund Amount',
-                  dataIndex: 'refundAmount',
-                  key: 'refundAmount',
-                  render: (amount) => `${amount.toLocaleString()} VND`
-                },
-                {
-                  title: 'Status',
-                  dataIndex: 'status',
-                  key: 'status',
-                  render: (status) => (
-                    <Tag color={status === 'approved' ? 'success' : 'warning'}>
-                      {status.toUpperCase()}
-                    </Tag>
-                  )
-                },
-                {
-                  title: 'Request Date',
-                  dataIndex: 'requestDate',
-                  key: 'requestDate',
-                  render: (date) => formatDate(date)
-                },
-              ]}
-              rowKey="id"
-              pagination={false}
-              size="small"
-            />
-          </Card>
-        </motion.div>
-      </Col>
-    </Row>
-
-    {/* Summary Cards */}
-    <Row gutter={[24, 24]} style={{ marginTop: '24px' }}>
-      <Col xs={24} sm={8}>
-        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-          <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            <Statistic
-              title="Total Fines"
-              value={lecturerFines.reduce((sum, fine) => sum + fine.fineAmount, 0)}
-              prefix={<DollarOutlined style={{ color: '#ff4d4f' }} />}
-              suffix="VND"
-              valueStyle={{ color: '#ff4d4f', fontWeight: 'bold' }}
-            />
-          </Card>
-        </motion.div>
-      </Col>
-
-      <Col xs={24} sm={8}>
-        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-          <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            <Statistic
-              title="Total Refunds"
-              value={lecturerRefunds.reduce((sum, refund) => sum + refund.refundAmount, 0)}
-              prefix={<DollarOutlined style={{ color: '#52c41a' }} />}
-              suffix="VND"
-              valueStyle={{ color: '#52c41a', fontWeight: 'bold' }}
-            />
-          </Card>
-        </motion.div>
-      </Col>
-
-      <Col xs={24} sm={8}>
-        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-          <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            <Statistic
-              title="Pending Items"
-              value={lecturerFines.filter(f => f.status === 'pending').length + lecturerRefunds.filter(r => r.status === 'pending').length}
-              prefix={<BellOutlined style={{ color: '#fa8c16' }} />}
-              valueStyle={{ color: '#fa8c16', fontWeight: 'bold' }}
-            />
-          </Card>
-        </motion.div>
-      </Col>
-    </Row>
-  </div>
-);
-
-// Settings Component
-const Settings = () => (
-  <div>
-    <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-      <Card title="Settings" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-        <Row gutter={[24, 24]}>
-          <Col xs={24} md={12}>
-            <Card title="Notifications" size="small">
-              <Space direction="vertical" style={{ width: '100%' }}>
-                <div><Text>Email Notifications</Text><Switch defaultChecked style={{ marginLeft: '16px' }} /></div>
-                <div><Text>Push Notifications</Text><Switch defaultChecked style={{ marginLeft: '16px' }} /></div>
-                <div><Text>Group Updates</Text><Switch defaultChecked style={{ marginLeft: '16px' }} /></div>
-              </Space>
-            </Card>
-          </Col>
-          <Col xs={24} md={12}>
-            <Card title="Privacy" size="small">
-              <Space direction="vertical" style={{ width: '100%' }}>
-                <div><Text>Show Profile to Students</Text><Switch defaultChecked style={{ marginLeft: '16px' }} /></div>
-                <div><Text>Allow Direct Messages</Text><Switch defaultChecked style={{ marginLeft: '16px' }} /></div>
-              </Space>
-            </Card>
-          </Col>
-        </Row>
-      </Card>
-    </motion.div>
-  </div>
-);
 
 // Password validation helper
 const validatePassword = (password) => {
@@ -2429,7 +3673,7 @@ const validatePassword = (password) => {
   if (!/[a-z]/.test(password)) {
     return 'Password must contain at least one lowercase letter';
   }
-  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) {
     return 'Password must contain at least one special character';
   }
   return null;
@@ -2444,11 +3688,7 @@ const ProfileManagement = ({ profile, setProfile, loading, setLoading, user }) =
   const [passwordForm] = Form.useForm();
   const [changingPassword, setChangingPassword] = useState(false);
 
-  useEffect(() => {
-    loadProfile();
-  }, []);
-
-  const loadProfile = async () => {
+  const loadProfile = useCallback(async () => {
     try {
       setLoading(true);
       const response = await authAPI.getProfile();
@@ -2471,7 +3711,11 @@ const ProfileManagement = ({ profile, setProfile, loading, setLoading, user }) =
     } finally {
       setLoading(false);
     }
-  };
+  }, [form, setLoading, setProfile]);
+
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
 
   const handleEdit = () => {
     setIsEditing(true);

@@ -335,7 +335,7 @@ function MemberPortal({ user, onLogout }) {
               members: members.filter(m => (m.role || '').toUpperCase() === 'MEMBER'),
               lecturer: studentGroup.lecturerEmail || null,
               lecturerName: studentGroup.lecturerName || null,
-              classId: studentGroup.classId,
+              classCode: studentGroup.className || null, // className from backend contains classCode
               status: studentGroup.status ? 'active' : 'inactive'
             };
 
@@ -374,7 +374,7 @@ function MemberPortal({ user, onLogout }) {
                   name: g.groupName,
                   lecturer: g.lecturerEmail,
                   lecturerName: g.lecturerName,
-                  classId: g.classId,
+                  classCode: g.className || g.classCode || null,
                   members: members || [],
                   maxMembers: 4, // Default max members, can be adjusted
                   status: g.status ? 'active' : 'inactive'
@@ -623,15 +623,15 @@ function MemberPortal({ user, onLogout }) {
                 variants={pageVariants}
                 transition={pageTransition}
               >
-                {selectedKey === 'dashboard' && <DashboardContent group={group} wallet={wallet} />}
-                {selectedKey === 'group' && <GroupInfo
-                  group={group}
-                  onCreateGroup={() => setCreateGroupModalVisible(true)}
-                  onJoinGroup={() => setJoinGroupModalVisible(true)}
-                  availableGroups={availableGroups}
-                />}
-                {selectedKey === 'wallet' && <WalletManagement wallet={wallet} setWallet={setWallet} loadData={loadData} />}
-                {selectedKey === 'profile' && <ProfileManagement profile={profile} setProfile={setProfile} loading={profileLoading} setLoading={setProfileLoading} user={user} />}
+                                 {selectedKey === 'dashboard' && <DashboardContent group={group} wallet={wallet} />}
+                 {selectedKey === 'group' && <GroupInfo
+                   group={group}
+                   onCreateGroup={() => setCreateGroupModalVisible(true)}
+                   onJoinGroup={() => setJoinGroupModalVisible(true)}
+                   availableGroups={availableGroups}
+                 />}
+                 {selectedKey === 'wallet' && <WalletManagement wallet={wallet} setWallet={setWallet} loadData={loadData} />}
+                 {selectedKey === 'profile' && <ProfileManagement profile={profile} setProfile={setProfile} loading={profileLoading} setLoading={setProfileLoading} user={user} />}
               </motion.div>
             </AnimatePresence>
           </Spin>
@@ -849,9 +849,9 @@ const DashboardContent = ({ group, wallet }) => (
                     <Tag color="purple">{group.lecturer}</Tag>
                   </Descriptions.Item>
                 )}
-                {group.classId && (
-                  <Descriptions.Item label="Class ID">
-                    <Text code>{group.classId}</Text>
+                {group.classCode && (
+                  <Descriptions.Item label="Class Code">
+                    <Text code>{group.classCode}</Text>
                   </Descriptions.Item>
                 )}
                 <Descriptions.Item label="Status">
@@ -881,9 +881,9 @@ const DashboardContent = ({ group, wallet }) => (
                       title={
                         <Tag color={
                           item.type === 'TOP_UP' ? 'success' :
-                            item.type === 'RENTAL_FEE' ? 'processing' :
-                              item.type === 'PENALTY_PAYMENT' ? 'error' :
-                                item.type === 'REFUND' ? 'purple' : 'default'
+                          item.type === 'RENTAL_FEE' ? 'processing' :
+                          item.type === 'PENALTY_PAYMENT' ? 'error' :
+                          item.type === 'REFUND' ? 'purple' : 'default'
                         }>
                           {item.type?.replace(/_/g, ' ') || 'Transaction'}
                         </Tag>
@@ -914,81 +914,81 @@ const GroupInfo = ({ group, onCreateGroup, onJoinGroup, availableGroups }) => (
   <div>
     <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
       <Card title="Group Information" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-        {group ? (
-          <Row gutter={[24, 24]}>
-            <Col xs={24} md={12}>
-              <Card title="Basic Info" size="small">
-                <Descriptions column={1} bordered>
-                  <Descriptions.Item label="Group Name">
-                    <Text strong>{group.name}</Text>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Leader">
-                    <Tag color="gold">{group.leader}</Tag>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Total Members">
-                    <Badge count={(group.members?.length || 0) + 1} showZero color="#52c41a" />
-                  </Descriptions.Item>
-                  {group.lecturer && (
-                    <Descriptions.Item label="Lecturer">
-                      <Tag color="purple">{group.lecturer}</Tag>
-                    </Descriptions.Item>
-                  )}
-                  {group.classId && (
-                    <Descriptions.Item label="Class ID">
-                      <Text code>{group.classId}</Text>
-                    </Descriptions.Item>
-                  )}
-                  <Descriptions.Item label="Status">
-                    <Tag color={group.status === 'active' ? 'success' : 'error'}>
-                      {group.status || 'inactive'}
-                    </Tag>
-                  </Descriptions.Item>
-                </Descriptions>
-              </Card>
-            </Col>
-            <Col xs={24} md={12}>
-              <Card title="Members" size="small">
-                <List
-                  size="small"
-                  dataSource={[
-                    ...(group.members || []),
-                    ...(group.leader ? [{ name: group.leader, email: group.leaderEmail, role: 'LEADER' }] : [])
-                  ]}
-                  renderItem={(member) => {
-                    const memberName = typeof member === 'string' ? member : (member.name || member.email);
-                    const memberEmail = typeof member === 'string' ? member : member.email;
-                    const memberRole = typeof member === 'string' ? 'MEMBER' : (member.role || 'MEMBER');
-                    const isLeader = memberRole === 'LEADER';
+            {group ? (
+              <Row gutter={[24, 24]}>
+                <Col xs={24} md={12}>
+                  <Card title="Basic Info" size="small">
+                    <Descriptions column={1} bordered>
+                      <Descriptions.Item label="Group Name">
+                        <Text strong>{group.name}</Text>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Leader">
+                        <Tag color="gold">{group.leader}</Tag>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Total Members">
+                        <Badge count={(group.members?.length || 0) + 1} showZero color="#52c41a" />
+                      </Descriptions.Item>
+                      {group.lecturer && (
+                        <Descriptions.Item label="Lecturer">
+                          <Tag color="purple">{group.lecturer}</Tag>
+                        </Descriptions.Item>
+                      )}
+                      {group.classCode && (
+                        <Descriptions.Item label="Class Code">
+                          <Text code>{group.classCode}</Text>
+                        </Descriptions.Item>
+                      )}
+                      <Descriptions.Item label="Status">
+                        <Tag color={group.status === 'active' ? 'success' : 'error'}>
+                          {group.status || 'inactive'}
+                        </Tag>
+                      </Descriptions.Item>
+                    </Descriptions>
+                  </Card>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Card title="Members" size="small">
+                    <List
+                      size="small"
+                      dataSource={[
+                        ...(group.members || []),
+                        ...(group.leader ? [{ name: group.leader, email: group.leaderEmail, role: 'LEADER' }] : [])
+                      ]}
+                      renderItem={(member) => {
+                        const memberName = typeof member === 'string' ? member : (member.name || member.email);
+                        const memberEmail = typeof member === 'string' ? member : member.email;
+                        const memberRole = typeof member === 'string' ? 'MEMBER' : (member.role || 'MEMBER');
+                        const isLeader = memberRole === 'LEADER';
 
-                    return (
-                      <List.Item>
-                        <List.Item.Meta
-                          avatar={
-                            <Avatar
-                              icon={<UserOutlined />}
-                              style={{ backgroundColor: isLeader ? '#faad14' : '#52c41a' }}
-                            >
-                              {isLeader ? 'L' : 'M'}
-                            </Avatar>
-                          }
-                          title={
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span>{memberName}</span>
-                              <Tag color={isLeader ? 'gold' : 'blue'} size="small">
-                                {memberRole}
-                              </Tag>
-                            </div>
-                          }
-                          description={memberEmail || 'Group Member'}
-                        />
-                      </List.Item>
-                    );
-                  }}
-                />
-              </Card>
-            </Col>
-          </Row>
-        ) : (
+                        return (
+                          <List.Item>
+                            <List.Item.Meta
+                              avatar={
+                                <Avatar
+                                  icon={<UserOutlined />}
+                                  style={{ backgroundColor: isLeader ? '#faad14' : '#52c41a' }}
+                                >
+                                  {isLeader ? 'L' : 'M'}
+                                </Avatar>
+                              }
+                              title={
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span>{memberName}</span>
+                                  <Tag color={isLeader ? 'gold' : 'blue'} size="small">
+                                    {memberRole}
+                                  </Tag>
+                                </div>
+                              }
+                              description={memberEmail || 'Group Member'}
+                            />
+                          </List.Item>
+                        );
+                      }}
+                    />
+                  </Card>
+                </Col>
+              </Row>
+            ) : (
           <div>
             <Alert
               message="No Group Found"
@@ -1075,11 +1075,11 @@ const GroupInfo = ({ group, onCreateGroup, onJoinGroup, availableGroups }) => (
                           <Text type="secondary">
                             Members: {group.members?.length || 0}/{group.maxMembers || 4}
                           </Text>
-                          {group.classId && (
+                          {group.classCode && (
                             <>
                               <br />
                               <Text type="secondary">
-                                Class ID: {group.classId}
+                                Class Code: {group.classCode}
                               </Text>
                             </>
                           )}
@@ -1155,42 +1155,7 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
         // Wait a moment for backend to process the payment
         await new Promise(resolve => setTimeout(resolve, 500));
 
-        // Reload wallet directly to ensure balance is updated
-        try {
-          const walletResponse = await walletAPI.getMyWallet();
-          console.log('Wallet API response after payment:', walletResponse);
-
-          const walletData = walletResponse?.data || walletResponse || {};
-          console.log('Parsed wallet data:', walletData);
-          console.log('Wallet balance value:', walletData.balance, 'Type:', typeof walletData.balance);
-
-          // Parse balance - handle both number and string formats
-          let balance = 0;
-          if (walletData.balance !== undefined && walletData.balance !== null) {
-            balance = typeof walletData.balance === 'string'
-              ? parseFloat(walletData.balance)
-              : Number(walletData.balance);
-          }
-
-          console.log('Final balance to set:', balance);
-
-          // Update wallet state using setWallet prop
-          if (setWallet) {
-            setWallet(prevWallet => {
-              const updatedWallet = {
-                ...prevWallet,
-                balance: balance || 0
-              };
-              console.log('Updated wallet state:', updatedWallet);
-              return updatedWallet;
-            });
-          }
-        } catch (walletError) {
-          console.error('Error reloading wallet:', walletError);
-          message.warning('Payment successful but failed to refresh wallet. Please refresh the page.');
-        }
-
-        // Reload all data (this will also update wallet)
+        // Reload all data (this will update wallet, group info, and all other data)
         await loadData();
         await loadTransactionHistory();
 
@@ -1202,8 +1167,31 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
       }
     } catch (error) {
       console.error('PayPal payment execution error:', error);
-      message.error(error.message || 'Payment execution failed. Please try again.');
-      sessionStorage.removeItem('pendingPayPalPayment');
+
+      // Check if error is about payment already done
+      if (error.message && (error.message.includes('PAYMENT_ALREADY_DONE') || error.message.includes('already completed'))) {
+        message.success('Payment was already completed successfully!');
+
+        // Clear stored payment info
+        sessionStorage.removeItem('pendingPayPalPayment');
+
+        // Clean URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+
+        // Wait a moment for backend to process
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Reload all data
+        await loadData();
+        await loadTransactionHistory();
+
+        // Close modal if open
+        setTopUpModalVisible(false);
+        topUpForm.resetFields();
+      } else {
+        message.error(error.message || 'Payment execution failed. Please try again.');
+        sessionStorage.removeItem('pendingPayPalPayment');
+      }
     }
   };
 
@@ -1448,25 +1436,25 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
   };
 
   return (
-    <div>
-      <Row gutter={[24, 24]}>
-        <Col xs={24} md={8}>
-          <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-            <Card
-              style={{
-                borderRadius: '16px',
-                boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                color: 'white'
-              }}
-            >
-              <Statistic
-                title="Current Balance"
+  <div>
+    <Row gutter={[24, 24]}>
+      <Col xs={24} md={8}>
+        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+          <Card
+            style={{
+              borderRadius: '16px',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              color: 'white'
+            }}
+          >
+            <Statistic
+              title="Current Balance"
                 value={wallet.balance || 0}
-                prefix={<DollarOutlined />}
-                suffix="VND"
-                valueStyle={{ color: 'white', fontWeight: 'bold' }}
-              />
+              prefix={<DollarOutlined />}
+              suffix="VND"
+              valueStyle={{ color: 'white', fontWeight: 'bold' }}
+            />
               <Space direction="vertical" style={{ width: '100%', marginTop: '16px' }}>
                 <Button
                   type="primary"
@@ -1491,12 +1479,12 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
                   Pay Penalties
                 </Button>
               </Space>
-            </Card>
-          </motion.div>
-        </Col>
+          </Card>
+        </motion.div>
+      </Col>
 
-        <Col xs={24} md={16}>
-          <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+      <Col xs={24} md={16}>
+        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
             <Card
               title="Transaction History"
               extra={
@@ -1511,13 +1499,13 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
               style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
             >
               <Spin spinning={transactionsLoading}>
-                <Table
+            <Table
                   dataSource={transactions}
-                  columns={[
-                    {
-                      title: 'Type',
-                      dataIndex: 'type',
-                      key: 'type',
+              columns={[
+                {
+                  title: 'Type',
+                  dataIndex: 'type',
+                  key: 'type',
                       render: (type) => {
                         const config = getTransactionTypeConfig(type);
                         return (
@@ -1539,11 +1527,11 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
                           </Tag>
                         );
                       }
-                    },
-                    {
-                      title: 'Amount',
-                      dataIndex: 'amount',
-                      key: 'amount',
+                },
+                {
+                  title: 'Amount',
+                  dataIndex: 'amount',
+                  key: 'amount',
                       render: (amount) => (
                         <Text strong style={{
                           color: amount > 0 ? '#52c41a' : '#ff4d4f'
@@ -1573,8 +1561,8 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
                       key: 'status',
                       render: (status) => {
                         const statusColor = status === 'COMPLETED' || status === 'SUCCESS' ? 'success' :
-                          status === 'PENDING' ? 'processing' :
-                            status === 'FAILED' ? 'error' : 'default';
+                                          status === 'PENDING' ? 'processing' :
+                                          status === 'FAILED' ? 'error' : 'default';
                         return (
                           <Tag color={statusColor}>
                             {status || 'N/A'}
@@ -1592,10 +1580,10 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
                   locale={{ emptyText: 'No transactions found' }}
                 />
               </Spin>
-            </Card>
-          </motion.div>
-        </Col>
-      </Row>
+          </Card>
+        </motion.div>
+      </Col>
+    </Row>
 
       {/* Top Up Modal */}
       <Modal
@@ -1819,8 +1807,8 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
           )}
         </Spin>
       </Modal>
-    </div>
-  );
+  </div>
+);
 };
 
 
