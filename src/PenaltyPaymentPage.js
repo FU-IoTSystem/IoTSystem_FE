@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { penaltiesAPI, penaltyDetailAPI, walletAPI, borrowingRequestAPI, penaltyPoliciesAPI } from './api';
 import {
@@ -16,9 +16,7 @@ import {
   Descriptions,
   Tag,
   Avatar,
-  Badge,
   Modal,
-  List,
   Empty
 } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -27,7 +25,6 @@ import {
   WalletOutlined,
   ExclamationCircleOutlined,
   CheckCircleOutlined,
-  DollarOutlined,
   CreditCardOutlined,
   LoadingOutlined,
   InfoCircleOutlined,
@@ -84,12 +81,7 @@ function PenaltyPaymentPage({ user, onLogout }) {
   // Get penalty ID from URL params or location state
   const penaltyId = new URLSearchParams(location.search).get('penaltyId') || location.state?.penaltyId;
 
-  useEffect(() => {
-    loadPenalties();
-    loadWalletBalance();
-  }, [user]);
-
-  const loadWalletBalance = async () => {
+  const loadWalletBalance = useCallback(async () => {
     try {
       const walletResponse = await walletAPI.getMyWallet();
       const walletData = walletResponse?.data || walletResponse || {};
@@ -98,67 +90,9 @@ function PenaltyPaymentPage({ user, onLogout }) {
       console.error('Error loading wallet balance:', error);
       setWalletBalance(0);
     }
-  };
+  }, []);
 
-  const loadPenalties = async () => {
-    try {
-      setLoading(true);
-      const response = await penaltiesAPI.getPenByAccount();
-      console.log('Penalties by account response:', response);
-
-      // Handle response format
-      let penaltiesData = [];
-      if (Array.isArray(response)) {
-        penaltiesData = response;
-      } else if (response && response.data && Array.isArray(response.data)) {
-        penaltiesData = response.data;
-      }
-
-      // Map to expected format, keep original data for update
-      const mappedPenalties = penaltiesData.map(penalty => ({
-        id: penalty.id,
-        penaltyId: penalty.id,
-        kitName: penalty.kitName || 'Unknown Kit',
-        rentalId: penalty.borrowRequestId || 'N/A',
-        amount: penalty.totalAmount || 0,
-        penaltyType: penalty.type || 'other',
-        dueDate: penalty.takeEffectDate || new Date().toISOString(),
-        reason: penalty.note || 'Penalty fee',
-        status: penalty.resolved ? 'resolved' : 'pending',
-        // Keep original data for update
-        originalData: penalty
-      }));
-
-      // Filter only unresolved penalties
-      const pendingPenalties = mappedPenalties.filter(p => p.status === 'pending');
-      setPenalties(pendingPenalties);
-
-      // If penaltyId is provided, auto-select it
-      if (penaltyId) {
-        const penalty = pendingPenalties.find(p => p.id === penaltyId || p.penaltyId === penaltyId);
-        if (penalty) {
-          setSelectedPenalty(penalty);
-          loadPenaltyDetails(penalty.id);
-          // Load borrow request if available
-          if (penalty.rentalId && penalty.rentalId !== 'N/A') {
-            loadBorrowRequest(penalty.rentalId);
-          } else {
-            const originalData = penalty.originalData;
-            if (originalData && originalData.borrowRequestId) {
-              loadBorrowRequest(originalData.borrowRequestId);
-            }
-          }
-          setCurrentStep(1);
-        }
-      }
-    } catch (error) {
-      console.error('Error loading penalties:', error);
-      setPenalties([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Define loadPenaltyDetails and loadBorrowRequest before loadPenalties
   const loadPenaltyDetails = async (penaltyId) => {
     if (!penaltyId) {
       console.warn('No penaltyId provided for loading penalty details');
@@ -222,10 +156,16 @@ function PenaltyPaymentPage({ user, onLogout }) {
         console.log('First penalty detail sample:', detailsData[0]);
       }
 
+      // Filter out rental fee penalty details (they are handled in payment logic, not displayed)
+      const filteredDetails = detailsData.filter(detail => {
+        const description = detail.description || '';
+        return !description.includes('Trả tiền thuê kit') && !description.includes('rental fee');
+      });
+
       // Fetch penalty policy info for each detail if policiesId exists
-      if (detailsData.length > 0) {
+      if (filteredDetails.length > 0) {
         const detailsWithPolicies = await Promise.all(
-          detailsData.map(async (detail) => {
+          filteredDetails.map(async (detail) => {
             if (detail.policiesId) {
               try {
                 const policyResponse = await penaltyPoliciesAPI.getById(detail.policiesId);
@@ -248,13 +188,11 @@ function PenaltyPaymentPage({ user, onLogout }) {
         );
         setPenaltyDetails(detailsWithPolicies);
       } else {
-        setPenaltyDetails(detailsData);
+        setPenaltyDetails(filteredDetails);
       }
     } catch (error) {
       console.error('=== Error loading penalty details:', error);
       console.error('Error message:', error.message);
-      console.error('Error stack:', error.stack);
-      message.error(`Failed to load penalty details: ${error.message}`);
       setPenaltyDetails([]);
     }
   };
@@ -284,6 +222,112 @@ function PenaltyPaymentPage({ user, onLogout }) {
       setBorrowRequest(null);
     }
   };
+
+  const loadPenalties = useCallback(async () => {
+    try {
+      setLoading(true);
+      const response = await penaltiesAPI.getPenByAccount();
+      console.log('Penalties by account response:', response);
+
+      // Handle response format
+      let penaltiesData = [];
+      if (Array.isArray(response)) {
+        penaltiesData = response;
+      } else if (response && response.data && Array.isArray(response.data)) {
+        penaltiesData = response.data;
+      }
+
+      // Map to expected format, keep original data for update
+      // Load kitName from borrowRequest for each penalty
+      const mappedPenalties = await Promise.all(
+        penaltiesData.map(async (penalty) => {
+          let kitName = 'Unknown Kit';
+          let penaltyType = 'other';
+
+          // Try to get kitName from borrowRequest if available
+          if (penalty.borrowRequestId) {
+            try {
+              const borrowRequest = await borrowingRequestAPI.getById(penalty.borrowRequestId);
+              const requestData = borrowRequest?.data || borrowRequest;
+              if (requestData?.kit?.kitName) {
+                kitName = requestData.kit.kitName;
+              } else if (requestData?.kitName) {
+                kitName = requestData.kitName;
+              }
+            } catch (error) {
+              console.warn(`Failed to load kit name for penalty ${penalty.id}:`, error);
+            }
+          }
+
+          // Determine penalty type from policyName or kitType
+          if (penalty.policyName) {
+            // Map policy name to penalty type
+            const policyLower = penalty.policyName.toLowerCase();
+            if (policyLower.includes('late') || policyLower.includes('return')) {
+              penaltyType = 'late_return';
+            } else if (policyLower.includes('damage')) {
+              penaltyType = 'damage';
+            } else if (policyLower.includes('overdue')) {
+              penaltyType = 'overdue';
+            }
+          } else if (penalty.kitType) {
+            // Use kitType as fallback
+            penaltyType = penalty.kitType.toLowerCase().replace('_', '_');
+          }
+
+          return {
+            id: penalty.id,
+            penaltyId: penalty.id,
+            kitName: kitName,
+            rentalId: penalty.borrowRequestId || 'N/A',
+            amount: penalty.totalAmount || 0,
+            penaltyType: penaltyType,
+            dueDate: penalty.takeEffectDate || new Date().toISOString(),
+            reason: penalty.note || 'Penalty fee',
+            status: penalty.resolved ? 'resolved' : 'pending',
+            // Keep original data for update
+            originalData: penalty
+          };
+        })
+      );
+
+      // Filter only unresolved penalties
+      const pendingPenalties = mappedPenalties.filter(p => p.status === 'pending');
+      setPenalties(pendingPenalties);
+
+      // If penaltyId is provided, auto-select it
+      if (penaltyId) {
+        const penalty = pendingPenalties.find(p => p.id === penaltyId || p.penaltyId === penaltyId);
+        if (penalty) {
+          setSelectedPenalty(penalty);
+          loadPenaltyDetails(penalty.id);
+          // Load borrow request if available
+          if (penalty.rentalId && penalty.rentalId !== 'N/A') {
+            loadBorrowRequest(penalty.rentalId);
+          } else {
+            const originalData = penalty.originalData;
+            if (originalData && originalData.borrowRequestId) {
+              loadBorrowRequest(originalData.borrowRequestId);
+            }
+          }
+          setCurrentStep(1);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading penalties:', error);
+      setPenalties([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [penaltyId]);
+
+  useEffect(() => {
+    if (user) {
+      loadPenalties();
+      loadWalletBalance();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   const handleBackToPortal = () => {
     const userRole = user?.role?.toLowerCase();
@@ -346,8 +390,6 @@ function PenaltyPaymentPage({ user, onLogout }) {
       if (!currentPenalty) {
         throw new Error('Penalty not found');
       }
-      // Use original data if available, otherwise use mapped data
-      const penaltyData = currentPenalty.originalData || currentPenalty;
 
       // Gọi đúng endpoint confirm-payment BE
       await penaltiesAPI.confirmPenaltyPayment(selectedPenalty.id);
@@ -400,8 +442,14 @@ function PenaltyPaymentPage({ user, onLogout }) {
         return 'Damage';
       case 'overdue':
         return 'Overdue';
+      case 'other':
+        return 'Other';
+      case 'STUDENT_KIT':
+        return 'Student Kit';
+      case 'LECTURER_KIT':
+        return 'Lecturer Kit';
       default:
-        return type;
+        return type || 'Other';
     }
   };
 
@@ -946,19 +994,6 @@ function PenaltyPaymentPage({ user, onLogout }) {
         return renderSuccess();
       default:
         return renderPenaltySelection();
-    }
-  };
-
-  const getStepTitle = () => {
-    switch (currentStep) {
-      case 0:
-        return 'Select Penalty';
-      case 1:
-        return 'Confirm Payment';
-      case 2:
-        return 'Payment Success';
-      default:
-        return 'Penalty Payment';
     }
   };
 
