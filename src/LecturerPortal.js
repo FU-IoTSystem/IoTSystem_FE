@@ -55,10 +55,11 @@ import {
   CheckCircleOutlined,
   UploadOutlined,
   SearchOutlined,
-  FilterOutlined
+  FilterOutlined,
+  PlusOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { kitAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, walletTransactionAPI, borrowingRequestAPI, penaltiesAPI, penaltyDetailAPI, notificationAPI, authAPI, classAssignmentAPI, paymentAPI, classesAPI } from './api';
+import { kitAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, walletTransactionAPI, borrowingRequestAPI, penaltiesAPI, penaltyDetailAPI, notificationAPI, authAPI, classAssignmentAPI, paymentAPI, classesAPI, userAPI } from './api';
 import webSocketService from './utils/websocket';
 import dayjs from 'dayjs';
 
@@ -134,6 +135,7 @@ function LecturerPortal({ user, onLogout }) {
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [initialDataLoaded, setInitialDataLoaded] = useState(false);
 
   // State for detail modal
   const [detailModalVisible, setDetailModalVisible] = useState(false);
@@ -377,19 +379,47 @@ function LecturerPortal({ user, onLogout }) {
       try {
         const borrowRequests = await borrowingRequestAPI.getByUser(user.id);
         console.log('Borrow requests raw data:', borrowRequests);
-        const mappedBorrowStatus = (Array.isArray(borrowRequests) ? borrowRequests : []).map((request) => {
-          const borrowDate = request.borrowDate || request.startDate || request.createdAt;
-          const dueDate = request.dueDate || request.expectReturnDate;
-          const returnDate = request.returnDate || request.actualReturnDate || null;
+
+        // Process each request to check for late status and update if needed
+        const processedRequests = await Promise.all((Array.isArray(borrowRequests) ? borrowRequests : []).map(async (request) => {
+          const borrowDate = request.approvedDate || request.borrowDate || request.startDate || request.createdAt;
+          const dueDate = request.expectReturnDate || request.dueDate;
+          const returnDate = request.actualReturnDate || request.returnDate || null;
           const normalizedStatus = (request.status || '').toUpperCase();
 
-          let duration = request.duration;
-          if (!duration && borrowDate && (returnDate || dueDate)) {
-            const start = dayjs(borrowDate);
-            const end = dayjs(returnDate || dueDate);
-            if (start.isValid() && end.isValid()) {
-              const diff = end.diff(start, 'day');
-              duration = diff >= 0 ? diff : 0;
+          // Calculate duration: now (or return date) - expected return date
+          let duration = 0;
+          let isLate = request.isLate || false;
+          const now = dayjs();
+          const dueDay = dayjs(dueDate);
+          const returnDay = returnDate ? dayjs(returnDate) : null;
+
+          if (dueDay.isValid()) {
+            const compareDate = returnDay && returnDay.isValid() ? returnDay : now;
+
+            if (compareDate.isValid()) {
+              // Calculate duration as difference from expected return date
+              duration = Math.max(0, compareDate.diff(dueDay, 'day'));
+
+              // Check if rental is late
+              if (compareDate.isAfter(dueDay)) {
+                isLate = true;
+
+                // Update database if status is APPROVED or BORROWED and not already marked as late
+                if (isLate && !request.isLate && (normalizedStatus === 'APPROVED' || normalizedStatus === 'BORROWED')) {
+                  try {
+                    await borrowingRequestAPI.update(request.id, {
+                      isLate: true
+                    });
+                    console.log(`Updated request ${request.id} as late`);
+                  } catch (updateError) {
+                    console.error(`Error updating late status for request ${request.id}:`, updateError);
+                  }
+                }
+              } else {
+                isLate = false;
+                duration = 0; // Not late, so duration is 0
+              }
             }
           }
 
@@ -402,16 +432,25 @@ function LecturerPortal({ user, onLogout }) {
             dueDate,
             returnDate,
             status: normalizedStatus || 'PENDING',
-            totalCost: request.totalCost || request.cost || 0,
             depositAmount: request.depositAmount || request.deposit || 0,
-            duration: duration ?? 0,
+            duration: duration,
+            isLate: isLate,
             groupName: request.groupName || request.studentGroupName || request.borrowingGroup?.groupName || 'N/A',
             raw: request
           };
+        }));
+
+        const mappedBorrowStatus = processedRequests;
+
+        // Sort by createdAt descending (newest first)
+        const sortedBorrowStatus = mappedBorrowStatus.sort((a, b) => {
+          const dateA = a.raw?.createdAt || a.borrowDate || 0;
+          const dateB = b.raw?.createdAt || b.borrowDate || 0;
+          return new Date(dateB) - new Date(dateA);
         });
 
-        console.log('Mapped borrow status data:', mappedBorrowStatus);
-        setBorrowStatus(mappedBorrowStatus);
+        console.log('Mapped borrow status data:', sortedBorrowStatus);
+        setBorrowStatus(sortedBorrowStatus);
       } catch (error) {
         console.error('Error loading borrow status:', error);
         setBorrowStatus([]);
@@ -420,16 +459,25 @@ function LecturerPortal({ user, onLogout }) {
       // borrowStatus is already set from API above
 
       console.log('Lecturer data loaded successfully');
+      setInitialDataLoaded(true);
     } catch (error) {
       console.error('Error loading data:', error);
       message.error('Failed to load data');
+      setInitialDataLoaded(true); // Set to true even on error to allow PayPal processing
     } finally {
       setLoading(false);
     }
   }, [user]);
 
-  const handlePayPalReturn = useCallback(async (paymentId, payerId, loadDataFn) => {
+  const handlePayPalReturn = useCallback(async (paymentId, payerId) => {
     try {
+      // Check if this payment has already been processed successfully
+      const successKey = `paypal_success_${paymentId}`;
+      if (sessionStorage.getItem(successKey)) {
+        console.log('Payment already processed successfully, skipping duplicate execution');
+        return;
+      }
+
       // Get stored payment info
       const storedPayment = sessionStorage.getItem('pendingPayPalPayment');
       if (!storedPayment) {
@@ -447,6 +495,9 @@ function LecturerPortal({ user, onLogout }) {
       );
 
       if (response && response.data) {
+        // Mark as successfully processed to prevent duplicate messages
+        sessionStorage.setItem(successKey, 'true');
+
         message.success('Payment successful! Wallet balance has been updated.');
 
         // Clear stored payment info
@@ -455,8 +506,8 @@ function LecturerPortal({ user, onLogout }) {
         // Clean URL immediately
         window.history.replaceState({}, document.title, window.location.pathname);
 
-        // Wait a moment for backend to process the payment
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Wait longer for backend to process the payment
+        await new Promise(resolve => setTimeout(resolve, 1500));
 
         // Reload wallet and data - reload wallet directly first
         console.log('Reloading wallet after payment success...');
@@ -490,16 +541,21 @@ function LecturerPortal({ user, onLogout }) {
             transactions: transactions
           });
 
-          // Call loadData to reload all data (kits, groups, penalties, etc.)
+          // Wait a bit more and then call loadData to reload all data
+          await new Promise(resolve => setTimeout(resolve, 500));
           console.log('Calling loadData to reload all data...');
-          const loadDataToCall = loadDataFn || loadData;
-          console.log('loadData available:', loadDataToCall, 'Type:', typeof loadDataToCall);
-          if (loadDataToCall && typeof loadDataToCall === 'function') {
+
+          // Ensure loadData is available before calling
+          if (loadData && typeof loadData === 'function') {
             try {
-              await loadDataToCall();
+              await loadData();
               console.log('loadData completed - all data reloaded');
             } catch (loadError) {
               console.error('Error calling loadData:', loadError);
+              // Fallback: reload the page if loadData fails
+              setTimeout(() => {
+                window.location.reload();
+              }, 1000);
             }
           } else {
             console.warn('loadData not available, reloading page to ensure all data is refreshed');
@@ -521,7 +577,12 @@ function LecturerPortal({ user, onLogout }) {
 
       // Check if error is about payment already done
       if (error.message && (error.message.includes('PAYMENT_ALREADY_DONE') || error.message.includes('already completed'))) {
-        message.success('Payment was already completed successfully!');
+        // Check if this message has already been shown
+        const successKey = `paypal_success_${paymentId}`;
+        if (!sessionStorage.getItem(successKey)) {
+          sessionStorage.setItem(successKey, 'true');
+          message.success('Payment was already completed successfully!');
+        }
 
         // Clear stored payment info
         sessionStorage.removeItem('pendingPayPalPayment');
@@ -529,8 +590,8 @@ function LecturerPortal({ user, onLogout }) {
         // Clean URL immediately
         window.history.replaceState({}, document.title, window.location.pathname);
 
-        // Wait a moment for backend to process
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Wait longer for backend to process
+        await new Promise(resolve => setTimeout(resolve, 1500));
 
         // Reload wallet and data
         console.log('Reloading wallet after PAYMENT_ALREADY_DONE...');
@@ -564,16 +625,21 @@ function LecturerPortal({ user, onLogout }) {
             transactions: transactions
           });
 
-          // Call loadData to reload all data (kits, groups, penalties, etc.)
+          // Wait a bit more and then call loadData to reload all data
+          await new Promise(resolve => setTimeout(resolve, 500));
           console.log('Calling loadData to reload all data...');
-          const loadDataToCall = loadDataFn || loadData;
-          console.log('loadData available:', loadDataToCall, 'Type:', typeof loadDataToCall);
-          if (loadDataToCall && typeof loadDataToCall === 'function') {
+
+          // Ensure loadData is available before calling
+          if (loadData && typeof loadData === 'function') {
             try {
-              await loadDataToCall();
+              await loadData();
               console.log('loadData completed - all data reloaded');
             } catch (loadError) {
               console.error('Error calling loadData:', loadError);
+              // Fallback: reload the page if loadData fails
+              setTimeout(() => {
+                window.location.reload();
+              }, 1000);
             }
           } else {
             console.warn('loadData not available, reloading page to ensure all data is refreshed');
@@ -602,23 +668,70 @@ function LecturerPortal({ user, onLogout }) {
 
   // Handle PayPal return callback at portal level
   useEffect(() => {
-    if (!loadData) return; // Wait for loadData to be available
-
     const urlParams = new URLSearchParams(window.location.search);
     const paymentId = urlParams.get('paymentId');
     const payerId = urlParams.get('PayerID');
+    const isCancel = urlParams.get('cancel') === 'true' || window.location.pathname.includes('paypal-cancel');
 
-    // Check if this is a PayPal return
-    if (paymentId && payerId) {
-      handlePayPalReturn(paymentId, payerId);
-    } else if (urlParams.get('cancel') === 'true' || window.location.pathname.includes('paypal-cancel')) {
+    console.log('PayPal return check:', {
+      paymentId,
+      payerId,
+      isCancel,
+      hasUser: !!user,
+      hasLoadData: !!loadData,
+      alreadyProcessed: payPalReturnProcessedRef.current
+    });
+
+    // Handle cancel immediately
+    if (isCancel) {
       handlePayPalCancel();
+      return;
     }
-  }, [loadData, handlePayPalReturn]);
+
+    // If no PayPal return parameters, skip
+    if (!paymentId || !payerId) {
+      return;
+    }
+
+    // Use sessionStorage to prevent duplicate execution (more reliable than ref)
+    const processingKey = `paypal_processing_${paymentId}`;
+    if (sessionStorage.getItem(processingKey)) {
+      console.log('PayPal return already being processed, skipping');
+      return;
+    }
+
+    // Process payment when user and loadData are ready
+    if (user && loadData) {
+      // Mark as processing immediately using both ref and sessionStorage
+      sessionStorage.setItem(processingKey, 'true');
+      payPalReturnProcessedRef.current = true;
+
+      console.log('Processing PayPal return immediately...', { paymentId, payerId, userId: user?.id });
+
+      handlePayPalReturn(paymentId, payerId)
+        .then(() => {
+          // Clear processing flag after successful processing
+          setTimeout(() => {
+            sessionStorage.removeItem(processingKey);
+          }, 5000);
+        })
+        .catch((error) => {
+          console.error('Error in PayPal return processing:', error);
+          // Clear processing flag on error to allow retry
+          sessionStorage.removeItem(processingKey);
+          payPalReturnProcessedRef.current = false;
+        });
+    } else {
+      console.log('Waiting for user or loadData...', { hasUser: !!user, hasLoadData: !!loadData });
+    }
+  }, [loadData, handlePayPalReturn, user]);
 
   useEffect(() => {
     console.log('===== LecturerPortal useEffect triggered =====');
     console.log('User:', user);
+    // Reset initial data loaded flag when user changes
+    setInitialDataLoaded(false);
+    payPalReturnProcessedRef.current = false;
     if (user) {
       loadData();
     }
@@ -653,6 +766,7 @@ function LecturerPortal({ user, onLogout }) {
   const walletTransactionSubscriptionRef = useRef(null);
   const penaltySubscriptionRef = useRef(null);
   const groupSubscriptionRef = useRef(null);
+  const payPalReturnProcessedRef = useRef(false);
 
   useEffect(() => {
     if (user && user.id) {
@@ -738,7 +852,12 @@ function LecturerPortal({ user, onLogout }) {
                   });
                 }
 
-                return updated;
+                // Sort by createdAt descending (newest first)
+                return updated.sort((a, b) => {
+                  const dateA = a.raw?.createdAt || a.borrowDate || 0;
+                  const dateB = b.raw?.createdAt || b.borrowDate || 0;
+                  return new Date(dateB) - new Date(dateA);
+                });
               } else {
                 // Add new request if it doesn't exist
                 const borrowDate = data.borrowDate || data.startDate || data.createdAt;
@@ -1307,6 +1426,12 @@ function LecturerPortal({ user, onLogout }) {
     }
   };
 
+  const handleAddStudents = (group) => {
+    setSelectedGroup(group);
+    setGroupDetailModal(false); // Close group detail modal if open
+    // The modal will be opened in GroupsManagement component
+  };
+
 
   return (
     <Layout style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
@@ -1525,7 +1650,7 @@ function LecturerPortal({ user, onLogout }) {
                 transition={pageTransition}
               >
                 {selectedKey === 'dashboard' && <DashboardContent lecturerGroups={lecturerGroups} wallet={wallet} kits={kits} penalties={penalties} penaltyDetails={penaltyDetails} />}
-                {selectedKey === 'groups' && <GroupsManagement lecturerGroups={lecturerGroups} onViewGroupDetails={handleViewGroupDetails} />}
+                {selectedKey === 'groups' && <GroupsManagement lecturerGroups={lecturerGroups} onViewGroupDetails={handleViewGroupDetails} loadData={loadData} />}
                 {selectedKey === 'kits' && <KitRental kits={kits} user={user} onRent={handleRent} onViewKitDetail={(kit) => handleViewKitDetail(kit, 'kit-rental')} />}
                 {selectedKey === 'kit-component-rental' && <KitComponentRental kits={kits} user={user} onViewKitDetail={(kit) => handleViewKitDetail(kit, 'component-rental')} onRentComponent={handleRentComponent} />}
                 {selectedKey === 'borrow-status' && <BorrowStatus borrowStatus={borrowStatus} onViewDetail={handleViewDetail} />}
@@ -1992,12 +2117,41 @@ function LecturerPortal({ user, onLogout }) {
                 : 'Not returned'}
             </Descriptions.Item>
             <Descriptions.Item label="Duration (days)">
-              {selectedRentalDetail.duration}
+              {(() => {
+                let days = 0;
+                let isLate = false;
+
+                if (selectedRentalDetail.dueDate) {
+                  const dueDay = dayjs(selectedRentalDetail.dueDate);
+                  const now = dayjs();
+                  const returnDay = selectedRentalDetail.returnDate ? dayjs(selectedRentalDetail.returnDate) : null;
+                  const compareDate = returnDay && returnDay.isValid() ? returnDay : now;
+
+                  if (dueDay.isValid() && compareDate.isValid()) {
+                    days = Math.max(0, compareDate.diff(dueDay, 'day'));
+                    isLate = compareDate.isAfter(dueDay);
+                  }
+                }
+
+                return (
+                  <Text strong style={{ color: isLate ? '#ff4d4f' : '#999' }}>
+                    {days} day{days !== 1 ? 's' : ''}
+                  </Text>
+                );
+              })()}
             </Descriptions.Item>
-            <Descriptions.Item label="Total Cost" span={2}>
-              <Text strong style={{ color: '#1890ff' }}>
-                {selectedRentalDetail.totalCost?.toLocaleString()} VND
-              </Text>
+            <Descriptions.Item label="Late">
+              {(() => {
+                if (!selectedRentalDetail.dueDate) return <Tag>N/A</Tag>;
+
+                const dueDay = dayjs(selectedRentalDetail.dueDate);
+                const now = dayjs();
+                const returnDay = selectedRentalDetail.returnDate ? dayjs(selectedRentalDetail.returnDate) : null;
+                const compareDate = returnDay && returnDay.isValid() ? returnDay : now;
+
+                const isLate = dueDay.isValid() && compareDate.isValid() && compareDate.isAfter(dueDay);
+                return isLate ? <Tag color="error">Yes</Tag> : <Tag color="success">No</Tag>;
+              })()}
             </Descriptions.Item>
             <Descriptions.Item label="Group" span={2}>
               {selectedRentalDetail.groupName}
@@ -2399,10 +2553,16 @@ const DashboardContent = ({ lecturerGroups, wallet, kits, penalties, penaltyDeta
 );
 
 // Groups Management Component
-const GroupsManagement = ({ lecturerGroups, onViewGroupDetails }) => {
+const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
   const [searchText, setSearchText] = useState('');
   const [selectedClassCode, setSelectedClassCode] = useState(null);
   const [studentCodeSearch, setStudentCodeSearch] = useState('');
+  const [addStudentModalVisible, setAddStudentModalVisible] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState(null);
+  const [availableStudents, setAvailableStudents] = useState([]);
+  const [loadingStudents, setLoadingStudents] = useState(false);
+  const [selectedStudentIds, setSelectedStudentIds] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
 
   // Get unique class codes from groups
   const classCodes = [...new Set(lecturerGroups
@@ -2443,6 +2603,122 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails }) => {
 
     return true;
   });
+
+  const handleOpenAddStudentModal = async (group) => {
+    if (!group.classId) {
+      message.error('This group does not have a class assigned. Cannot add students.');
+      return;
+    }
+
+    if (group.members?.length >= 4) {
+      message.warning('Group already has 4 members. Cannot add more students.');
+      return;
+    }
+
+    setSelectedGroup(group);
+    setSelectedStudentIds([]);
+    setAddStudentModalVisible(true);
+    await loadStudentsForClass(group);
+  };
+
+  const loadStudentsForClass = async (group) => {
+    if (!group.classId) {
+      setAvailableStudents([]);
+      return;
+    }
+
+    setLoadingStudents(true);
+    try {
+      // Get all students
+      const allStudents = await userAPI.getStudents();
+
+      // Get all class assignments
+      const allAssignments = await classAssignmentAPI.getAll();
+
+      // Filter assignments for this class and role STUDENT
+      const classAssignments = allAssignments.filter(assignment => {
+        const assignmentClassId = assignment.classId || assignment.clazz?.id;
+        const roleName = assignment.roleName || assignment.role?.name || '';
+        return assignmentClassId === group.classId && roleName === 'STUDENT';
+      });
+
+      // Get account IDs of students in this class
+      const studentAccountIds = classAssignments.map(assignment =>
+        assignment.accountId || assignment.account?.id
+      ).filter(id => id);
+
+      // Get students that are in this class
+      const studentsInClass = allStudents.filter(student =>
+        studentAccountIds.includes(student.id)
+      );
+
+      // Get current group member IDs
+      const currentMemberIds = (group.members || []).map(m => m.id || m.accountId).filter(id => id);
+
+      // Filter out students already in the group
+      const availableStudentsList = studentsInClass.filter(student =>
+        !currentMemberIds.includes(student.id)
+      );
+
+      setAvailableStudents(availableStudentsList);
+    } catch (error) {
+      console.error('Error loading students for class:', error);
+      message.error('Failed to load students');
+      setAvailableStudents([]);
+    } finally {
+      setLoadingStudents(false);
+    }
+  };
+
+  const handleAddStudentsSubmit = async () => {
+    if (!selectedGroup || selectedStudentIds.length === 0) {
+      message.warning('Please select at least one student to add');
+      return;
+    }
+
+    const remainingSlots = 4 - (selectedGroup.members?.length || 0);
+    if (selectedStudentIds.length > remainingSlots) {
+      message.warning(`You can only add ${remainingSlots} more student(s) to this group`);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      // Add each selected student to the group
+      const addPromises = selectedStudentIds.map(async (studentId) => {
+        const requestData = {
+          studentGroupId: selectedGroup.id,
+          accountId: studentId,
+          roles: 'MEMBER'
+        };
+        return await borrowingGroupAPI.addMemberToGroup(requestData);
+      });
+
+      await Promise.all(addPromises);
+
+      message.success(`Successfully added ${selectedStudentIds.length} student(s) to the group`);
+      setAddStudentModalVisible(false);
+      setSelectedGroup(null);
+      setSelectedStudentIds([]);
+
+      // Reload data to refresh the groups list
+      if (loadData) {
+        await loadData();
+      }
+    } catch (error) {
+      console.error('Error adding students to group:', error);
+      message.error('Failed to add students: ' + (error.message || 'Unknown error'));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCloseAddStudentModal = () => {
+    setAddStudentModalVisible(false);
+    setSelectedGroup(null);
+    setSelectedStudentIds([]);
+    setAvailableStudents([]);
+  };
 
   return (
     <div>
@@ -2553,6 +2829,27 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails }) => {
                           )}
                         </div>
                       </Descriptions.Item>
+                      {(group.members?.length || 0) < 4 && group.classId && (
+                        <Descriptions.Item>
+                          <Button
+                            type="primary"
+                            icon={<PlusOutlined />}
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenAddStudentModal(group);
+                            }}
+                            style={{
+                              width: '100%',
+                              marginTop: 8,
+                              background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+                              border: 'none'
+                            }}
+                          >
+                            Add Student
+                          </Button>
+                        </Descriptions.Item>
+                      )}
                     </Descriptions>
                   </Card>
                 </motion.div>
@@ -2570,6 +2867,128 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails }) => {
           )}
         </Card>
       </motion.div>
+
+      {/* Add Student Modal */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <PlusOutlined style={{ color: '#52c41a', fontSize: '20px' }} />
+            <span style={{ fontSize: '18px', fontWeight: 'bold' }}>
+              Add Students to {selectedGroup?.name || 'Group'}
+            </span>
+          </div>
+        }
+        open={addStudentModalVisible}
+        onCancel={handleCloseAddStudentModal}
+        footer={[
+          <Button key="cancel" onClick={handleCloseAddStudentModal}>
+            Cancel
+          </Button>,
+          <Button
+            key="submit"
+            type="primary"
+            onClick={handleAddStudentsSubmit}
+            loading={submitting}
+            disabled={selectedStudentIds.length === 0}
+            style={{
+              background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+              border: 'none'
+            }}
+          >
+            Add Selected Students ({selectedStudentIds.length})
+          </Button>
+        ]}
+        width={800}
+        centered
+        destroyOnClose
+      >
+        {selectedGroup && (
+          <div>
+            <Descriptions column={2} bordered size="small" style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="Group Name">
+                <Text strong>{selectedGroup.name}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Class Code">
+                <Tag color="cyan">{selectedGroup.className || 'N/A'}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="Current Members">
+                <Badge count={selectedGroup.members?.length || 0} showZero color="#52c41a" />
+              </Descriptions.Item>
+              <Descriptions.Item label="Remaining Slots">
+                <Badge count={4 - (selectedGroup.members?.length || 0)} showZero color="#faad14" />
+              </Descriptions.Item>
+            </Descriptions>
+
+            <Divider orientation="left">
+              <Text strong>Available Students in {selectedGroup.className || 'Class'}</Text>
+            </Divider>
+
+            <Spin spinning={loadingStudents}>
+              {availableStudents.length > 0 ? (
+                <Table
+                  rowSelection={{
+                    type: 'checkbox',
+                    selectedRowKeys: selectedStudentIds,
+                    onChange: (selectedRowKeys) => {
+                      const remainingSlots = 4 - (selectedGroup.members?.length || 0);
+                      if (selectedRowKeys.length > remainingSlots) {
+                        message.warning(`You can only select up to ${remainingSlots} student(s)`);
+                        return;
+                      }
+                      setSelectedStudentIds(selectedRowKeys);
+                    },
+                    getCheckboxProps: (record) => ({
+                      disabled: false,
+                    }),
+                  }}
+                  columns={[
+                    {
+                      title: 'Student Code',
+                      dataIndex: 'studentCode',
+                      key: 'studentCode',
+                      render: (text) => <Text code>{text || 'N/A'}</Text>
+                    },
+                    {
+                      title: 'Full Name',
+                      dataIndex: 'fullName',
+                      key: 'fullName',
+                      render: (text) => <Text strong>{text || 'N/A'}</Text>
+                    },
+                    {
+                      title: 'Email',
+                      dataIndex: 'email',
+                      key: 'email',
+                    },
+                    {
+                      title: 'Status',
+                      dataIndex: 'status',
+                      key: 'status',
+                      render: (status) => (
+                        <Tag color={status === 'ACTIVE' ? 'success' : 'default'}>
+                          {status || 'N/A'}
+                        </Tag>
+                      )
+                    }
+                  ]}
+                  dataSource={availableStudents}
+                  rowKey="id"
+                  pagination={{
+                    pageSize: 10,
+                    showSizeChanger: true,
+                    showTotal: (total) => `Total ${total} students available`
+                  }}
+                  locale={{ emptyText: 'No students available in this class' }}
+                />
+              ) : !loadingStudents ? (
+                <Empty
+                  description="No students available to add. All students in this class are already in the group or the class has no students."
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                />
+              ) : null}
+            </Spin>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };

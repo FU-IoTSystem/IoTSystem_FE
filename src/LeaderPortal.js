@@ -415,8 +415,15 @@ function LeaderPortal({ user, onLogout }) {
     }
   }, [user]);
 
-  const handlePayPalReturn = useCallback(async (paymentId, payerId, loadDataFn) => {
+  const handlePayPalReturn = useCallback(async (paymentId, payerId) => {
     try {
+      // Check if this payment has already been processed successfully
+      const successKey = `paypal_success_${paymentId}`;
+      if (sessionStorage.getItem(successKey)) {
+        console.log('Payment already processed successfully, skipping duplicate execution');
+        return;
+      }
+
       // Get stored payment info
       const storedPayment = sessionStorage.getItem('pendingPayPalPayment');
       if (!storedPayment) {
@@ -434,6 +441,9 @@ function LeaderPortal({ user, onLogout }) {
       );
 
       if (response && response.data) {
+        // Mark as successfully processed to prevent duplicate messages
+        sessionStorage.setItem(successKey, 'true');
+
         message.success('Payment successful! Wallet balance has been updated.');
 
         // Clear stored payment info
@@ -442,13 +452,13 @@ function LeaderPortal({ user, onLogout }) {
         // Clean URL immediately
         window.history.replaceState({}, document.title, window.location.pathname);
 
-        // Wait a moment for backend to process the payment
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Wait longer for backend to process the payment
+        await new Promise(resolve => setTimeout(resolve, 1500));
 
-        // Reload wallet and data - use window.location.reload as fallback
-        console.log('Calling loadData after payment success...');
+        // Reload wallet and data - reload wallet directly first
+        console.log('Reloading wallet after payment success...');
         try {
-          // Try to reload wallet manually first
+          // Reload wallet manually first
           const walletResponse = await walletAPI.getMyWallet();
           const walletData = walletResponse?.data || walletResponse || {};
 
@@ -477,16 +487,21 @@ function LeaderPortal({ user, onLogout }) {
             transactions: transactions
           });
 
-          // Call loadData to reload all data (kits, groups, penalties, etc.)
+          // Wait a bit more and then call loadData to reload all data
+          await new Promise(resolve => setTimeout(resolve, 500));
           console.log('Calling loadData to reload all data...');
-          const loadDataToCall = loadDataFn || loadData;
-          console.log('loadData available:', loadDataToCall, 'Type:', typeof loadDataToCall);
-          if (loadDataToCall && typeof loadDataToCall === 'function') {
+
+          // Ensure loadData is available before calling
+          if (loadData && typeof loadData === 'function') {
             try {
-              await loadDataToCall();
+              await loadData();
               console.log('loadData completed - all data reloaded');
             } catch (loadError) {
               console.error('Error calling loadData:', loadError);
+              // Fallback: reload the page if loadData fails
+              setTimeout(() => {
+                window.location.reload();
+              }, 1000);
             }
           } else {
             console.warn('loadData not available, reloading page to ensure all data is refreshed');
@@ -508,7 +523,12 @@ function LeaderPortal({ user, onLogout }) {
 
       // Check if error is about payment already done
       if (error.message && (error.message.includes('PAYMENT_ALREADY_DONE') || error.message.includes('already completed'))) {
-        message.success('Payment was already completed successfully!');
+        // Check if this message has already been shown
+        const successKey = `paypal_success_${paymentId}`;
+        if (!sessionStorage.getItem(successKey)) {
+          sessionStorage.setItem(successKey, 'true');
+          message.success('Payment was already completed successfully!');
+        }
 
         // Clear stored payment info
         sessionStorage.removeItem('pendingPayPalPayment');
@@ -516,13 +536,13 @@ function LeaderPortal({ user, onLogout }) {
         // Clean URL immediately
         window.history.replaceState({}, document.title, window.location.pathname);
 
-        // Wait a moment for backend to process
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Wait longer for backend to process
+        await new Promise(resolve => setTimeout(resolve, 1500));
 
         // Reload wallet and data
-        console.log('Calling loadData after PAYMENT_ALREADY_DONE...');
+        console.log('Reloading wallet after PAYMENT_ALREADY_DONE...');
         try {
-          // Try to reload wallet manually first
+          // Reload wallet manually first
           const walletResponse = await walletAPI.getMyWallet();
           const walletData = walletResponse?.data || walletResponse || {};
 
@@ -551,16 +571,21 @@ function LeaderPortal({ user, onLogout }) {
             transactions: transactions
           });
 
-          // Call loadData to reload all data (kits, groups, penalties, etc.)
+          // Wait a bit more and then call loadData to reload all data
+          await new Promise(resolve => setTimeout(resolve, 500));
           console.log('Calling loadData to reload all data...');
-          const loadDataToCall = loadDataFn || loadData;
-          console.log('loadData available:', loadDataToCall, 'Type:', typeof loadDataToCall);
-          if (loadDataToCall && typeof loadDataToCall === 'function') {
+
+          // Ensure loadData is available before calling
+          if (loadData && typeof loadData === 'function') {
             try {
-              await loadDataToCall();
+              await loadData();
               console.log('loadData completed - all data reloaded');
             } catch (loadError) {
               console.error('Error calling loadData:', loadError);
+              // Fallback: reload the page if loadData fails
+              setTimeout(() => {
+                window.location.reload();
+              }, 1000);
             }
           } else {
             console.warn('loadData not available, reloading page to ensure all data is refreshed');
@@ -648,33 +673,57 @@ function LeaderPortal({ user, onLogout }) {
     const urlParams = new URLSearchParams(window.location.search);
     const paymentId = urlParams.get('paymentId');
     const payerId = urlParams.get('PayerID');
+    const isCancel = urlParams.get('cancel') === 'true' || window.location.pathname.includes('paypal-cancel');
 
-    // Check if this is a PayPal return
-    if (paymentId && payerId) {
-      // Use a flag to prevent duplicate execution
-      const processingKey = `paypal_processing_${paymentId}`;
-      if (sessionStorage.getItem(processingKey)) {
-        console.log('Payment already being processed, skipping...');
-        return;
-      }
+    console.log('PayPal return check:', {
+      paymentId,
+      payerId,
+      isCancel,
+      hasUser: !!user,
+      hasLoadData: !!loadData
+    });
+
+    // Handle cancel immediately
+    if (isCancel) {
+      handlePayPalCancel();
+      return;
+    }
+
+    // If no PayPal return parameters, skip
+    if (!paymentId || !payerId) {
+      return;
+    }
+
+    // Use sessionStorage to prevent duplicate execution (more reliable than ref)
+    const processingKey = `paypal_processing_${paymentId}`;
+    if (sessionStorage.getItem(processingKey)) {
+      console.log('PayPal return already being processed, skipping');
+      return;
+    }
+
+    // Process payment when user and loadData are ready
+    if (user && loadData) {
+      // Mark as processing immediately using sessionStorage
       sessionStorage.setItem(processingKey, 'true');
 
-      // Execute payment - loadData is now defined before this useEffect
-      const executePayment = async () => {
-        try {
-          await handlePayPalReturn(paymentId, payerId, loadData);
-        } finally {
-          // Clear processing flag after a delay
+      console.log('Processing PayPal return immediately...', { paymentId, payerId, userId: user?.id });
+
+      handlePayPalReturn(paymentId, payerId)
+        .then(() => {
+          // Clear processing flag after successful processing
           setTimeout(() => {
             sessionStorage.removeItem(processingKey);
-          }, 2000);
-        }
-      };
-      executePayment();
-    } else if (urlParams.get('cancel') === 'true' || window.location.pathname.includes('paypal-cancel')) {
-      handlePayPalCancel();
+          }, 5000);
+        })
+        .catch((error) => {
+          console.error('Error in PayPal return processing:', error);
+          // Clear processing flag on error to allow retry
+          sessionStorage.removeItem(processingKey);
+        });
+    } else {
+      console.log('Waiting for user or loadData...', { hasUser: !!user, hasLoadData: !!loadData });
     }
-  }, [loadData]);
+  }, [loadData, handlePayPalReturn, user]);
 
   useEffect(() => {
     console.log('===== LeaderPortal useEffect triggered =====');
@@ -3303,6 +3352,13 @@ const ProfileManagement = ({ profile, setProfile, loading, setLoading, user }) =
       setLoading(false);
     }
   }, [form, setLoading, setProfile]);
+
+  // Load profile when component mounts
+  useEffect(() => {
+    if (!profile) {
+      loadProfile();
+    }
+  }, [profile, loadProfile]);
 
   const handleEdit = () => {
     setIsEditing(true);
