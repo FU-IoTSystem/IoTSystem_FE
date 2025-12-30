@@ -22,6 +22,69 @@ import TextField from '@mui/material/TextField';
 import Alert from '@mui/material/Alert';
 import { authAPI, borrowingGroupAPI } from './api';
 
+// Helper function to construct user object from profile (shared between login and restore)
+const constructUserFromProfile = async (userProfile) => {
+  // Map backend role to frontend role
+  const roleMapping = {
+    'ADMIN': 'admin',
+    'STUDENT': 'member', // Student role loads MemberPortal
+    'LECTURER': 'lecturer',
+    'LEADER': 'leader',   // Leader role loads LeaderPortal
+    'ACADEMIC': 'academic' // Academic role loads AcademicAffairsPortal
+  };
+
+  const mappedRole = roleMapping[userProfile.role] || 'member';
+
+  // Check borrowing group role for STUDENT to determine if they are leader
+  let finalRole = mappedRole;
+  let borrowingGroupInfo = null;
+
+  if (mappedRole === 'member' || mappedRole === 'student') {
+    try {
+      // Get user's borrowing groups
+      const borrowingGroups = await borrowingGroupAPI.getByAccountId(userProfile.id);
+      console.log('User borrowing groups:', borrowingGroups);
+
+      if (borrowingGroups && borrowingGroups.length > 0) {
+        // Find if user has LEADER role
+        const leaderGroup = borrowingGroups.find(bg => bg.roles === 'LEADER');
+        if (leaderGroup) {
+          finalRole = 'leader';
+          borrowingGroupInfo = {
+            groupId: leaderGroup.studentGroupId,
+            role: 'LEADER'
+          };
+          console.log('User is a LEADER in group:', borrowingGroupInfo);
+        } else {
+          // User is a member
+          const memberGroup = borrowingGroups.find(bg => bg.roles === 'MEMBER');
+          if (memberGroup) {
+            borrowingGroupInfo = {
+              groupId: memberGroup.studentGroupId,
+              role: 'MEMBER'
+            };
+            console.log('User is a MEMBER in group:', borrowingGroupInfo);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error checking borrowing group role:', error);
+      // Continue with default role
+    }
+  }
+
+  return {
+    id: userProfile.id,
+    email: userProfile.email,
+    name: userProfile.fullName || userProfile.email,
+    role: finalRole,
+    avatarUrl: userProfile.avatarUrl,
+    phone: userProfile.phone,
+    studentCode: userProfile.studentCode,
+    borrowingGroupInfo: borrowingGroupInfo
+  };
+};
+
 function Home({ onLogin, user }) {
   const [error, setError] = useState('');
   const [loginCredentials, setLoginCredentials] = useState({ email: '', password: '' });
@@ -60,74 +123,17 @@ function Home({ onLogin, user }) {
 
       // Get user profile after successful login
       const profileResponse = await authAPI.getProfile();
-      const userProfile = profileResponse.data;
+      const userProfile = profileResponse.data || profileResponse;
 
-      // Map backend role to frontend role
-      const roleMapping = {
-        'ADMIN': 'admin',
-        'STUDENT': 'member', // Student role loads MemberPortal
-        'LECTURER': 'lecturer',
-        'LEADER': 'leader',   // Leader role loads LeaderPortal
-        'ACADEMIC': 'academic' // Academic role loads AcademicAffairsPortal
-      };
-
-      const mappedRole = roleMapping[userProfile.role] || 'member';
-
-      // Check borrowing group role for STUDENT to determine if they are leader
-      let finalRole = mappedRole;
-      let borrowingGroupInfo = null;
-
-      if (mappedRole === 'member' || mappedRole === 'student') {
-        try {
-          // Get user's borrowing groups
-          const borrowingGroups = await borrowingGroupAPI.getByAccountId(userProfile.id);
-          console.log('User borrowing groups:', borrowingGroups);
-
-          if (borrowingGroups && borrowingGroups.length > 0) {
-            // Find if user has LEADER role
-            const leaderGroup = borrowingGroups.find(bg => bg.roles === 'LEADER');
-            if (leaderGroup) {
-              finalRole = 'leader';
-              borrowingGroupInfo = {
-                groupId: leaderGroup.studentGroupId,
-                role: 'LEADER'
-              };
-              console.log('User is a LEADER in group:', borrowingGroupInfo);
-            } else {
-              // User is a member
-              const memberGroup = borrowingGroups.find(bg => bg.roles === 'MEMBER');
-              if (memberGroup) {
-                borrowingGroupInfo = {
-                  groupId: memberGroup.studentGroupId,
-                  role: 'MEMBER'
-                };
-                console.log('User is a MEMBER in group:', borrowingGroupInfo);
-              }
-            }
-          }
-        } catch (error) {
-          console.error('Error checking borrowing group role:', error);
-          // Continue with default role
-        }
-      }
-
-      const authenticatedUser = {
-        id: userProfile.id,
-        email: userProfile.email,
-        name: userProfile.fullName || userProfile.email,
-        role: finalRole,
-        avatarUrl: userProfile.avatarUrl,
-        phone: userProfile.phone,
-        studentCode: userProfile.studentCode,
-        borrowingGroupInfo: borrowingGroupInfo
-      };
+      // Construct user object using shared function
+      const authenticatedUser = await constructUserFromProfile(userProfile);
 
       console.log('Final authenticated user:', authenticatedUser);
 
       onLogin(authenticatedUser);
 
       // Navigate to appropriate portal based on final role
-      switch (finalRole) {
+      switch (authenticatedUser.role) {
         case 'admin':
           navigate('/admin');
           break;
@@ -252,7 +258,40 @@ function Home({ onLogin, user }) {
 
 function App() {
   const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+
+  // Restore user from token on mount
+  useEffect(() => {
+    const restoreUser = async () => {
+      try {
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+          setLoading(false);
+          return;
+        }
+
+        console.log('Restoring user from token...');
+        // Get user profile
+        const profileResponse = await authAPI.getProfile();
+        const userProfile = profileResponse.data || profileResponse;
+
+        // Construct user object
+        const authenticatedUser = await constructUserFromProfile(userProfile);
+        console.log('User restored:', authenticatedUser);
+
+        setUser(authenticatedUser);
+      } catch (error) {
+        console.error('Error restoring user:', error);
+        // If token is invalid, remove it
+        localStorage.removeItem('authToken');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    restoreUser();
+  }, []);
 
   const handleLogin = (userData) => {
     setUser(userData);
@@ -263,6 +302,25 @@ function App() {
     setUser(null);
     navigate('/');
   };
+
+  // Show loading screen while restoring user
+  if (loading) {
+    return (
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          minHeight: '100vh',
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        }}
+      >
+        <Typography variant="h6" sx={{ color: 'white' }}>
+          Loading...
+        </Typography>
+      </Box>
+    );
+  }
 
   return (
     <Routes>
