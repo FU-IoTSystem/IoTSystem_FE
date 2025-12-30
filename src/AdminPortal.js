@@ -265,6 +265,7 @@ function AdminPortal({ onLogout }) {
             email: profile.email,
             phone: profile.phone,
             studentCode: profile.studentCode,
+            lecturerCode: profile.lecturerCode,
             role: profile.role?.toLowerCase() || 'member',
             status: 'Active', // Default status since ProfileResponse doesn't have status
             createdAt: new Date().toISOString()
@@ -327,22 +328,57 @@ function AdminPortal({ onLogout }) {
           fetchedApprovedRequests = approvedResponse;
 
           // Transform approved requests to refund request format
-          const refundRequestsData = approvedResponse.map(request => ({
-            id: request.id,
-            rentalId: request.id,
-            kitId: request.kit?.id || 'N/A',
-            kitName: request.kit?.kitName || 'N/A',
-            userEmail: request.requestedBy?.email || 'N/A',
-            userName: request.requestedBy?.fullName || 'N/A',
-            status: 'pending',
-            requestDate: request.createdAt || request.approvedDate || null,
-            approvedDate: request.approvedDate || null,
-            totalCost: request.depositAmount || 0,
-            damageAssessment: {},
-            reason: request.reason || 'Course project',
-            depositAmount: request.depositAmount || 0,
-            requestType: request.requestType // Add request type to distinguish kit vs component
-          }));
+          const refundRequestsData = approvedResponse.map(request => {
+            const borrowDate = request.approvedDate || request.createdAt || null;
+            const dueDate = request.expectReturnDate || null;
+            const returnDate = request.actualReturnDate || null;
+
+            // Calculate duration in days
+            let duration = 0;
+            if (borrowDate) {
+              const borrowDay = dayjs(borrowDate);
+              const now = dayjs();
+              const endDate = returnDate ? dayjs(returnDate) : now;
+              if (borrowDay.isValid() && endDate.isValid()) {
+                duration = Math.max(0, endDate.diff(borrowDay, 'day'));
+              }
+            }
+
+            // Check if rental is late
+            let isLate = request.isLate || false;
+            if (dueDate) {
+              const dueDay = dayjs(dueDate);
+              const now = dayjs();
+              const returnDay = returnDate ? dayjs(returnDate) : null;
+              const compareDate = returnDay && returnDay.isValid() ? returnDay : now;
+
+              if (dueDay.isValid() && compareDate.isValid() && compareDate.isAfter(dueDay)) {
+                isLate = true;
+              }
+            }
+
+            return {
+              id: request.id,
+              rentalId: request.id,
+              kitId: request.kit?.id || 'N/A',
+              kitName: request.kit?.kitName || 'N/A',
+              userEmail: request.requestedBy?.email || 'N/A',
+              userName: request.requestedBy?.fullName || 'N/A',
+              status: 'pending',
+              requestDate: request.createdAt || request.approvedDate || null,
+              approvedDate: request.approvedDate || null,
+              expectReturnDate: request.expectReturnDate || null,
+              actualReturnDate: request.actualReturnDate || null,
+              totalCost: request.depositAmount || 0,
+              damageAssessment: {},
+              reason: request.reason || 'Course project',
+              depositAmount: request.depositAmount || 0,
+              requestType: request.requestType, // Add request type to distinguish kit vs component
+              duration: duration,
+              isLate: isLate,
+              raw: request
+            };
+          });
 
           setRefundRequests(refundRequestsData);
           console.log('Approved requests loaded successfully:', refundRequestsData.length);
@@ -899,7 +935,8 @@ function AdminPortal({ onLogout }) {
       userName: refundRequest.userName || refundRequest.userEmail?.split('@')[0] || 'Unknown',
       status: refundRequest.status,
       totalCost: refundRequest.depositAmount || 0,
-      requestType: refundRequest.requestType // Add request type for inspection logic
+      requestType: refundRequest.requestType, // Add request type for inspection logic
+      raw: refundRequest.raw || refundRequest // Store raw request data for access to expectReturnDate
     };
 
     console.log('Set rental object:', rentalObject);
@@ -968,13 +1005,37 @@ function AdminPortal({ onLogout }) {
   };
 
   const handleComponentDamage = (componentName, isDamaged, damageValue = 0) => {
-    setDamageAssessment(prev => ({
-      ...prev,
-      [componentName]: {
-        damaged: isDamaged,
-        value: damageValue
-      }
-    }));
+    setDamageAssessment(prev => {
+      const newAssessment = {
+        ...prev,
+        [componentName]: {
+          damaged: isDamaged,
+          value: damageValue
+        }
+      };
+
+      // Calculate fine amount immediately with new assessment
+      let totalFine = 0;
+
+      // Calculate fine from component damage using the new assessment
+      Object.values(newAssessment).forEach(component => {
+        if (component && component.damaged) {
+          totalFine += component.value || 0;
+        }
+      });
+
+      // Add penalty policies amount from current state
+      selectedPenaltyPolicies.forEach(policy => {
+        if (policy && policy.amount) {
+          totalFine += policy.amount;
+        }
+      });
+
+      // Update fine amount immediately
+      setFineAmount(totalFine);
+
+      return newAssessment;
+    });
   };
 
   const calculateFineAmount = () => {
@@ -982,14 +1043,14 @@ function AdminPortal({ onLogout }) {
 
     // Calculate fine from component damage
     Object.values(damageAssessment).forEach(component => {
-      if (component.damaged) {
-        totalFine += component.value;
+      if (component && component.damaged) {
+        totalFine += component.value || 0;
       }
     });
 
     // Add penalty policies amount
     selectedPenaltyPolicies.forEach(policy => {
-      if (policy.amount) {
+      if (policy && policy.amount) {
         totalFine += policy.amount;
       }
     });
@@ -1065,11 +1126,26 @@ function AdminPortal({ onLogout }) {
     try {
       if (selectedRental && selectedRental.id) {
         try {
+          // Check if return is late by comparing actual return date with expected return date
+          const rawRequest = selectedRental.raw || {};
+          const expectReturnDate = rawRequest.expectReturnDate || rawRequest.dueDate || null;
+          const actualReturnDateStr = new Date().toISOString();
+          let isLate = false;
+
+          if (expectReturnDate) {
+            const dueDay = dayjs(expectReturnDate);
+            const returnDay = dayjs(actualReturnDateStr);
+            if (dueDay.isValid() && returnDay.isValid() && returnDay.isAfter(dueDay)) {
+              isLate = true;
+            }
+          }
+
           await borrowingRequestAPI.update(selectedRental.id, {
             status: 'RETURNED',
-            actualReturnDate: new Date().toISOString()
+            actualReturnDate: actualReturnDateStr,
+            isLate: isLate
           });
-          console.log('Borrowing request status updated to RETURNED');
+          console.log(`Borrowing request status updated to RETURNED, isLate: ${isLate}`);
         } catch (updateError) {
           console.error('Error updating borrowing request:', updateError);
         }
@@ -1113,12 +1189,6 @@ function AdminPortal({ onLogout }) {
           duration: 5,
         });
       } else {
-        notification.warning({
-          message: 'No Group Found',
-          description: 'Student is not part of any group. Fine will be sent directly to student.',
-          placement: 'topRight',
-        });
-
         const newFine = {
           id: Date.now(),
           rentalId: selectedRental.id,
@@ -1821,6 +1891,53 @@ function AdminPortal({ onLogout }) {
                   {selectedRental.depositAmount.toLocaleString()} VND
                 </Descriptions.Item>
               )}
+              {selectedRental.raw?.approvedDate && (
+                <Descriptions.Item label="Borrow Date">
+                  {new Date(selectedRental.raw.approvedDate).toLocaleString('vi-VN')}
+                </Descriptions.Item>
+              )}
+              {selectedRental.raw?.expectReturnDate && (
+                <Descriptions.Item label="Expected Return Date">
+                  {new Date(selectedRental.raw.expectReturnDate).toLocaleString('vi-VN')}
+                </Descriptions.Item>
+              )}
+              <Descriptions.Item label="Duration (days)">
+                {(() => {
+                  let days = 0;
+                  let isLate = false;
+
+                  if (selectedRental.raw?.expectReturnDate) {
+                    const dueDay = dayjs(selectedRental.raw.expectReturnDate);
+                    const now = dayjs();
+                    const returnDay = selectedRental.raw?.actualReturnDate ? dayjs(selectedRental.raw.actualReturnDate) : null;
+                    const compareDate = returnDay && returnDay.isValid() ? returnDay : now;
+
+                    if (dueDay.isValid() && compareDate.isValid()) {
+                      days = Math.max(0, compareDate.diff(dueDay, 'day'));
+                      isLate = compareDate.isAfter(dueDay);
+                    }
+                  }
+
+                  return (
+                    <Text strong style={{ color: isLate ? '#ff4d4f' : '#999' }}>
+                      {days} day{days !== 1 ? 's' : ''}
+                    </Text>
+                  );
+                })()}
+              </Descriptions.Item>
+              <Descriptions.Item label="Late">
+                {(() => {
+                  if (!selectedRental.raw?.expectReturnDate) return <Tag>N/A</Tag>;
+
+                  const dueDay = dayjs(selectedRental.raw.expectReturnDate);
+                  const now = dayjs();
+                  const returnDay = selectedRental.raw?.actualReturnDate ? dayjs(selectedRental.raw.actualReturnDate) : null;
+                  const compareDate = returnDay && returnDay.isValid() ? returnDay : now;
+
+                  const isLate = dueDay.isValid() && compareDate.isValid() && compareDate.isAfter(dueDay);
+                  return isLate ? <Tag color="error">Yes</Tag> : <Tag color="success">No</Tag>;
+                })()}
+              </Descriptions.Item>
             </Descriptions>
 
             <Divider>Component Inspection</Divider>
@@ -1851,25 +1968,30 @@ function AdminPortal({ onLogout }) {
                 >
                   <Row gutter={16} align="middle">
                     <Col span={12}>
-                      <Text>Quantity: {component.quantity || component.rentedQuantity}</Text>
+                      <Space direction="vertical" size={4}>
+                        <Text>Quantity: {component.quantity || component.rentedQuantity}</Text>
+                        {component.pricePerCom && (
+                          <Text type="secondary" style={{ fontSize: '12px' }}>
+                            Price: {Number(component.pricePerCom).toLocaleString()} VND
+                          </Text>
+                        )}
+                      </Space>
                     </Col>
                     <Col span={12}>
                       <Space>
                         <Checkbox
                           checked={damageAssessment[component.componentName || component.name]?.damaged || false}
-                          onChange={(e) => handleComponentDamage(component.componentName || component.name, e.target.checked, e.target.checked ? 50000 : 0)}
+                          onChange={(e) => {
+                            const componentPrice = component.pricePerCom || 0;
+                            handleComponentDamage(component.componentName || component.name, e.target.checked, e.target.checked ? componentPrice : 0);
+                          }}
                         >
                           Damaged
                         </Checkbox>
                         {damageAssessment[component.componentName || component.name]?.damaged && (
-                          <InputNumber
-                            placeholder="Damage Value (VND)"
-                            value={damageAssessment[component.componentName || component.name]?.value || 0}
-                            onChange={(value) => handleComponentDamage(component.componentName || component.name, true, value || 0)}
-                            style={{ width: 150 }}
-                            formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                            parser={value => value.replace(/\$\s?|(,*)/g, '')}
-                          />
+                          <Text type="secondary" style={{ fontSize: '12px', marginLeft: 8 }}>
+                            Fine: {Number(damageAssessment[component.componentName || component.name]?.value || component.pricePerCom || 0).toLocaleString()} VND
+                          </Text>
                         )}
                       </Space>
                     </Col>
@@ -1910,11 +2032,32 @@ function AdminPortal({ onLogout }) {
                         <Checkbox
                           checked={selectedPenaltyPolicies.some(selected => selected.id === policy.id)}
                           onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedPenaltyPolicies(prev => [...prev, policy]);
-                            } else {
-                              setSelectedPenaltyPolicies(prev => prev.filter(p => p.id !== policy.id));
-                            }
+                            setSelectedPenaltyPolicies(prev => {
+                              const newPolicies = e.target.checked
+                                ? [...prev, policy]
+                                : prev.filter(p => p.id !== policy.id);
+
+                              // Recalculate fine immediately with new policies
+                              let totalFine = 0;
+
+                              // Calculate fine from component damage
+                              Object.values(damageAssessment).forEach(component => {
+                                if (component && component.damaged) {
+                                  totalFine += component.value || 0;
+                                }
+                              });
+
+                              // Add penalty policies amount using new policies
+                              newPolicies.forEach(p => {
+                                if (p && p.amount) {
+                                  totalFine += p.amount;
+                                }
+                              });
+
+                              setFineAmount(totalFine);
+
+                              return newPolicies;
+                            });
                           }}
                         />
                       </Col>
@@ -4440,7 +4583,7 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
         }
       }
 
-      // When approved, refresh refund requests from backend to ensure sync and navigate to return checking tab
+      // When approved, refresh refund requests from backend to ensure sync
       if (action === 'approve') {
         // Reload approved requests from backend to ensure data consistency
         try {
@@ -4473,19 +4616,12 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
         } catch (refreshError) {
           console.error('Error refreshing approved requests:', refreshError);
         }
-
-        // Navigate to return checking tab immediately
-        setTimeout(() => {
-          if (onNavigateToRefunds) {
-            onNavigateToRefunds();
-          }
-        }, 500);
       }
 
       notification.success({
         message: action === 'approve' ? 'Request Approved' : 'Request Rejected',
         description: action === 'approve'
-          ? 'Request approved successfully! Navigate to Return Checking to monitor refund status.'
+          ? 'Request approved successfully!'
           : 'Request rejected successfully',
         placement: 'topRight',
         duration: 4,
@@ -4791,15 +4927,29 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
       key: 'kitName'
     },
     {
-      title: 'Request Date',
-      dataIndex: 'requestDate',
-      key: 'requestDate',
+      title: 'Borrow Date',
+      dataIndex: 'approvedDate',
+      key: 'approvedDate',
       render: (date) => {
         if (!date) return 'N/A';
         try {
           return new Date(date).toLocaleString('vi-VN');
         } catch (error) {
-          console.error('Error parsing requestDate:', date, error);
+          console.error('Error parsing approvedDate:', date, error);
+          return 'N/A';
+        }
+      }
+    },
+    {
+      title: 'Expected Return Date',
+      dataIndex: 'expectReturnDate',
+      key: 'expectReturnDate',
+      render: (date) => {
+        if (!date) return 'N/A';
+        try {
+          return new Date(date).toLocaleString('vi-VN');
+        } catch (error) {
+          console.error('Error parsing expectReturnDate:', date, error);
           return 'N/A';
         }
       }
@@ -5867,10 +6017,19 @@ const UserManagement = ({ users, setUsers }) => {
       render: (phone) => phone || '-'
     },
     {
-      title: 'Student Code',
-      dataIndex: 'studentCode',
-      key: 'studentCode',
-      render: (studentCode) => studentCode || '-'
+      title: 'User Code',
+      dataIndex: 'userCode',
+      key: 'userCode',
+      render: (_, record) => {
+        // Display studentCode for STUDENT role, lecturerCode for LECTURER role
+        const role = (record.role || '').toLowerCase();
+        if (role === 'student') {
+          return record.studentCode || '-';
+        } else if (role === 'lecturer') {
+          return record.lecturerCode || '-';
+        }
+        return '-';
+      }
     },
     {
       title: 'Role',
@@ -5923,12 +6082,14 @@ const UserManagement = ({ users, setUsers }) => {
     setSelectedRole(user.role);
 
     // Map user data to form field names
+    const role = (user.role || '').toLowerCase();
     const formData = {
       name: user.name || user.fullName || '',
       email: user.email || '',
       phone: user.phone || '',
       role: user.role || '',
-      studentCode: user.studentCode || ''
+      studentCode: role === 'student' ? (user.studentCode || '') : '',
+      lecturerCode: role === 'lecturer' ? (user.lecturerCode || '') : ''
     };
 
     form.setFieldsValue(formData);
@@ -5957,6 +6118,8 @@ const UserManagement = ({ users, setUsers }) => {
               email: profile.email,
               phone: profile.phone,
               studentCode: profile.studentCode,
+              lecturerCode: profile.lecturerCode,
+              lecturerCode: profile.lecturerCode,
               role: profile.role?.toLowerCase() || 'member',
               status: profile.isActive ? 'Active' : 'Inactive'
             }));
@@ -5988,18 +6151,20 @@ const UserManagement = ({ users, setUsers }) => {
 
   // Filter users based on search text and role
   const filteredUsers = users.filter(user => {
-    // Filter by search text (name, email, phone, studentCode)
+    // Filter by search text (name, email, phone, studentCode, lecturerCode)
     if (searchText && searchText.trim() !== '') {
       const searchLower = searchText.toLowerCase();
       const name = (user.name || '').toLowerCase();
       const email = (user.email || '').toLowerCase();
       const phone = (user.phone || '').toLowerCase();
       const studentCode = (user.studentCode || '').toLowerCase();
+      const lecturerCode = (user.lecturerCode || '').toLowerCase();
 
       if (!name.includes(searchLower) &&
         !email.includes(searchLower) &&
         !phone.includes(searchLower) &&
-        !studentCode.includes(searchLower)) {
+        !studentCode.includes(searchLower) &&
+        !lecturerCode.includes(searchLower)) {
         return false;
       }
     }
@@ -6026,7 +6191,8 @@ const UserManagement = ({ users, setUsers }) => {
           const updateData = {
             username: values.email,
             password: values.password,
-            studentCode: values.studentCode || null,
+            studentCode: values.role?.toLowerCase() === 'student' ? (values.studentCode || null) : null,
+            lecturerCode: values.role?.toLowerCase() === 'lecturer' ? (values.lecturerCode || null) : null,
             roles: values.role?.toUpperCase() || 'STUDENT',
             phoneNumber: values.phone || null,
             fullName: values.name || null
@@ -6051,6 +6217,8 @@ const UserManagement = ({ users, setUsers }) => {
                   email: profile.email,
                   phone: profile.phone,
                   studentCode: profile.studentCode,
+                  lecturerCode: profile.lecturerCode,
+                  lecturerCode: profile.lecturerCode,
                   role: profile.role?.toLowerCase() || 'member',
                   status: 'Active',
                   createdAt: new Date().toISOString()
@@ -6095,7 +6263,8 @@ const UserManagement = ({ users, setUsers }) => {
         const userData = {
           username: values.email,
           password: values.password,
-          studentCode: values.studentCode || null,
+          studentCode: values.role?.toLowerCase() === 'student' ? (values.studentCode || null) : null,
+          lecturerCode: values.role?.toLowerCase() === 'lecturer' ? (values.lecturerCode || null) : null,
           roles: values.role?.toUpperCase() || 'STUDENT',
           phoneNumber: values.phone || null,
           fullName: values.name || null
@@ -6124,6 +6293,7 @@ const UserManagement = ({ users, setUsers }) => {
                 email: profile.email,
                 phone: profile.phone,
                 studentCode: profile.studentCode,
+                lecturerCode: profile.lecturerCode,
                 role: profile.role?.toLowerCase() || 'member',
                 status: 'Active',
                 createdAt: new Date().toISOString()
@@ -6223,7 +6393,7 @@ const UserManagement = ({ users, setUsers }) => {
           <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
             <Col xs={24} sm={12} md={12}>
               <Input
-                placeholder="Search by name, email, phone, or student code..."
+                placeholder="Search by name, email, phone, or user code..."
                 prefix={<SearchOutlined />}
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
@@ -6337,7 +6507,7 @@ const UserManagement = ({ users, setUsers }) => {
           {selectedRole === 'student' && (
             <Form.Item
               name="studentCode"
-              label="Student Code"
+              label="User Code (Student Code)"
               rules={[
                 { required: true, message: 'Student Code is required for students' },
                 { min: 3, message: 'Student Code must be at least 3 characters' },
@@ -6359,6 +6529,33 @@ const UserManagement = ({ users, setUsers }) => {
               ]}
             >
               <Input placeholder="Enter student code" />
+            </Form.Item>
+          )}
+          {selectedRole === 'lecturer' && (
+            <Form.Item
+              name="lecturerCode"
+              label="User Code (Lecturer Code)"
+              rules={[
+                { required: true, message: 'Lecturer Code is required for lecturers' },
+                { min: 3, message: 'Lecturer Code must be at least 3 characters' },
+                { max: 20, message: 'Lecturer Code must not exceed 20 characters' },
+                {
+                  validator: async (_, value) => {
+                    if (!value) return Promise.resolve();
+                    // Check if lecturer code already exists (excluding current user being edited)
+                    const existingUser = users.find(u =>
+                      u.lecturerCode?.toLowerCase() === value.toLowerCase() &&
+                      (!editingUser || u.id !== editingUser.id)
+                    );
+                    if (existingUser) {
+                      return Promise.reject(new Error('This lecturer code is already in use'));
+                    }
+                    return Promise.resolve();
+                  }
+                }
+              ]}
+            >
+              <Input placeholder="Enter lecturer code" />
             </Form.Item>
           )}
           {!editingUser && (
