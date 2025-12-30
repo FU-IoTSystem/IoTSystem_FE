@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Layout,
   Menu,
@@ -48,7 +48,9 @@ import {
   ExportOutlined,
   ToolOutlined,
   ThunderboltOutlined,
-  UserAddOutlined
+  UserAddOutlined,
+  SearchOutlined,
+  SortAscendingOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { LoadingOutlined } from '@ant-design/icons';
@@ -179,6 +181,15 @@ function AcademicAffairsPortal({ user, onLogout }) {
         const studentsData = await userAPI.getStudents();
         console.log('Fetched students data:', studentsData);
 
+        // Fetch class assignments to get class codes for students
+        let classAssignmentsData = [];
+        try {
+          classAssignmentsData = await classAssignmentAPI.getAll();
+          console.log('Fetched class assignments data:', classAssignmentsData);
+        } catch (error) {
+          console.error('Error fetching class assignments:', error);
+        }
+
         const formatDate = (dateStr) => {
           if (!dateStr) return '-';
           try {
@@ -197,15 +208,39 @@ function AcademicAffairsPortal({ user, onLogout }) {
           }
         };
 
-        const mappedStudents = studentsData.map(student => ({
-          id: student.id,
-          name: student.fullName,
-          email: student.email,
-          studentCode: student.studentCode,
-          phoneNumber: student.phoneNumber,
-          createdAt: formatDate(student.createdAt),
-          status: student.status
-        }));
+        // Create a map of student IDs to their class codes
+        const studentClassMap = {};
+        const assignmentsArray = Array.isArray(classAssignmentsData) ? classAssignmentsData : [];
+        assignmentsArray.forEach(assignment => {
+          const roleName = assignment.roleName || assignment.role || '';
+          const roleUpper = roleName.toUpperCase();
+          const isStudent = roleUpper === 'STUDENT' || roleUpper === 'STUDENT_ROLE';
+
+          if (isStudent && assignment.accountId && assignment.classCode) {
+            const studentId = assignment.accountId.toString();
+            if (!studentClassMap[studentId]) {
+              studentClassMap[studentId] = [];
+            }
+            studentClassMap[studentId].push(assignment.classCode);
+          }
+        });
+
+        const mappedStudents = studentsData.map(student => {
+          const studentId = student.id?.toString();
+          const classCodes = studentClassMap[studentId] || [];
+          const studentClass = classCodes.length > 0 ? classCodes.join(', ') : 'N/A';
+
+          return {
+            id: student.id,
+            name: student.fullName,
+            email: student.email,
+            studentCode: student.studentCode,
+            phoneNumber: student.phoneNumber,
+            studentClass: studentClass,
+            createdAt: formatDate(student.createdAt),
+            status: student.status
+          };
+        });
 
         setStudents(mappedStudents);
       } catch (error) {
@@ -240,6 +275,7 @@ function AcademicAffairsPortal({ user, onLogout }) {
           id: lecturer.id || lecturer.email,
           name: lecturer.fullName,
           email: lecturer.email,
+          lecturerCode: lecturer.lecturerCode || 'N/A',
           phoneNumber: lecturer.phone || '',
           createdAt: formatDate(lecturer.createdAt),
           status: lecturer.status || 'ACTIVE'
@@ -465,10 +501,10 @@ function AcademicAffairsPortal({ user, onLogout }) {
       'Lecturer ID': lecturer.id,
       'Name': lecturer.name,
       'Email': lecturer.email,
-      'Department': lecturer.department,
-      'Specialization': lecturer.specialization,
+      'Lecturer Code': lecturer.lecturerCode || 'N/A',
+      'Phone Number': lecturer.phoneNumber || '',
       'Status': lecturer.status,
-      'Hire Date': lecturer.hireDate
+      'Hire Date': lecturer.createdAt
     }));
     exportToExcel(lecturerData, 'lecturers_list');
     notification.success({
@@ -1613,7 +1649,10 @@ function AcademicAffairsPortal({ user, onLogout }) {
                 label="Class Code"
                 rules={[{ required: true, message: 'Please enter class code' }]}
               >
-                <Input placeholder="Enter class code" />
+                <Input
+                  placeholder="Enter class code"
+                  disabled={iotSubjectModal.data.id ? true : false}
+                />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -1622,7 +1661,10 @@ function AcademicAffairsPortal({ user, onLogout }) {
                 label="Semester"
                 rules={[{ required: true, message: 'Please enter semester' }]}
               >
-                <Input placeholder="Enter semester" />
+                <Input
+                  placeholder="Enter semester"
+                  disabled={iotSubjectModal.data.id ? true : false}
+                />
               </Form.Item>
             </Col>
           </Row>
@@ -2434,19 +2476,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
 
   const columns = [
     {
-      title: 'Lecturer Name',
-      dataIndex: 'accountName',
-      key: 'accountName',
-      render: (text) => text || 'N/A'
-    },
-    {
-      title: 'Lecturer Email',
-      dataIndex: 'accountEmail',
-      key: 'accountEmail',
-      render: (text) => text || 'N/A'
-    },
-    {
-      title: 'IoT Subject',
+      title: 'Class Code',
       dataIndex: 'classCode',
       key: 'classCode',
       render: (classCode, record) => {
@@ -2467,7 +2497,25 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
       }
     },
     {
-      title: 'Assignment Date',
+      title: 'Lecturer Code',
+      dataIndex: 'lecturerCode',
+      key: 'lecturerCode',
+      render: (text) => text || 'N/A'
+    },
+    {
+      title: 'Name',
+      dataIndex: 'accountName',
+      key: 'accountName',
+      render: (text) => text || 'N/A'
+    },
+    {
+      title: 'Email',
+      dataIndex: 'accountEmail',
+      key: 'accountEmail',
+      render: (text) => text || 'N/A'
+    },
+    {
+      title: 'Enrollment',
       dataIndex: 'createdAt',
       key: 'createdAt',
       render: (date) => {
@@ -2713,596 +2761,767 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
 
 
 // Student Management Component
-const StudentManagement = ({ students, setStudents, studentModal, setStudentModal, studentForm, handleExportStudents, handleImportStudents, handleAddStudent, handleEditStudent, handleDeleteStudent, showSheetSelectionAndImport, importFormatModal, setImportFormatModal }) => (
-  <div>
-    <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-      <Card
-        title="Student Management"
-        extra={
-          <Space>
-            <motion.div
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-            >
-              <Button
-                icon={<ImportOutlined />}
-                onClick={() => setImportFormatModal({ visible: true, type: 'students' })}
-                style={{
-                  borderRadius: '12px',
-                  background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-                  border: 'none',
-                  fontWeight: 'bold',
-                  color: '#fff'
-                }}
+const StudentManagement = ({ students, setStudents, studentModal, setStudentModal, studentForm, handleExportStudents, handleImportStudents, handleAddStudent, handleEditStudent, handleDeleteStudent, showSheetSelectionAndImport, importFormatModal, setImportFormatModal }) => {
+  const [searchText, setSearchText] = useState('');
+  const [sortOrder, setSortOrder] = useState('none'); // 'none', 'asc', 'desc'
+
+  // Filter and sort students
+  const filteredAndSortedStudents = useMemo(() => {
+    let filtered = students;
+
+    // Apply search filter
+    if (searchText) {
+      const searchLower = searchText.toLowerCase();
+      filtered = filtered.filter(student =>
+        student.name?.toLowerCase().includes(searchLower) ||
+        student.email?.toLowerCase().includes(searchLower) ||
+        student.studentCode?.toLowerCase().includes(searchLower) ||
+        student.phoneNumber?.toLowerCase().includes(searchLower) ||
+        student.studentClass?.toLowerCase().includes(searchLower)
+      );
+    }
+
+    // Apply sort
+    if (sortOrder === 'asc') {
+      filtered = [...filtered].sort((a, b) => {
+        const nameA = (a.name || '').toLowerCase();
+        const nameB = (b.name || '').toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
+    } else if (sortOrder === 'desc') {
+      filtered = [...filtered].sort((a, b) => {
+        const nameA = (a.name || '').toLowerCase();
+        const nameB = (b.name || '').toLowerCase();
+        return nameB.localeCompare(nameA);
+      });
+    }
+
+    return filtered;
+  }, [students, searchText, sortOrder]);
+
+  return (
+    <div>
+      <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+        <Card
+          title="Student Management"
+          extra={
+            <Space>
+              <motion.div
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
               >
-                Import Students
-              </Button>
-            </motion.div>
-            <motion.div
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-            >
-              <Button
-                icon={<ExportOutlined />}
-                onClick={handleExportStudents}
-                style={{
-                  borderRadius: '12px',
-                  background: 'linear-gradient(135deg, #1890ff 0%, #096dd9 100%)',
-                  border: 'none',
-                  fontWeight: 'bold',
-                  color: '#fff'
-                }}
+                <Button
+                  icon={<ImportOutlined />}
+                  onClick={() => setImportFormatModal({ visible: true, type: 'students' })}
+                  style={{
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+                    border: 'none',
+                    fontWeight: 'bold',
+                    color: '#fff'
+                  }}
+                >
+                  Import Students
+                </Button>
+              </motion.div>
+              <motion.div
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
               >
-                Export Students
-              </Button>
-            </motion.div>
-            <motion.div
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-            >
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={handleAddStudent}
-                style={{
-                  borderRadius: '12px',
-                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  border: 'none',
-                  fontWeight: 'bold'
-                }}
+                <Button
+                  icon={<ExportOutlined />}
+                  onClick={handleExportStudents}
+                  style={{
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #1890ff 0%, #096dd9 100%)',
+                    border: 'none',
+                    fontWeight: 'bold',
+                    color: '#fff'
+                  }}
+                >
+                  Export Students
+                </Button>
+              </motion.div>
+              <motion.div
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
               >
-                Add Student
-              </Button>
-            </motion.div>
-          </Space>
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={handleAddStudent}
+                  style={{
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    border: 'none',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  Add Student
+                </Button>
+              </motion.div>
+            </Space>
+          }
+          style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+        >
+          <div style={{ marginBottom: 16 }}>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Input.Search
+                  placeholder="Search by name, email, code, phone, or class..."
+                  allowClear
+                  enterButton={<SearchOutlined />}
+                  size="large"
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  style={{ borderRadius: '8px' }}
+                />
+              </Col>
+              <Col span={12}>
+                <Select
+                  placeholder="Sort by Name"
+                  value={sortOrder}
+                  onChange={setSortOrder}
+                  style={{ width: '100%' }}
+                  size="large"
+                >
+                  <Option value="none">No Sort</Option>
+                  <Option value="asc">
+                    <Space>
+                      <SortAscendingOutlined />
+                      A-Z
+                    </Space>
+                  </Option>
+                  <Option value="desc">
+                    <Space>
+                      <SortAscendingOutlined style={{ transform: 'rotate(180deg)' }} />
+                      Z-A
+                    </Space>
+                  </Option>
+                </Select>
+              </Col>
+            </Row>
+          </div>
+          <Table
+            dataSource={filteredAndSortedStudents}
+            columns={[
+              { title: 'Name', dataIndex: 'name', key: 'name' },
+              { title: 'Email', dataIndex: 'email', key: 'email' },
+              { title: 'Student Code', dataIndex: 'studentCode', key: 'studentCode' },
+              { title: 'Class Code', dataIndex: 'studentClass', key: 'studentClass', render: (text) => text || 'N/A' },
+              { title: 'Phone Number', dataIndex: 'phoneNumber', key: 'phoneNumber' },
+              { title: 'Enrollment Date', dataIndex: 'createdAt', key: 'createdAt' },
+              {
+                title: 'Status',
+                dataIndex: 'status',
+                key: 'status',
+                render: (status) => <Tag color={getStatusColor(status)}>{status}</Tag>
+              },
+              {
+                title: 'Actions',
+                key: 'actions',
+                render: (_, record) => (
+                  <Space>
+                    <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEditStudent(record)}>
+                      Edit
+                    </Button>
+                    <Button type="primary" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDeleteStudent(record)}>
+                      Delete
+                    </Button>
+                  </Space>
+                ),
+              },
+            ]}
+            rowKey="id"
+            pagination={{
+              showSizeChanger: true,
+              showQuickJumper: true,
+              showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} students`
+            }}
+          />
+        </Card>
+      </motion.div>
+
+      {/* Import Format Modal */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <ImportOutlined style={{ fontSize: '20px', color: '#52c41a' }} />
+            <span>Student Import Format Guide</span>
+          </div>
         }
-        style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+        open={importFormatModal.visible && importFormatModal.type === 'students'}
+        onCancel={() => setImportFormatModal({ visible: false, type: null })}
+        footer={[
+          <Button key="cancel" onClick={() => setImportFormatModal({ visible: false, type: null })}>
+            Cancel
+          </Button>,
+          <Button
+            key="proceed"
+            type="primary"
+            icon={<ImportOutlined />}
+            onClick={() => {
+              setImportFormatModal({ visible: false, type: null });
+              // Trigger file input
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = '.xlsx,.xls';
+              input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                  showSheetSelectionAndImport(file, 'students', {});
+                }
+              };
+              input.click();
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+              border: 'none',
+              fontWeight: 'bold'
+            }}
+          >
+            I Understand, Proceed to Import
+          </Button>
+        ]}
+        width={800}
+        style={{ top: 20 }}
       >
-        <Table
-          dataSource={students}
-          columns={[
-            { title: 'Name', dataIndex: 'name', key: 'name' },
-            { title: 'Email', dataIndex: 'email', key: 'email' },
-            { title: 'Student Code', dataIndex: 'studentCode', key: 'studentCode' },
-            { title: 'Phone Number', dataIndex: 'phoneNumber', key: 'phoneNumber' },
-            { title: 'Enrollment Date', dataIndex: 'createdAt', key: 'createdAt' },
-            {
-              title: 'Status',
-              dataIndex: 'status',
-              key: 'status',
-              render: (status) => <Tag color={getStatusColor(status)}>{status}</Tag>
-            },
-            {
-              title: 'Actions',
-              key: 'actions',
-              render: (_, record) => (
-                <Space>
-                  <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEditStudent(record)}>
-                    Edit
-                  </Button>
-                  <Button type="primary" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDeleteStudent(record)}>
-                    Delete
-                  </Button>
-                </Space>
-              ),
-            },
-          ]}
-          rowKey="id"
-        />
-      </Card>
-    </motion.div>
+        <div style={{ padding: '10px 0' }}>
+          <Alert
+            message="File Format Requirements"
+            description="Please ensure your Excel file follows the format below. The first row (header) will be automatically skipped."
+            type="info"
+            showIcon
+            style={{ marginBottom: '20px' }}
+          />
 
-    {/* Import Format Modal */}
-    <Modal
-      title={
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <ImportOutlined style={{ fontSize: '20px', color: '#52c41a' }} />
-          <span>Student Import Format Guide</span>
+          <Title level={4}>Excel File Structure</Title>
+          <Text type="secondary" style={{ display: 'block', marginBottom: '16px' }}>
+            File must be in <strong>.xlsx</strong> or <strong>.xls</strong> format
+          </Text>
+
+          <Table
+            dataSource={[
+              { column: 'A', field: 'studentCode', required: 'Yes', description: 'Mã số sinh viên', example: 'SV001, 2021001' },
+              { column: 'B', field: 'StudentName', required: 'Yes', description: 'Họ và tên đầy đủ', example: 'Nguyễn Văn A' },
+              { column: 'C', field: 'email', required: 'Yes', description: 'Email của sinh viên (phải unique)', example: 'student@example.com' },
+              { column: 'D', field: 'phone', required: 'No', description: 'Số điện thoại', example: '0123456789' },
+              { column: 'E', field: 'StudentClass', required: 'No', description: 'Mã lớp học (classCode)', example: 'IOT2024, CS101' },
+            ]}
+            columns={[
+              { title: 'Column', dataIndex: 'column', key: 'column', width: 80, align: 'center' },
+              { title: 'Field Name', dataIndex: 'field', key: 'field', width: 150 },
+              { title: 'Required', dataIndex: 'required', key: 'required', width: 80, align: 'center', render: (text) => text === 'Yes' ? <Tag color="red">Required</Tag> : <Tag>Optional</Tag> },
+              { title: 'Description', dataIndex: 'description', key: 'description' },
+              { title: 'Example', dataIndex: 'example', key: 'example', render: (text) => <Text code>{text}</Text> },
+            ]}
+            pagination={false}
+            size="small"
+            style={{ marginBottom: '20px' }}
+          />
+
+          <Title level={5}>Example Data</Title>
+          <div style={{
+            background: '#f5f5f5',
+            padding: '12px',
+            borderRadius: '4px',
+            marginBottom: '20px',
+            fontFamily: 'monospace',
+            fontSize: '12px'
+          }}>
+            <div style={{ marginBottom: '8px' }}><strong>Row 1 (Header - will be skipped):</strong></div>
+            <div style={{ marginBottom: '4px' }}>studentCode | StudentName | email | phone | StudentClass</div>
+            <div style={{ marginBottom: '16px', marginTop: '12px' }}><strong>Row 2 (Data):</strong></div>
+            <div style={{ marginBottom: '4px' }}>SV001 | Nguyễn Văn A | nva@example.com | 0123456789 | IOT2024</div>
+            <div style={{ marginBottom: '4px' }}>SV002 | Trần Thị B | ttb@example.com | 0987654321 | IOT2024</div>
+            <div>SV003 | Lê Văn C | lvc@example.com | | CS101</div>
+          </div>
+
+          <Alert
+            message="Important Notes"
+            description={
+              <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
+                <li>Password will be set to <strong>"1"</strong> by default for all imported students</li>
+                <li>Each student will automatically receive a wallet with <strong>0 VND</strong> balance</li>
+                <li>If <strong>StudentClass</strong> doesn't exist, it will be automatically created</li>
+                <li>Email must be unique - duplicate emails will cause import errors</li>
+                <li>Rows with missing required fields will be skipped</li>
+              </ul>
+            }
+            type="warning"
+            showIcon
+            style={{ marginBottom: '20px' }}
+          />
+
+          <Alert
+            message="Common Errors"
+            description={
+              <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
+                <li><strong>"Email already exists"</strong>: Email is already registered in the system</li>
+                <li><strong>"Full Name is required"</strong>: Missing student name in Column B</li>
+                <li><strong>"Email is required"</strong>: Missing email in Column C</li>
+                <li><strong>"Invalid file format"</strong>: File is not .xlsx or .xls format</li>
+              </ul>
+            }
+            type="error"
+            showIcon
+          />
         </div>
-      }
-      open={importFormatModal.visible && importFormatModal.type === 'students'}
-      onCancel={() => setImportFormatModal({ visible: false, type: null })}
-      footer={[
-        <Button key="cancel" onClick={() => setImportFormatModal({ visible: false, type: null })}>
-          Cancel
-        </Button>,
-        <Button
-          key="proceed"
-          type="primary"
-          icon={<ImportOutlined />}
-          onClick={() => {
-            setImportFormatModal({ visible: false, type: null });
-            // Trigger file input
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.xlsx,.xls';
-            input.onchange = (e) => {
-              const file = e.target.files[0];
-              if (file) {
-                showSheetSelectionAndImport(file, 'students', {});
-              }
-            };
-            input.click();
-          }}
-          style={{
-            background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-            border: 'none',
-            fontWeight: 'bold'
-          }}
-        >
-          I Understand, Proceed to Import
-        </Button>
-      ]}
-      width={800}
-      style={{ top: 20 }}
-    >
-      <div style={{ padding: '10px 0' }}>
-        <Alert
-          message="File Format Requirements"
-          description="Please ensure your Excel file follows the format below. The first row (header) will be automatically skipped."
-          type="info"
-          showIcon
-          style={{ marginBottom: '20px' }}
-        />
+      </Modal>
 
-        <Title level={4}>Excel File Structure</Title>
-        <Text type="secondary" style={{ display: 'block', marginBottom: '16px' }}>
-          File must be in <strong>.xlsx</strong> or <strong>.xls</strong> format
-        </Text>
+      {/* Lecturer Import Format Modal */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <ImportOutlined style={{ fontSize: '20px', color: '#52c41a' }} />
+            <span>Lecturer Import Format Guide</span>
+          </div>
+        }
+        open={importFormatModal.visible && importFormatModal.type === 'lecturers'}
+        onCancel={() => setImportFormatModal({ visible: false, type: null })}
+        footer={[
+          <Button key="cancel" onClick={() => setImportFormatModal({ visible: false, type: null })}>
+            Cancel
+          </Button>,
+          <Button
+            key="proceed"
+            type="primary"
+            icon={<ImportOutlined />}
+            onClick={() => {
+              setImportFormatModal({ visible: false, type: null });
+              // Trigger file input
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = '.xlsx,.xls';
+              input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                  showSheetSelectionAndImport(file, 'lecturers', {});
+                }
+              };
+              input.click();
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+              border: 'none',
+              fontWeight: 'bold'
+            }}
+          >
+            I Understand, Proceed to Import
+          </Button>
+        ]}
+        width={800}
+        style={{ top: 20 }}
+      >
+        <div style={{ padding: '10px 0' }}>
+          <Alert
+            message="File Format Requirements"
+            description="Please ensure your Excel file follows the format below. The first row (header) will be automatically skipped."
+            type="info"
+            showIcon
+            style={{ marginBottom: '20px' }}
+          />
 
-        <Table
-          dataSource={[
-            { column: 'A', field: 'studentCode', required: 'Yes', description: 'Mã số sinh viên', example: 'SV001, 2021001' },
-            { column: 'B', field: 'StudentName', required: 'Yes', description: 'Họ và tên đầy đủ', example: 'Nguyễn Văn A' },
-            { column: 'C', field: 'email', required: 'Yes', description: 'Email của sinh viên (phải unique)', example: 'student@example.com' },
-            { column: 'D', field: 'phone', required: 'No', description: 'Số điện thoại', example: '0123456789' },
-            { column: 'E', field: 'StudentClass', required: 'No', description: 'Mã lớp học (classCode)', example: 'IOT2024, CS101' },
-          ]}
-          columns={[
-            { title: 'Column', dataIndex: 'column', key: 'column', width: 80, align: 'center' },
-            { title: 'Field Name', dataIndex: 'field', key: 'field', width: 150 },
-            { title: 'Required', dataIndex: 'required', key: 'required', width: 80, align: 'center', render: (text) => text === 'Yes' ? <Tag color="red">Required</Tag> : <Tag>Optional</Tag> },
-            { title: 'Description', dataIndex: 'description', key: 'description' },
-            { title: 'Example', dataIndex: 'example', key: 'example', render: (text) => <Text code>{text}</Text> },
-          ]}
-          pagination={false}
-          size="small"
-          style={{ marginBottom: '20px' }}
-        />
+          <Title level={4}>Excel File Structure</Title>
+          <Text type="secondary" style={{ display: 'block', marginBottom: '16px' }}>
+            File must be in <strong>.xlsx</strong> or <strong>.xls</strong> format
+          </Text>
 
-        <Title level={5}>Example Data</Title>
-        <div style={{
-          background: '#f5f5f5',
-          padding: '12px',
-          borderRadius: '4px',
-          marginBottom: '20px',
-          fontFamily: 'monospace',
-          fontSize: '12px'
-        }}>
-          <div style={{ marginBottom: '8px' }}><strong>Row 1 (Header - will be skipped):</strong></div>
-          <div style={{ marginBottom: '4px' }}>studentCode | StudentName | email | phone | StudentClass</div>
-          <div style={{ marginBottom: '16px', marginTop: '12px' }}><strong>Row 2 (Data):</strong></div>
-          <div style={{ marginBottom: '4px' }}>SV001 | Nguyễn Văn A | nva@example.com | 0123456789 | IOT2024</div>
-          <div style={{ marginBottom: '4px' }}>SV002 | Trần Thị B | ttb@example.com | 0987654321 | IOT2024</div>
-          <div>SV003 | Lê Văn C | lvc@example.com | | CS101</div>
+          <Table
+            dataSource={[
+              { column: 'A', field: 'lecturer_code', required: 'Yes', description: 'Mã giảng viên (phải unique)', example: 'GV001, LEC001' },
+              { column: 'B', field: 'email', required: 'Yes', description: 'Email của giảng viên (phải unique)', example: 'lecturer@example.com' },
+              { column: 'C', field: 'fullname', required: 'Yes', description: 'Họ và tên đầy đủ', example: 'Nguyễn Văn A' },
+              { column: 'D', field: 'phone', required: 'No', description: 'Số điện thoại (bắt đầu bằng 0, 10 chữ số)', example: '0123456789' },
+              { column: 'E', field: 'class_code', required: 'No', description: 'Mã lớp học', example: 'IOT2024, CS101' },
+              { column: 'F', field: 'Semester', required: 'No', description: 'Học kỳ', example: 'Fall 2024, Spring 2024' },
+            ]}
+            columns={[
+              { title: 'Column', dataIndex: 'column', key: 'column', width: 80, align: 'center' },
+              { title: 'Field Name', dataIndex: 'field', key: 'field', width: 150 },
+              { title: 'Required', dataIndex: 'required', key: 'required', width: 80, align: 'center', render: (text) => text === 'Yes' ? <Tag color="red">Required</Tag> : <Tag>Optional</Tag> },
+              { title: 'Description', dataIndex: 'description', key: 'description' },
+              { title: 'Example', dataIndex: 'example', key: 'example', render: (text) => <Text code>{text}</Text> },
+            ]}
+            pagination={false}
+            size="small"
+            style={{ marginBottom: '20px' }}
+          />
+
+          <Title level={5}>Example Data</Title>
+          <div style={{
+            background: '#f5f5f5',
+            padding: '12px',
+            borderRadius: '4px',
+            marginBottom: '20px',
+            fontFamily: 'monospace',
+            fontSize: '12px'
+          }}>
+            <div style={{ marginBottom: '8px' }}><strong>Row 1 (Header - will be skipped):</strong></div>
+            <div style={{ marginBottom: '4px' }}>lecturer_code | email | fullname | phone | class_code | Semester</div>
+            <div style={{ marginBottom: '16px', marginTop: '12px' }}><strong>Row 2 (Data):</strong></div>
+            <div style={{ marginBottom: '4px' }}>GV001 | lecturer1@example.com | Nguyễn Văn A | 0123456789 | IOT2024 | Fall 2024</div>
+            <div style={{ marginBottom: '4px' }}>GV002 | lecturer2@example.com | Trần Thị B | 0987654321 | CS101 | Spring 2024</div>
+            <div>GV003 | lecturer3@example.com | Lê Văn C | | IOT2024 | Fall 2024</div>
+          </div>
+
+          <Alert
+            message="Important Notes"
+            description={
+              <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
+                <li>Password will be set to <strong>"1"</strong> by default for all imported lecturers</li>
+                <li>Each lecturer will automatically receive a wallet with <strong>0 VND</strong> balance</li>
+                <li><strong>Lecturer Code</strong> must be unique - duplicate codes will cause import errors</li>
+                <li>If <strong>class_code</strong> doesn't exist, it will be automatically created with the lecturer assigned as teacher</li>
+                <li>If <strong>class_code</strong> already exists, the lecturer will be assigned to that class</li>
+                <li>Email must be unique - duplicate emails will cause import errors</li>
+                <li>Phone number must start with <strong>0</strong> and have exactly <strong>10 digits</strong> (if provided)</li>
+                <li>Rows with missing required fields will be skipped</li>
+              </ul>
+            }
+            type="warning"
+            showIcon
+            style={{ marginBottom: '20px' }}
+          />
+
+          <Alert
+            message="Common Errors"
+            description={
+              <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
+                <li><strong>"Lecturer Code already exists"</strong>: Lecturer code is already registered in the system</li>
+                <li><strong>"Email already exists"</strong>: Email is already registered in the system</li>
+                <li><strong>"Full Name is required"</strong>: Missing lecturer name in Column C</li>
+                <li><strong>"Email is required"</strong>: Missing email in Column B</li>
+                <li><strong>"Phone number must start with 0"</strong>: Phone number format is invalid</li>
+                <li><strong>"Phone number must have exactly 10 digits"</strong>: Phone number length is incorrect</li>
+                <li><strong>"Invalid file format"</strong>: File is not .xlsx or .xls format</li>
+              </ul>
+            }
+            type="error"
+            showIcon
+          />
         </div>
-
-        <Alert
-          message="Important Notes"
-          description={
-            <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
-              <li>Password will be set to <strong>"1"</strong> by default for all imported students</li>
-              <li>Each student will automatically receive a wallet with <strong>0 VND</strong> balance</li>
-              <li>If <strong>StudentClass</strong> doesn't exist, it will be automatically created</li>
-              <li>Email must be unique - duplicate emails will cause import errors</li>
-              <li>Rows with missing required fields will be skipped</li>
-            </ul>
-          }
-          type="warning"
-          showIcon
-          style={{ marginBottom: '20px' }}
-        />
-
-        <Alert
-          message="Common Errors"
-          description={
-            <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
-              <li><strong>"Email already exists"</strong>: Email is already registered in the system</li>
-              <li><strong>"Full Name is required"</strong>: Missing student name in Column B</li>
-              <li><strong>"Email is required"</strong>: Missing email in Column C</li>
-              <li><strong>"Invalid file format"</strong>: File is not .xlsx or .xls format</li>
-            </ul>
-          }
-          type="error"
-          showIcon
-        />
-      </div>
-    </Modal>
-
-    {/* Lecturer Import Format Modal */}
-    <Modal
-      title={
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <ImportOutlined style={{ fontSize: '20px', color: '#52c41a' }} />
-          <span>Lecturer Import Format Guide</span>
-        </div>
-      }
-      open={importFormatModal.visible && importFormatModal.type === 'lecturers'}
-      onCancel={() => setImportFormatModal({ visible: false, type: null })}
-      footer={[
-        <Button key="cancel" onClick={() => setImportFormatModal({ visible: false, type: null })}>
-          Cancel
-        </Button>,
-        <Button
-          key="proceed"
-          type="primary"
-          icon={<ImportOutlined />}
-          onClick={() => {
-            setImportFormatModal({ visible: false, type: null });
-            // Trigger file input
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.xlsx,.xls';
-            input.onchange = (e) => {
-              const file = e.target.files[0];
-              if (file) {
-                showSheetSelectionAndImport(file, 'lecturers', {});
-              }
-            };
-            input.click();
-          }}
-          style={{
-            background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-            border: 'none',
-            fontWeight: 'bold'
-          }}
-        >
-          I Understand, Proceed to Import
-        </Button>
-      ]}
-      width={800}
-      style={{ top: 20 }}
-    >
-      <div style={{ padding: '10px 0' }}>
-        <Alert
-          message="File Format Requirements"
-          description="Please ensure your Excel file follows the format below. The first row (header) will be automatically skipped."
-          type="info"
-          showIcon
-          style={{ marginBottom: '20px' }}
-        />
-
-        <Title level={4}>Excel File Structure</Title>
-        <Text type="secondary" style={{ display: 'block', marginBottom: '16px' }}>
-          File must be in <strong>.xlsx</strong> or <strong>.xls</strong> format
-        </Text>
-
-        <Table
-          dataSource={[
-            { column: 'A', field: 'email', required: 'Yes', description: 'Email của giảng viên (phải unique)', example: 'lecturer@example.com' },
-            { column: 'B', field: 'fullname', required: 'Yes', description: 'Họ và tên đầy đủ', example: 'Nguyễn Văn A' },
-            { column: 'C', field: 'phone', required: 'No', description: 'Số điện thoại (bắt đầu bằng 0, 10 chữ số)', example: '0123456789' },
-            { column: 'D', field: 'class_code', required: 'No', description: 'Mã lớp học', example: 'IOT2024, CS101' },
-            { column: 'E', field: 'Semester', required: 'No', description: 'Học kỳ', example: 'Fall 2024, Spring 2024' },
-          ]}
-          columns={[
-            { title: 'Column', dataIndex: 'column', key: 'column', width: 80, align: 'center' },
-            { title: 'Field Name', dataIndex: 'field', key: 'field', width: 150 },
-            { title: 'Required', dataIndex: 'required', key: 'required', width: 80, align: 'center', render: (text) => text === 'Yes' ? <Tag color="red">Required</Tag> : <Tag>Optional</Tag> },
-            { title: 'Description', dataIndex: 'description', key: 'description' },
-            { title: 'Example', dataIndex: 'example', key: 'example', render: (text) => <Text code>{text}</Text> },
-          ]}
-          pagination={false}
-          size="small"
-          style={{ marginBottom: '20px' }}
-        />
-
-        <Title level={5}>Example Data</Title>
-        <div style={{
-          background: '#f5f5f5',
-          padding: '12px',
-          borderRadius: '4px',
-          marginBottom: '20px',
-          fontFamily: 'monospace',
-          fontSize: '12px'
-        }}>
-          <div style={{ marginBottom: '8px' }}><strong>Row 1 (Header - will be skipped):</strong></div>
-          <div style={{ marginBottom: '4px' }}>email | fullname | phone | class_code | Semester</div>
-          <div style={{ marginBottom: '16px', marginTop: '12px' }}><strong>Row 2 (Data):</strong></div>
-          <div style={{ marginBottom: '4px' }}>lecturer1@example.com | Nguyễn Văn A | 0123456789 | IOT2024 | Fall 2024</div>
-          <div style={{ marginBottom: '4px' }}>lecturer2@example.com | Trần Thị B | 0987654321 | CS101 | Spring 2024</div>
-          <div>lecturer3@example.com | Lê Văn C | | IOT2024 | Fall 2024</div>
-        </div>
-
-        <Alert
-          message="Important Notes"
-          description={
-            <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
-              <li>Password will be set to <strong>"1"</strong> by default for all imported lecturers</li>
-              <li>Each lecturer will automatically receive a wallet with <strong>0 VND</strong> balance</li>
-              <li>If <strong>class_code</strong> doesn't exist, it will be automatically created with the lecturer assigned as teacher</li>
-              <li>If <strong>class_code</strong> already exists, the lecturer will be assigned to that class</li>
-              <li>Email must be unique - duplicate emails will cause import errors</li>
-              <li>Phone number must start with <strong>0</strong> and have exactly <strong>10 digits</strong> (if provided)</li>
-              <li>Rows with missing required fields will be skipped</li>
-            </ul>
-          }
-          type="warning"
-          showIcon
-          style={{ marginBottom: '20px' }}
-        />
-
-        <Alert
-          message="Common Errors"
-          description={
-            <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
-              <li><strong>"Email already exists"</strong>: Email is already registered in the system</li>
-              <li><strong>"Full Name is required"</strong>: Missing lecturer name in Column B</li>
-              <li><strong>"Email is required"</strong>: Missing email in Column A</li>
-              <li><strong>"Phone number must start with 0"</strong>: Phone number format is invalid</li>
-              <li><strong>"Phone number must have exactly 10 digits"</strong>: Phone number length is incorrect</li>
-              <li><strong>"Invalid file format"</strong>: File is not .xlsx or .xls format</li>
-            </ul>
-          }
-          type="error"
-          showIcon
-        />
-      </div>
-    </Modal>
-  </div>
-);
+      </Modal>
+    </div>
+  );
+};
 
 // Lecturer Management Component
-const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecturerModal, lecturerForm, handleExportLecturers, handleImportLecturers, handleAddLecturer, handleEditLecturer, handleDeleteLecturer, showSheetSelectionAndImport, importFormatModal, setImportFormatModal }) => (
-  <div>
-    <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-      <Card
-        title="Lecturer Management"
-        extra={
-          <Space>
-            <motion.div
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-            >
-              <Button
-                icon={<ImportOutlined />}
-                onClick={() => setImportFormatModal({ visible: true, type: 'lecturers' })}
-                style={{
-                  borderRadius: '12px',
-                  background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-                  border: 'none',
-                  fontWeight: 'bold',
-                  color: '#fff'
-                }}
-              >
-                Import Lecturers
-              </Button>
-            </motion.div>
-            <motion.div
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-            >
-              <Button
-                icon={<ExportOutlined />}
-                onClick={handleExportLecturers}
-                style={{
-                  borderRadius: '12px',
-                  background: 'linear-gradient(135deg, #1890ff 0%, #096dd9 100%)',
-                  border: 'none',
-                  fontWeight: 'bold',
-                  color: '#fff'
-                }}
-              >
-                Export Lecturers
-              </Button>
-            </motion.div>
-            <motion.div
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-            >
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={handleAddLecturer}
-                style={{
-                  borderRadius: '12px',
-                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  border: 'none',
-                  fontWeight: 'bold'
-                }}
-              >
-                Add Lecturer
-              </Button>
-            </motion.div>
-          </Space>
-        }
-        style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
-      >
-        <Table
-          dataSource={lecturers}
-          columns={[
-            { title: 'Name', dataIndex: 'name', key: 'name' },
-            { title: 'Email', dataIndex: 'email', key: 'email' },
-            { title: 'Phone Number', dataIndex: 'phoneNumber', key: 'phoneNumber' },
-            { title: 'Hire Date', dataIndex: 'createdAt', key: 'createdAt' },
-            {
-              title: 'Status',
-              dataIndex: 'status',
-              key: 'status',
-              render: (status) => <Tag color={getStatusColor(status)}>{status}</Tag>
-            },
-            {
-              title: 'Actions',
-              key: 'actions',
-              render: (_, record) => (
-                <Space>
-                  <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEditLecturer(record)}>
-                    Edit
-                  </Button>
-                  <Button type="primary" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDeleteLecturer(record)}>
-                    Delete
-                  </Button>
-                </Space>
-              ),
-            },
-          ]}
-          rowKey="id"
-        />
-      </Card>
-    </motion.div>
+const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecturerModal, lecturerForm, handleExportLecturers, handleImportLecturers, handleAddLecturer, handleEditLecturer, handleDeleteLecturer, showSheetSelectionAndImport, importFormatModal, setImportFormatModal }) => {
+  const [searchText, setSearchText] = useState('');
+  const [sortOrder, setSortOrder] = useState('none'); // 'none', 'asc', 'desc'
 
-    {/* Lecturer Import Format Modal */}
-    <Modal
-      title={
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <ImportOutlined style={{ fontSize: '20px', color: '#52c41a' }} />
-          <span>Lecturer Import Format Guide</span>
-        </div>
-      }
-      open={importFormatModal.visible && importFormatModal.type === 'lecturers'}
-      onCancel={() => setImportFormatModal({ visible: false, type: null })}
-      footer={[
-        <Button key="cancel" onClick={() => setImportFormatModal({ visible: false, type: null })}>
-          Cancel
-        </Button>,
-        <Button
-          key="proceed"
-          type="primary"
-          icon={<ImportOutlined />}
-          onClick={() => {
-            setImportFormatModal({ visible: false, type: null });
-            // Trigger file input
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.xlsx,.xls';
-            input.onchange = (e) => {
-              const file = e.target.files[0];
-              if (file) {
-                showSheetSelectionAndImport(file, 'lecturers', {});
-              }
-            };
-            input.click();
-          }}
-          style={{
-            background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-            border: 'none',
-            fontWeight: 'bold'
-          }}
+  // Filter and sort lecturers
+  const filteredAndSortedLecturers = useMemo(() => {
+    let filtered = lecturers;
+
+    // Apply search filter
+    if (searchText) {
+      const searchLower = searchText.toLowerCase();
+      filtered = filtered.filter(lecturer =>
+        lecturer.name?.toLowerCase().includes(searchLower) ||
+        lecturer.email?.toLowerCase().includes(searchLower) ||
+        lecturer.lecturerCode?.toLowerCase().includes(searchLower) ||
+        lecturer.phoneNumber?.toLowerCase().includes(searchLower)
+      );
+    }
+
+    // Apply sort
+    if (sortOrder === 'asc') {
+      filtered = [...filtered].sort((a, b) => {
+        const nameA = (a.name || '').toLowerCase();
+        const nameB = (b.name || '').toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
+    } else if (sortOrder === 'desc') {
+      filtered = [...filtered].sort((a, b) => {
+        const nameA = (a.name || '').toLowerCase();
+        const nameB = (b.name || '').toLowerCase();
+        return nameB.localeCompare(nameA);
+      });
+    }
+
+    return filtered;
+  }, [lecturers, searchText, sortOrder]);
+
+  return (
+    <div>
+      <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+        <Card
+          title="Lecturer Management"
+          extra={
+            <Space>
+              <motion.div
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <Button
+                  icon={<ImportOutlined />}
+                  onClick={() => setImportFormatModal({ visible: true, type: 'lecturers' })}
+                  style={{
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+                    border: 'none',
+                    fontWeight: 'bold',
+                    color: '#fff'
+                  }}
+                >
+                  Import Lecturers
+                </Button>
+              </motion.div>
+              <motion.div
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <Button
+                  icon={<ExportOutlined />}
+                  onClick={handleExportLecturers}
+                  style={{
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #1890ff 0%, #096dd9 100%)',
+                    border: 'none',
+                    fontWeight: 'bold',
+                    color: '#fff'
+                  }}
+                >
+                  Export Lecturers
+                </Button>
+              </motion.div>
+              <motion.div
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={handleAddLecturer}
+                  style={{
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    border: 'none',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  Add Lecturer
+                </Button>
+              </motion.div>
+            </Space>
+          }
+          style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
         >
-          I Understand, Proceed to Import
-        </Button>
-      ]}
-      width={800}
-      style={{ top: 20 }}
-    >
-      <div style={{ padding: '10px 0' }}>
-        <Alert
-          message="File Format Requirements"
-          description="Please ensure your Excel file follows the format below. The first row (header) will be automatically skipped."
-          type="info"
-          showIcon
-          style={{ marginBottom: '20px' }}
-        />
+          <div style={{ marginBottom: 16 }}>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Input.Search
+                  placeholder="Search by name, email, lecturer code, or phone..."
+                  allowClear
+                  enterButton={<SearchOutlined />}
+                  size="large"
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  style={{ borderRadius: '8px' }}
+                />
+              </Col>
+              <Col span={12}>
+                <Select
+                  placeholder="Sort by Name"
+                  value={sortOrder}
+                  onChange={setSortOrder}
+                  style={{ width: '100%' }}
+                  size="large"
+                >
+                  <Option value="none">No Sort</Option>
+                  <Option value="asc">
+                    <Space>
+                      <SortAscendingOutlined />
+                      A-Z
+                    </Space>
+                  </Option>
+                  <Option value="desc">
+                    <Space>
+                      <SortAscendingOutlined style={{ transform: 'rotate(180deg)' }} />
+                      Z-A
+                    </Space>
+                  </Option>
+                </Select>
+              </Col>
+            </Row>
+          </div>
+          <Table
+            dataSource={filteredAndSortedLecturers}
+            columns={[
+              { title: 'Name', dataIndex: 'name', key: 'name' },
+              { title: 'Email', dataIndex: 'email', key: 'email' },
+              { title: 'Lecturer Code', dataIndex: 'lecturerCode', key: 'lecturerCode', render: (text) => text || 'N/A' },
+              { title: 'Phone Number', dataIndex: 'phoneNumber', key: 'phoneNumber' },
+              { title: 'Hire Date', dataIndex: 'createdAt', key: 'createdAt' },
+              {
+                title: 'Status',
+                dataIndex: 'status',
+                key: 'status',
+                render: (status) => <Tag color={getStatusColor(status)}>{status}</Tag>
+              },
+              {
+                title: 'Actions',
+                key: 'actions',
+                render: (_, record) => (
+                  <Space>
+                    <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEditLecturer(record)}>
+                      Edit
+                    </Button>
+                    <Button type="primary" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDeleteLecturer(record)}>
+                      Delete
+                    </Button>
+                  </Space>
+                ),
+              },
+            ]}
+            rowKey="id"
+            pagination={{
+              showSizeChanger: true,
+              showQuickJumper: true,
+              showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} lecturers`
+            }}
+          />
+        </Card>
+      </motion.div>
 
-        <Title level={4}>Excel File Structure</Title>
-        <Text type="secondary" style={{ display: 'block', marginBottom: '16px' }}>
-          File must be in <strong>.xlsx</strong> or <strong>.xls</strong> format
-        </Text>
+      {/* Lecturer Import Format Modal */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <ImportOutlined style={{ fontSize: '20px', color: '#52c41a' }} />
+            <span>Lecturer Import Format Guide</span>
+          </div>
+        }
+        open={importFormatModal.visible && importFormatModal.type === 'lecturers'}
+        onCancel={() => setImportFormatModal({ visible: false, type: null })}
+        footer={[
+          <Button key="cancel" onClick={() => setImportFormatModal({ visible: false, type: null })}>
+            Cancel
+          </Button>,
+          <Button
+            key="proceed"
+            type="primary"
+            icon={<ImportOutlined />}
+            onClick={() => {
+              setImportFormatModal({ visible: false, type: null });
+              // Trigger file input
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = '.xlsx,.xls';
+              input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                  showSheetSelectionAndImport(file, 'lecturers', {});
+                }
+              };
+              input.click();
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+              border: 'none',
+              fontWeight: 'bold'
+            }}
+          >
+            I Understand, Proceed to Import
+          </Button>
+        ]}
+        width={800}
+        style={{ top: 20 }}
+      >
+        <div style={{ padding: '10px 0' }}>
+          <Alert
+            message="File Format Requirements"
+            description="Please ensure your Excel file follows the format below. The first row (header) will be automatically skipped."
+            type="info"
+            showIcon
+            style={{ marginBottom: '20px' }}
+          />
 
-        <Table
-          dataSource={[
-            { column: 'A', field: 'email', required: 'Yes', description: 'Email của giảng viên (phải unique)', example: 'lecturer@example.com' },
-            { column: 'B', field: 'fullname', required: 'Yes', description: 'Họ và tên đầy đủ', example: 'Nguyễn Văn A' },
-            { column: 'C', field: 'phone', required: 'No', description: 'Số điện thoại (bắt đầu bằng 0, 10 chữ số)', example: '0123456789' },
-            { column: 'D', field: 'class_code', required: 'No', description: 'Mã lớp học', example: 'IOT2024, CS101' },
-            { column: 'E', field: 'Semester', required: 'No', description: 'Học kỳ', example: 'Fall 2024, Spring 2024' },
-          ]}
-          columns={[
-            { title: 'Column', dataIndex: 'column', key: 'column', width: 80, align: 'center' },
-            { title: 'Field Name', dataIndex: 'field', key: 'field', width: 150 },
-            { title: 'Required', dataIndex: 'required', key: 'required', width: 80, align: 'center', render: (text) => text === 'Yes' ? <Tag color="red">Required</Tag> : <Tag>Optional</Tag> },
-            { title: 'Description', dataIndex: 'description', key: 'description' },
-            { title: 'Example', dataIndex: 'example', key: 'example', render: (text) => <Text code>{text}</Text> },
-          ]}
-          pagination={false}
-          size="small"
-          style={{ marginBottom: '20px' }}
-        />
+          <Title level={4}>Excel File Structure</Title>
+          <Text type="secondary" style={{ display: 'block', marginBottom: '16px' }}>
+            File must be in <strong>.xlsx</strong> or <strong>.xls</strong> format
+          </Text>
 
-        <Title level={5}>Example Data</Title>
-        <div style={{
-          background: '#f5f5f5',
-          padding: '12px',
-          borderRadius: '4px',
-          marginBottom: '20px',
-          fontFamily: 'monospace',
-          fontSize: '12px'
-        }}>
-          <div style={{ marginBottom: '8px' }}><strong>Row 1 (Header - will be skipped):</strong></div>
-          <div style={{ marginBottom: '4px' }}>email | fullname | phone | class_code | Semester</div>
-          <div style={{ marginBottom: '16px', marginTop: '12px' }}><strong>Row 2 (Data):</strong></div>
-          <div style={{ marginBottom: '4px' }}>lecturer1@example.com | Nguyễn Văn A | 0123456789 | IOT2024 | Fall 2024</div>
-          <div style={{ marginBottom: '4px' }}>lecturer2@example.com | Trần Thị B | 0987654321 | CS101 | Spring 2024</div>
-          <div>lecturer3@example.com | Lê Văn C | | IOT2024 | Fall 2024</div>
+          <Table
+            dataSource={[
+              { column: 'A', field: 'lecturer_code', required: 'Yes', description: 'Mã giảng viên (phải unique)', example: 'GV001, LEC001' },
+              { column: 'B', field: 'email', required: 'Yes', description: 'Email của giảng viên (phải unique)', example: 'lecturer@example.com' },
+              { column: 'C', field: 'fullname', required: 'Yes', description: 'Họ và tên đầy đủ', example: 'Nguyễn Văn A' },
+              { column: 'D', field: 'phone', required: 'No', description: 'Số điện thoại (bắt đầu bằng 0, 10 chữ số)', example: '0123456789' },
+              { column: 'E', field: 'class_code', required: 'No', description: 'Mã lớp học', example: 'IOT2024, CS101' },
+              { column: 'F', field: 'Semester', required: 'No', description: 'Học kỳ', example: 'Fall 2024, Spring 2024' },
+            ]}
+            columns={[
+              { title: 'Column', dataIndex: 'column', key: 'column', width: 80, align: 'center' },
+              { title: 'Field Name', dataIndex: 'field', key: 'field', width: 150 },
+              { title: 'Required', dataIndex: 'required', key: 'required', width: 80, align: 'center', render: (text) => text === 'Yes' ? <Tag color="red">Required</Tag> : <Tag>Optional</Tag> },
+              { title: 'Description', dataIndex: 'description', key: 'description' },
+              { title: 'Example', dataIndex: 'example', key: 'example', render: (text) => <Text code>{text}</Text> },
+            ]}
+            pagination={false}
+            size="small"
+            style={{ marginBottom: '20px' }}
+          />
+
+          <Title level={5}>Example Data</Title>
+          <div style={{
+            background: '#f5f5f5',
+            padding: '12px',
+            borderRadius: '4px',
+            marginBottom: '20px',
+            fontFamily: 'monospace',
+            fontSize: '12px'
+          }}>
+            <div style={{ marginBottom: '8px' }}><strong>Row 1 (Header - will be skipped):</strong></div>
+            <div style={{ marginBottom: '4px' }}>lecturer_code | email | fullname | phone | class_code | Semester</div>
+            <div style={{ marginBottom: '16px', marginTop: '12px' }}><strong>Row 2 (Data):</strong></div>
+            <div style={{ marginBottom: '4px' }}>GV001 | lecturer1@example.com | Nguyễn Văn A | 0123456789 | IOT2024 | Fall 2024</div>
+            <div style={{ marginBottom: '4px' }}>GV002 | lecturer2@example.com | Trần Thị B | 0987654321 | CS101 | Spring 2024</div>
+            <div>GV003 | lecturer3@example.com | Lê Văn C | | IOT2024 | Fall 2024</div>
+          </div>
+
+          <Alert
+            message="Important Notes"
+            description={
+              <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
+                <li>Password will be set to <strong>"1"</strong> by default for all imported lecturers</li>
+                <li>Each lecturer will automatically receive a wallet with <strong>0 VND</strong> balance</li>
+                <li><strong>Lecturer Code</strong> must be unique - duplicate codes will cause import errors</li>
+                <li>If <strong>class_code</strong> doesn't exist, it will be automatically created with the lecturer assigned as teacher</li>
+                <li>If <strong>class_code</strong> already exists, the lecturer will be assigned to that class</li>
+                <li>Email must be unique - duplicate emails will cause import errors</li>
+                <li>Phone number must start with <strong>0</strong> and have exactly <strong>10 digits</strong> (if provided)</li>
+                <li>Rows with missing required fields will be skipped</li>
+              </ul>
+            }
+            type="warning"
+            showIcon
+            style={{ marginBottom: '20px' }}
+          />
+
+          <Alert
+            message="Common Errors"
+            description={
+              <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
+                <li><strong>"Lecturer Code already exists"</strong>: Lecturer code is already registered in the system</li>
+                <li><strong>"Email already exists"</strong>: Email is already registered in the system</li>
+                <li><strong>"Full Name is required"</strong>: Missing lecturer name in Column C</li>
+                <li><strong>"Email is required"</strong>: Missing email in Column B</li>
+                <li><strong>"Phone number must start with 0"</strong>: Phone number format is invalid</li>
+                <li><strong>"Phone number must have exactly 10 digits"</strong>: Phone number length is incorrect</li>
+                <li><strong>"Invalid file format"</strong>: File is not .xlsx or .xls format</li>
+              </ul>
+            }
+            type="error"
+            showIcon
+          />
         </div>
-
-        <Alert
-          message="Important Notes"
-          description={
-            <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
-              <li>Password will be set to <strong>"1"</strong> by default for all imported lecturers</li>
-              <li>Each lecturer will automatically receive a wallet with <strong>0 VND</strong> balance</li>
-              <li>If <strong>class_code</strong> doesn't exist, it will be automatically created with the lecturer assigned as teacher</li>
-              <li>If <strong>class_code</strong> already exists, the lecturer will be assigned to that class</li>
-              <li>Email must be unique - duplicate emails will cause import errors</li>
-              <li>Phone number must start with <strong>0</strong> and have exactly <strong>10 digits</strong> (if provided)</li>
-              <li>Rows with missing required fields will be skipped</li>
-            </ul>
-          }
-          type="warning"
-          showIcon
-          style={{ marginBottom: '20px' }}
-        />
-
-        <Alert
-          message="Common Errors"
-          description={
-            <ul style={{ marginBottom: 0, paddingLeft: '20px' }}>
-              <li><strong>"Email already exists"</strong>: Email is already registered in the system</li>
-              <li><strong>"Full Name is required"</strong>: Missing lecturer name in Column B</li>
-              <li><strong>"Email is required"</strong>: Missing email in Column A</li>
-              <li><strong>"Phone number must start with 0"</strong>: Phone number format is invalid</li>
-              <li><strong>"Phone number must have exactly 10 digits"</strong>: Phone number length is incorrect</li>
-              <li><strong>"Invalid file format"</strong>: File is not .xlsx or .xls format</li>
-            </ul>
-          }
-          type="error"
-          showIcon
-        />
-      </div>
-    </Modal>
-  </div>
-);
+      </Modal>
+    </div>
+  );
+};
 
 // IOT Subjects Management Component
 const IotSubjectsManagement = ({ iotSubjects, setIotSubjects, selectedSemester, setSelectedSemester, semesters, handleAddIotSubject, handleEditIotSubject, handleViewIotSubjectStudents, handleDeleteIotSubject, handleRemoveStudent }) => {
