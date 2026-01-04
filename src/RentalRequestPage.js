@@ -36,6 +36,7 @@ import {
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { borrowingRequestAPI, walletAPI, kitAPI, notificationAPI } from './api';
+import dayjs from 'dayjs';
 // Mock function - TODO: Replace with real API call
 const mockGenerateQRCode = (rentalData) => ({
   rentalId: `RENT-${Date.now()}`,
@@ -126,6 +127,45 @@ function RentalRequestPage() {
       setLoading(false);
     }
   }, [selectedKitId]);
+
+  // Restore rental data from sessionStorage when returning from top-up
+  useEffect(() => {
+    try {
+      const savedRentalData = sessionStorage.getItem('rentalRequestData');
+      if (savedRentalData) {
+        const parsedData = JSON.parse(savedRentalData);
+        console.log('Restoring rental data from sessionStorage:', parsedData);
+
+        // Restore rental data, ensuring expectReturnDate is in correct format
+        let expectReturnDate = parsedData.expectReturnDate;
+        if (expectReturnDate) {
+          // Ensure the date is in ISO format (YYYY-MM-DDTHH:mm:ss)
+          // If it's already in correct format, use it; otherwise try to parse and reformat
+          try {
+            const dateObj = dayjs(expectReturnDate);
+            if (dateObj.isValid()) {
+              expectReturnDate = dateObj.format('YYYY-MM-DDTHH:mm:ss');
+            }
+          } catch (e) {
+            console.warn('Could not parse expectReturnDate, using as-is:', e);
+          }
+        }
+
+        setRentalData(prev => ({
+          ...prev,
+          reason: parsedData.reason || prev.reason,
+          expectReturnDate: expectReturnDate || prev.expectReturnDate,
+          requestType: parsedData.requestType || prev.requestType
+        }));
+
+        // Clear saved data after restoring
+        sessionStorage.removeItem('rentalRequestData');
+        console.log('Rental data restored successfully');
+      }
+    } catch (error) {
+      console.error('Error restoring rental data:', error);
+    }
+  }, []);
 
   useEffect(() => {
     if (!selectedKitId || !user) {
@@ -367,6 +407,7 @@ function RentalRequestPage() {
                         format="YYYY-MM-DD HH:mm:ss"
                         style={{ width: '100%' }}
                         placeholder="Select expected return date"
+                        value={rentalData.expectReturnDate ? dayjs(rentalData.expectReturnDate) : null}
                         onChange={(date, dateString) => {
                           // Convert to ISO format with time
                           const isoDate = date ? date.format('YYYY-MM-DDTHH:mm:ss') : null;
@@ -463,12 +504,64 @@ function RentalRequestPage() {
                 </div>
 
                 {selectedKit && wallet.balance < selectedKit.amount && (
-                  <Alert
-                    message="Insufficient Balance"
-                    description={`You need ${((selectedKit.amount || 0) - (wallet.balance || 0)).toLocaleString()} VND more to complete this rental.`}
-                    type="warning"
-                    showIcon
-                  />
+                  <>
+                    <Alert
+                      message="Insufficient Balance"
+                      description={`You need ${((selectedKit.amount || 0) - (wallet.balance || 0)).toLocaleString()} VND more to complete this rental.`}
+                      type="warning"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                    />
+                    <Button
+                      type="primary"
+                      onClick={() => {
+                        const lackAmount = Math.max(
+                          0,
+                          (selectedKit?.amount || 0) - (wallet.balance || 0)
+                        );
+                        // Store redirect info so that after top-up we can return to rental request
+                        try {
+                          const redirectInfo = {
+                            type: 'RENTAL_KIT',
+                            from: 'RentalRequestPage',
+                            kitId: selectedKit?.id || selectedKitId,
+                            timestamp: Date.now()
+                          };
+                          sessionStorage.setItem(
+                            'afterTopupRedirect',
+                            JSON.stringify(redirectInfo)
+                          );
+
+                          // Store rental data to restore when returning from top-up
+                          const rentalDataToSave = {
+                            reason: rentalData.reason,
+                            expectReturnDate: rentalData.expectReturnDate,
+                            requestType: rentalData.requestType
+                          };
+                          sessionStorage.setItem(
+                            'rentalRequestData',
+                            JSON.stringify(rentalDataToSave)
+                          );
+                          console.log('Saved rental data to sessionStorage:', rentalDataToSave);
+                        } catch (e) {
+                          console.error('Error storing redirect info or rental data:', e);
+                        }
+
+                        navigate('/top-up', {
+                          state: { lackAmount }
+                        });
+                      }}
+                      icon={<DollarOutlined />}
+                      style={{
+                        borderRadius: '8px',
+                        background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+                        border: 'none',
+                        fontWeight: 'bold'
+                      }}
+                    >
+                      Deposit now
+                    </Button>
+                  </>
                 )}
               </Space>
             </Card>
