@@ -145,6 +145,7 @@ function AcademicAffairsPortal({ user, onLogout }) {
   const [selectedSemester, setSelectedSemester] = useState(null);
   const [iotSubjects, setIotSubjects] = useState([]);
   const [lecturersList, setLecturersList] = useState([]);
+  const [availableClasses, setAvailableClasses] = useState([]); // For ClassCode dropdown in Student form
 
   // Animation variants
   const pageVariants = {
@@ -480,13 +481,14 @@ function AcademicAffairsPortal({ user, onLogout }) {
 
   const handleExportStudents = () => {
     const studentData = students.map(student => ({
-      'Student ID': student.id,
-      'Name': student.name,
-      'Email': student.email,
-      'Role': student.role,
-      'Status': student.status,
-      'Created Date': student.createdAt,
-      'Last Login': student.lastLogin
+      // Sorted columns: ClassCode, StudentCode, name, email, phone number, Status, CreateDate
+      ClassCode: student.studentClass && student.studentClass !== 'N/A' ? student.studentClass : '',
+      StudentCode: student.studentCode,
+      name: student.name,
+      email: student.email,
+      'phone number': student.phoneNumber || '',
+      Status: student.status,
+      CreateDate: student.createdAt,
     }));
     exportToExcel(studentData, 'students_list');
     notification.success({
@@ -578,6 +580,16 @@ function AcademicAffairsPortal({ user, onLogout }) {
         await handleImportStudents(file, sheetName);
       } else if (importType === 'lecturers') {
         await handleImportLecturers(file, sheetName);
+      } else {
+        // Invalid import type - show error notification
+        notification.error({
+          message: 'Invalid Import Type',
+          description: `Import type "${importType}" is not supported in Academic Affairs Portal. Only "students" and "lecturers" are allowed.`,
+          placement: 'topRight',
+          duration: 5,
+        });
+        console.error(`Unsupported import type: ${importType}`);
+        return;
       }
     } catch (error) {
       console.error('Import error:', error);
@@ -599,37 +611,68 @@ function AcademicAffairsPortal({ user, onLogout }) {
       let message = 'Import completed';
       let successCount = 0;
       let errorCount = 0;
+      let isSuccess = true;
+      let errors = [];
 
       if (typeof response === 'string') {
         message = response;
+        isSuccess = false;
       } else if (response) {
         message = response.message || 'Import completed';
         successCount = response.successCount || 0;
         errorCount = response.errorCount || 0;
+        isSuccess = response.success !== false; // Check success field explicitly
 
         if (response.errors && response.errors.length > 0) {
-          console.warn('Import errors:', response.errors);
+          errors = response.errors;
+          console.warn('Import errors:', errors);
         }
       }
 
-      if (successCount > 0 || errorCount === 0) {
+      // If all rows failed (successCount === 0 and errorCount > 0), treat as failure
+      if (successCount === 0 && errorCount > 0) {
+        isSuccess = false;
+      }
+
+      // Build error message with details
+      let errorDetails = '';
+      if (errors.length > 0) {
+        const errorList = errors.slice(0, 5).join('; '); // Show first 5 errors
+        errorDetails = errors.length > 5
+          ? `${errorList}; ... and ${errors.length - 5} more error(s)`
+          : errorList;
+      }
+
+      if (isSuccess && successCount > 0) {
+        // Success: at least some rows imported
         notification.success({
           message: 'Import Successful',
           description: `Successfully imported ${successCount} student(s)${sheetName ? ` from sheet "${sheetName}"` : ''}. ${errorCount > 0 ? `${errorCount} error(s) occurred.` : ''}`,
           placement: 'topRight',
           duration: 5,
         });
-      } else {
+        // Refresh students list only if import was successful
+        await loadData();
+      } else if (successCount > 0 && errorCount > 0) {
+        // Partial success: some rows imported, some failed
         notification.warning({
           message: 'Import Completed with Errors',
-          description: message,
+          description: `${message}${errorDetails ? ` Errors: ${errorDetails}` : ''}`,
           placement: 'topRight',
-          duration: 5,
+          duration: 8,
         });
+        // Refresh students list to show imported data
+        await loadData();
+      } else {
+        // Complete failure: no rows imported
+        notification.error({
+          message: 'Import Failed',
+          description: `${message}${errorDetails ? ` Errors: ${errorDetails}` : ''}`,
+          placement: 'topRight',
+          duration: 8,
+        });
+        // Do not refresh data if import completely failed
       }
-
-      // Refresh students list
-      await loadData();
     } catch (error) {
       console.error('Import error:', error);
       notification.error({
@@ -650,37 +693,68 @@ function AcademicAffairsPortal({ user, onLogout }) {
       let message = 'Import completed';
       let successCount = 0;
       let errorCount = 0;
+      let isSuccess = true;
+      let errors = [];
 
       if (typeof response === 'string') {
         message = response;
+        isSuccess = false;
       } else if (response) {
         message = response.message || 'Import completed';
         successCount = response.successCount || 0;
         errorCount = response.errorCount || 0;
+        isSuccess = response.success !== false; // Check success field explicitly
 
         if (response.errors && response.errors.length > 0) {
-          console.warn('Import errors:', response.errors);
+          errors = response.errors;
+          console.warn('Import errors:', errors);
         }
       }
 
-      if (successCount > 0 || errorCount === 0) {
+      // If all rows failed (successCount === 0 and errorCount > 0), treat as failure
+      if (successCount === 0 && errorCount > 0) {
+        isSuccess = false;
+      }
+
+      // Build error message with details
+      let errorDetails = '';
+      if (errors.length > 0) {
+        const errorList = errors.slice(0, 5).join('; '); // Show first 5 errors
+        errorDetails = errors.length > 5
+          ? `${errorList}; ... and ${errors.length - 5} more error(s)`
+          : errorList;
+      }
+
+      if (isSuccess && successCount > 0) {
+        // Success: at least some rows imported
         notification.success({
           message: 'Import Successful',
           description: `Successfully imported ${successCount} lecturer(s)${sheetName ? ` from sheet "${sheetName}"` : ''}. ${errorCount > 0 ? `${errorCount} error(s) occurred.` : ''}`,
           placement: 'topRight',
           duration: 5,
         });
-      } else {
+        // Refresh lecturers list only if import was successful
+        await loadData();
+      } else if (successCount > 0 && errorCount > 0) {
+        // Partial success: some rows imported, some failed
         notification.warning({
           message: 'Import Completed with Errors',
-          description: message,
+          description: `${message}${errorDetails ? ` Errors: ${errorDetails}` : ''}`,
           placement: 'topRight',
-          duration: 5,
+          duration: 8,
         });
+        // Refresh lecturers list to show imported data
+        await loadData();
+      } else {
+        // Complete failure: no rows imported
+        notification.error({
+          message: 'Import Failed',
+          description: `${message}${errorDetails ? ` Errors: ${errorDetails}` : ''}`,
+          placement: 'topRight',
+          duration: 8,
+        });
+        // Do not refresh data if import completely failed
       }
-
-      // Refresh lecturers list
-      await loadData();
     } catch (error) {
       console.error('Import error:', error);
       notification.error({
@@ -890,15 +964,46 @@ function AcademicAffairsPortal({ user, onLogout }) {
   };
 
   // Student Management Functions
-  const handleAddStudent = () => {
+  const handleAddStudent = async () => {
     studentForm.resetFields();
     setStudentModal({ visible: true, data: {} });
+
+    // Fetch available classes for ClassCode dropdown
+    try {
+      const classesData = await classesAPI.getAllClasses();
+      const classOptions = classesData.map(cls => ({
+        value: cls.classCode,
+        label: `${cls.classCode} - ${cls.semester || ''}`
+      }));
+      setAvailableClasses(classOptions);
+    } catch (error) {
+      console.error('Error fetching classes:', error);
+      setAvailableClasses([]);
+    }
   };
 
-  const handleEditStudent = (record) => {
+  const handleEditStudent = async (record) => {
+    // Fetch available classes for ClassCode dropdown
+    try {
+      const classesData = await classesAPI.getAllClasses();
+      const classOptions = classesData.map(cls => ({
+        value: cls.classCode,
+        label: `${cls.classCode} - ${cls.semester || ''}`
+      }));
+      setAvailableClasses(classOptions);
+    } catch (error) {
+      console.error('Error fetching classes:', error);
+      setAvailableClasses([]);
+    }
+
     // Map record data to form values
+    // Extract classCode from studentClass (format: "Class1, Class2" or "Class1")
+    const studentClass = record.studentClass || '';
+    const classCode = studentClass.includes(',') ? studentClass.split(',')[0].trim() : studentClass.trim();
+
     const formData = {
-      ...record
+      ...record,
+      classCode: classCode !== 'N/A' ? classCode : undefined
     };
     studentForm.setFieldsValue(formData);
     setStudentModal({ visible: true, data: record });
@@ -1007,7 +1112,8 @@ function AcademicAffairsPortal({ user, onLogout }) {
             name: values.name,
             email: values.email,
             studentCode: values.studentCode,
-            phoneNumber: values.phoneNumber
+            phoneNumber: values.phoneNumber,
+            classCode: values.classCode
           });
 
           // Refresh students list
@@ -1035,7 +1141,8 @@ function AcademicAffairsPortal({ user, onLogout }) {
           name: values.name,
           email: values.email,
           studentCode: values.studentCode,
-          phoneNumber: values.phoneNumber
+          phoneNumber: values.phoneNumber,
+          classCode: values.classCode
         });
 
         console.log('Student created:', response);
@@ -1057,12 +1164,38 @@ function AcademicAffairsPortal({ user, onLogout }) {
   };
 
   // Lecturer Management Functions
-  const handleAddLecturer = () => {
+  const handleAddLecturer = async () => {
     lecturerForm.resetFields();
     setLecturerModal({ visible: true, data: {} });
+
+    // Fetch available classes for ClassCode dropdown
+    try {
+      const classesData = await classesAPI.getAllClasses();
+      const classOptions = classesData.map(cls => ({
+        value: cls.classCode,
+        label: `${cls.classCode} - ${cls.semester || ''}`
+      }));
+      setAvailableClasses(classOptions);
+    } catch (error) {
+      console.error('Error fetching classes:', error);
+      setAvailableClasses([]);
+    }
   };
 
-  const handleEditLecturer = (record) => {
+  const handleEditLecturer = async (record) => {
+    // Fetch available classes for ClassCode dropdown
+    try {
+      const classesData = await classesAPI.getAllClasses();
+      const classOptions = classesData.map(cls => ({
+        value: cls.classCode,
+        label: `${cls.classCode} - ${cls.semester || ''}`
+      }));
+      setAvailableClasses(classOptions);
+    } catch (error) {
+      console.error('Error fetching classes:', error);
+      setAvailableClasses([]);
+    }
+
     // Convert date string to dayjs object for DatePicker
     const formData = {
       ...record,
@@ -1119,7 +1252,156 @@ function AcademicAffairsPortal({ user, onLogout }) {
           message.success('Lecturer deleted successfully');
         } catch (error) {
           console.error('Error deleting lecturer:', error);
-          message.error('Failed to delete lecturer: ' + error.message);
+          console.error('Error details:', {
+            message: error.message,
+            error: error,
+            response: error.response,
+            errorString: error.toString(),
+            errorJSON: JSON.stringify(error, Object.getOwnPropertyNames(error))
+          });
+
+          // Parse error message - handleResponse throws Error with message from backend JSON
+          // The error message from backend is in format: "Failed to delete user: Failed to delete borrowing requests: ..."
+          let errorMessage = 'Unknown error';
+
+          // Try multiple ways to extract error message
+          // 1. Check error.message first
+          if (error.message && error.message !== 'Unknown error' && error.message.trim() !== '') {
+            errorMessage = error.message;
+          }
+          // 2. Check error.response.data (axios-style)
+          else if (error.response?.data?.message) {
+            errorMessage = error.response.data.message;
+          } else if (error.response?.data?.error) {
+            errorMessage = error.response.data.error;
+          }
+          // 3. Check error.stack (might contain message)
+          else if (error.stack) {
+            // Extract message from stack trace if it contains useful info
+            const stackLines = error.stack.split('\n');
+            if (stackLines.length > 0 && stackLines[0].includes('Error:')) {
+              const stackMessage = stackLines[0].replace('Error:', '').trim();
+              if (stackMessage && stackMessage !== 'Unknown error') {
+                errorMessage = stackMessage;
+              }
+            }
+          }
+          // 4. Check error.toString()
+          else if (error.toString && error.toString() !== '[object Object]' && error.toString() !== 'Error: Unknown error') {
+            const toStringResult = error.toString();
+            if (toStringResult.includes('Error:')) {
+              errorMessage = toStringResult.split('Error:')[1]?.trim() || errorMessage;
+            } else {
+              errorMessage = toStringResult;
+            }
+          }
+          // 5. Check if error is a string
+          else if (typeof error === 'string' && error !== 'Unknown error') {
+            errorMessage = error;
+          }
+          // 6. Try to stringify and parse
+          else {
+            try {
+              const errorStr = JSON.stringify(error, Object.getOwnPropertyNames(error));
+              if (errorStr && errorStr !== '{}' && errorStr !== '{"message":"Unknown error"}') {
+                const parsed = JSON.parse(errorStr);
+                errorMessage = parsed.message || parsed.error || parsed.data?.message || errorStr;
+              }
+            } catch (e) {
+              console.error('Failed to stringify error:', e);
+            }
+          }
+
+          // Final fallback: if still "Unknown error", check if we can get more info from console
+          if (errorMessage === 'Unknown error' || errorMessage.trim() === '') {
+            console.warn('Could not extract error message, error object:', error);
+            // Try one more time with a different approach
+            if (error.constructor && error.constructor.name !== 'Error') {
+              errorMessage = `Error type: ${error.constructor.name}`;
+            }
+          }
+
+          // Log for debugging
+          console.log('Parsed error message:', errorMessage);
+          console.log('Error message length:', errorMessage.length);
+          console.log('Error message includes "borrowing":', errorMessage.toLowerCase().includes('borrowing'));
+          console.log('Error message includes "foreign key":', errorMessage.toLowerCase().includes('foreign key'));
+
+          const errorMessageLower = errorMessage.toLowerCase();
+
+          // Check for foreign key constraint violations
+          // Error message format: "Failed to delete user: Failed to delete borrowing requests: ... violates foreign key constraint ... on table \"request_kit_components\""
+          if (errorMessageLower.includes('foreign key constraint') ||
+            errorMessageLower.includes('violates foreign key') ||
+            errorMessageLower.includes('still referenced') ||
+            errorMessageLower.includes('still referenced from table')) {
+
+            // Check if it's related to borrowing requests and request_kit_components
+            if (errorMessageLower.includes('borrowing_requests') ||
+              errorMessageLower.includes('request_kit_components') ||
+              errorMessageLower.includes('borrowing request') ||
+              errorMessageLower.includes('failed to delete borrowing')) {
+              notification.error({
+                message: 'Cannot Delete Lecturer',
+                description: `Cannot delete lecturer "${record.name}" because this lecturer has borrowing requests that contain kit components. Please resolve or delete all borrowing requests and their associated kit components first before deleting this lecturer.`,
+                placement: 'topRight',
+                duration: 8,
+              });
+              return; // Exit early to prevent showing generic error
+            }
+            // Check if it's related to class relationship
+            else if (errorMessageLower.includes('class') ||
+              errorMessageLower.includes('classes')) {
+              notification.error({
+                message: 'Cannot Delete Lecturer',
+                description: `Cannot delete lecturer "${record.name}" because this lecturer is assigned to one or more classes. Please remove the lecturer from all classes first before deleting.`,
+                placement: 'topRight',
+                duration: 6,
+              });
+              return; // Exit early to prevent showing generic error
+            }
+            // Generic foreign key constraint error
+            else {
+              notification.error({
+                message: 'Cannot Delete Lecturer',
+                description: `Cannot delete lecturer "${record.name}" because this lecturer has relationships with other data in the system. Please remove all related records (classes, borrowing requests, etc.) first before deleting.`,
+                placement: 'topRight',
+                duration: 8,
+              });
+              return; // Exit early to prevent showing generic error
+            }
+          }
+          // Check for other relationship errors (check this before generic constraint check)
+          else if (errorMessageLower.includes('borrowing_requests') ||
+            errorMessageLower.includes('request_kit_components') ||
+            errorMessageLower.includes('failed to delete borrowing')) {
+            notification.error({
+              message: 'Cannot Delete Lecturer',
+              description: `Cannot delete lecturer "${record.name}" because this lecturer has borrowing requests that contain kit components. Please resolve or delete all borrowing requests and their associated kit components first before deleting this lecturer.`,
+              placement: 'topRight',
+              duration: 8,
+            });
+            return; // Exit early to prevent showing generic error
+          }
+          // Check for other relationship errors
+          else if (errorMessageLower.includes('relationship') ||
+            errorMessageLower.includes('constraint') ||
+            errorMessageLower.includes('cannot delete') ||
+            errorMessageLower.includes('has relationship') ||
+            errorMessageLower.includes('referenced') ||
+            errorMessageLower.includes('borrowing') ||
+            errorMessageLower.includes('request')) {
+            notification.error({
+              message: 'Cannot Delete Lecturer',
+              description: `Cannot delete lecturer "${record.name}" because this lecturer is assigned to one or more classes or has borrowing requests. Please remove the lecturer from all classes and resolve all borrowing requests first before deleting.`,
+              placement: 'topRight',
+              duration: 6,
+            });
+            return; // Exit early to prevent showing generic error
+          } else {
+            // Show generic error only if no specific error was detected
+            message.error('Failed to delete lecturer: ' + errorMessage);
+          }
         } finally {
           setLoading(false);
         }
@@ -1162,7 +1444,9 @@ function AcademicAffairsPortal({ user, onLogout }) {
           await userAPI.updateLecturer(lecturerModal.data.id, {
             name: values.name,
             email: values.email,
-            phoneNumber: values.phoneNumber
+            phoneNumber: values.phoneNumber,
+            lecturerCode: values.lecturerCode,
+            classCode: values.classCode
           });
 
           // Refresh lecturers list
@@ -1187,7 +1471,9 @@ function AcademicAffairsPortal({ user, onLogout }) {
         const response = await userAPI.createSingleLecturer({
           name: values.name,
           email: values.email,
-          phoneNumber: values.phoneNumber
+          phoneNumber: values.phoneNumber,
+          lecturerCode: values.lecturerCode,
+          classCode: values.classCode
         });
 
         console.log('Lecturer created:', response);
@@ -1557,6 +1843,25 @@ function AcademicAffairsPortal({ user, onLogout }) {
               </Form.Item>
             </Col>
           </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="classCode"
+                label="Class Code"
+                rules={[{ required: false, message: 'Please select class code' }]}
+              >
+                <Select
+                  placeholder="Select class code"
+                  showSearch
+                  filterOption={(input, option) =>
+                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  options={availableClasses}
+                  allowClear
+                />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
       </Modal>
 
@@ -1624,6 +1929,34 @@ function AcademicAffairsPortal({ user, onLogout }) {
                       e.preventDefault();
                     }
                   }}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="lecturerCode"
+                label="Lecturer Code"
+                rules={[{ required: false, message: 'Please enter lecturer code' }]}
+              >
+                <Input placeholder="Enter lecturer code" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="classCode"
+                label="Class Code"
+                rules={[{ required: false, message: 'Please select class code' }]}
+              >
+                <Select
+                  placeholder="Select class code"
+                  showSearch
+                  filterOption={(input, option) =>
+                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  options={availableClasses}
+                  allowClear
                 />
               </Form.Item>
             </Col>
