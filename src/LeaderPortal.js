@@ -236,6 +236,7 @@ function LeaderPortal({ user, onLogout }) {
           transactions = transactionData.map(txn => ({
             type: txn.type || txn.transactionType || 'UNKNOWN',
             amount: txn.amount || 0,
+            previousBalance: txn.previousBalance || null,
             date: txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('vi-VN') : 'N/A',
             description: txn.description || '',
             status: txn.status || txn.transactionStatus || 'COMPLETED',
@@ -388,21 +389,21 @@ function LeaderPortal({ user, onLogout }) {
         setGroup(null);
       }
 
-    // Load current borrowing requests to prevent duplicate rentals
-    try {
-      if (user?.id) {
-        const requests = await borrowingRequestAPI.getByUser(user.id);
-        const normalizedRequests = Array.isArray(requests)
-          ? requests
-          : (requests?.data || []);
-        setBorrowingRequests(normalizedRequests);
-      } else {
+      // Load current borrowing requests to prevent duplicate rentals
+      try {
+        if (user?.id) {
+          const requests = await borrowingRequestAPI.getByUser(user.id);
+          const normalizedRequests = Array.isArray(requests)
+            ? requests
+            : (requests?.data || []);
+          setBorrowingRequests(normalizedRequests);
+        } else {
+          setBorrowingRequests([]);
+        }
+      } catch (error) {
+        console.error('Error loading borrowing requests:', error);
         setBorrowingRequests([]);
       }
-    } catch (error) {
-      console.error('Error loading borrowing requests:', error);
-      setBorrowingRequests([]);
-    }
 
       // Mock refund requests for now (can be replaced with API later)
 
@@ -510,6 +511,27 @@ function LeaderPortal({ user, onLogout }) {
               window.location.reload();
             }, 1000);
           }
+
+          // After successful top-up, check if we need to redirect back to rental request flow
+          try {
+            const redirectInfoRaw = sessionStorage.getItem('afterTopupRedirect');
+            if (redirectInfoRaw) {
+              sessionStorage.removeItem('afterTopupRedirect');
+              const redirectInfo = JSON.parse(redirectInfoRaw);
+              if (redirectInfo?.type === 'RENTAL_KIT' && redirectInfo.kitId && user) {
+                console.log('Redirecting back to rental request after top-up:', redirectInfo);
+                navigate('/rental-request', {
+                  state: {
+                    kitId: redirectInfo.kitId,
+                    user
+                  }
+                });
+                return; // Exit early to prevent further execution
+              }
+            }
+          } catch (redirectError) {
+            console.error('Error handling afterTopupRedirect:', redirectError);
+          }
         } catch (error) {
           console.error('Error reloading wallet:', error);
           // Fallback: reload the page
@@ -593,6 +615,27 @@ function LeaderPortal({ user, onLogout }) {
             setTimeout(() => {
               window.location.reload();
             }, 1000);
+          }
+
+          // After successful top-up (already done), check redirect flag
+          try {
+            const redirectInfoRaw = sessionStorage.getItem('afterTopupRedirect');
+            if (redirectInfoRaw) {
+              sessionStorage.removeItem('afterTopupRedirect');
+              const redirectInfo = JSON.parse(redirectInfoRaw);
+              if (redirectInfo?.type === 'RENTAL_KIT' && redirectInfo.kitId && user) {
+                console.log('Redirecting back to rental request after PAYMENT_ALREADY_DONE:', redirectInfo);
+                navigate('/rental-request', {
+                  state: {
+                    kitId: redirectInfo.kitId,
+                    user
+                  }
+                });
+                return; // Exit early to prevent further execution
+              }
+            }
+          } catch (redirectError) {
+            console.error('Error handling afterTopupRedirect (PAYMENT_ALREADY_DONE):', redirectError);
           }
         } catch (error) {
           console.error('Error reloading wallet:', error);
@@ -1451,7 +1494,7 @@ function LeaderPortal({ user, onLogout }) {
                   />
                 )}
                 {selectedKey === 'kit-component-rental' && <KitComponentRental kits={kits} user={user} onViewKitDetail={(kit) => handleViewKitDetail(kit, 'component-rental')} onRentComponent={handleRentComponent} />}
-                {selectedKey === 'borrow-tracking' && <BorrowTracking borrowingRequests={borrowingRequests} setBorrowingRequests={setBorrowingRequests} user={user} />}
+                {selectedKey === 'borrow-tracking' && <BorrowTracking borrowingRequests={borrowingRequests} setBorrowingRequests={setBorrowingRequests} user={user} penalties={penalties} penaltyDetails={penaltyDetails} />}
                 {selectedKey === 'wallet' && <WalletManagement wallet={wallet} setWallet={setWallet} />}
                 {selectedKey === 'profile' && <ProfileManagement profile={profile} setProfile={setProfile} loading={profileLoading} setLoading={setProfileLoading} user={user} />}
               </motion.div>
@@ -1833,30 +1876,55 @@ const DashboardContent = ({ group, wallet, kits, penalties, penaltyDetails }) =>
               <List
                 size="small"
                 dataSource={wallet.transactions.slice(0, 5)}
-                renderItem={(item) => (
-                  <List.Item>
-                    <List.Item.Meta
-                      avatar={<DollarOutlined style={{ color: item.amount > 0 ? '#52c41a' : '#ff4d4f' }} />}
-                      title={
-                        <Tag color={
-                          item.type === 'TOP_UP' ? 'success' :
-                          item.type === 'RENTAL_FEE' ? 'processing' :
-                          item.type === 'PENALTY_PAYMENT' ? 'error' :
-                          item.type === 'REFUND' ? 'purple' : 'default'
-                        }>
-                          {item.type?.replace(/_/g, ' ') || 'Transaction'}
-                        </Tag>
-                      }
-                      description={item.date || item.description}
-                    />
-                    <div style={{
-                      color: item.amount > 0 ? '#52c41a' : '#ff4d4f',
-                      fontWeight: 'bold'
-                    }}>
-                      {item.amount > 0 ? '+' : ''}{item.amount?.toLocaleString() || 0} VND
-                    </div>
-                  </List.Item>
-                )}
+                renderItem={(item) => {
+                  // Determine color based on transaction type
+                  const typeUpper = (item.type || '').toUpperCase();
+                  const isPositiveTransaction =
+                    typeUpper === 'TOP_UP' ||
+                    typeUpper === 'TOPUP' ||
+                    typeUpper === 'REFUND';
+                  const isNegativeTransaction =
+                    typeUpper === 'RENTAL_FEE' ||
+                    typeUpper === 'PENALTY_PAYMENT' ||
+                    typeUpper === 'PENALTY' ||
+                    typeUpper === 'FINE';
+
+                  // Use type-based color if available, otherwise fallback to amount-based
+                  let amountColor = '#595959'; // default gray
+                  if (isPositiveTransaction) {
+                    amountColor = '#52c41a'; // green for top-up and refund
+                  } else if (isNegativeTransaction) {
+                    amountColor = '#ff4d4f'; // red for rental fee and penalty
+                  } else {
+                    // Fallback: use amount sign
+                    amountColor = item.amount > 0 ? '#52c41a' : '#ff4d4f';
+                  }
+
+                  return (
+                    <List.Item>
+                      <List.Item.Meta
+                        avatar={<DollarOutlined style={{ color: amountColor }} />}
+                        title={
+                          <Tag color={
+                            item.type === 'TOP_UP' ? 'success' :
+                              item.type === 'RENTAL_FEE' ? 'processing' :
+                                item.type === 'PENALTY_PAYMENT' ? 'error' :
+                                  item.type === 'REFUND' ? 'purple' : 'default'
+                          }>
+                            {item.type?.replace(/_/g, ' ') || 'Transaction'}
+                          </Tag>
+                        }
+                        description={item.date || item.description}
+                      />
+                      <div style={{
+                        color: amountColor,
+                        fontWeight: 'bold'
+                      }}>
+                        {isPositiveTransaction ? '+' : ''}{item.amount?.toLocaleString() || 0} VND
+                      </div>
+                    </List.Item>
+                  );
+                }}
               />
             ) : (
               <Empty description="No transactions yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
@@ -2901,11 +2969,13 @@ const WalletManagement = ({ wallet, setWallet }) => {
               <Spin spinning={loading}>
                 <Table
                   dataSource={transactions}
+                  scroll={{ x: 'max-content' }}
                   columns={[
                     {
                       title: 'Type',
                       dataIndex: 'type',
                       key: 'type',
+                      width: 150,
                       render: (type) => {
                         // Mapping type sang thông tin theme
                         let config = {
@@ -2916,48 +2986,91 @@ const WalletManagement = ({ wallet, setWallet }) => {
                           border: '1.5px solid #e0e0e0',
                           text: '#333'
                         };
-                        switch ((type||'').toUpperCase()) {
+                        switch ((type || '').toUpperCase()) {
                           case 'TOP_UP':
                           case 'TOPUP':
-                            config = { label: 'Nạp tiền', color: 'success', icon: <DollarOutlined />, bg: '#e8f8ee', border: '1.5px solid #52c41a', text:'#2a8731'}; break;
+                            config = { label: 'Nạp tiền', color: 'success', icon: <DollarOutlined />, bg: '#e8f8ee', border: '1.5px solid #52c41a', text: '#2a8731' }; break;
                           case 'RENTAL_FEE':
-                            config = { label: 'Thuê kit', color: 'geekblue', icon: <ShoppingOutlined />, bg: '#e6f7ff', border: '1.5px solid #177ddc', text:'#177ddc' }; break;
+                            config = { label: 'Thuê kit', color: 'geekblue', icon: <ShoppingOutlined />, bg: '#e6f7ff', border: '1.5px solid #177ddc', text: '#177ddc' }; break;
                           case 'PENALTY_PAYMENT':
                           case 'PENALTY':
                           case 'FINE':
-                            config = { label: 'Phí phạt', color: 'error', icon: <ExclamationCircleOutlined />, bg: '#fff1f0', border:'1.5px solid #ff4d4f', text:'#d4001a'}; break;
+                            config = { label: 'Phí phạt', color: 'error', icon: <ExclamationCircleOutlined />, bg: '#fff1f0', border: '1.5px solid #ff4d4f', text: '#d4001a' }; break;
                           case 'REFUND':
-                            config = { label: 'Hoàn tiền', color:'purple', icon: <RollbackOutlined />, bg:'#f9f0ff', border:'1.5px solid #722ed1', text:'#722ed1' }; break;
+                            config = { label: 'Hoàn tiền', color: 'purple', icon: <RollbackOutlined />, bg: '#f9f0ff', border: '1.5px solid #722ed1', text: '#722ed1' }; break;
                           default:
-                            config = { label: type || 'Khác', color:'default', icon:<InfoCircleOutlined/>, bg:'#fafafa', border:'1.5px solid #bfbfbf', text:'#595959'};
+                            config = { label: type || 'Khác', color: 'default', icon: <InfoCircleOutlined />, bg: '#fafafa', border: '1.5px solid #bfbfbf', text: '#595959' };
                         }
-                        return <Tag color={config.color} style={{background: config.bg, border:config.border, color:config.text,fontWeight:'bold', display:'flex', alignItems:'center', gap:4, fontSize:13, letterSpacing:1}}>
+                        return <Tag color={config.color} style={{ background: config.bg, border: config.border, color: config.text, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, letterSpacing: 1 }}>
                           {config.icon} <span>{config.label}</span>
                         </Tag>;
                       }
                     },
                     {
+                      title: 'Previous Balance',
+                      dataIndex: 'previousBalance',
+                      key: 'previousBalance',
+                      width: 150,
+                      render: (previousBalance) => {
+                        if (previousBalance === null || previousBalance === undefined) {
+                          return <Text type="secondary">N/A</Text>;
+                        }
+                        return (
+                          <Text type="secondary">
+                            {previousBalance.toLocaleString()} VND
+                          </Text>
+                        );
+                      },
+                    },
+                    {
                       title: 'Amount',
                       dataIndex: 'amount',
                       key: 'amount',
-                      render: (amount) => (
-                        <Text strong style={{
-                          color: amount > 0 ? '#52c41a' : '#ff4d4f'
-                        }}>
-                          {amount ? amount.toLocaleString() : 0} VND
-                        </Text>
-                      ),
+                      width: 150,
+                      render: (amount, record) => {
+                        // Determine color based on transaction type
+                        const typeUpper = (record.type || '').toUpperCase();
+                        const isPositiveTransaction =
+                          typeUpper === 'TOP_UP' ||
+                          typeUpper === 'TOPUP' ||
+                          typeUpper === 'REFUND';
+                        const isNegativeTransaction =
+                          typeUpper === 'RENTAL_FEE' ||
+                          typeUpper === 'PENALTY_PAYMENT' ||
+                          typeUpper === 'PENALTY' ||
+                          typeUpper === 'FINE';
+
+                        // Use type-based color if available, otherwise fallback to amount-based
+                        let color = '#595959'; // default gray
+                        if (isPositiveTransaction) {
+                          color = '#52c41a'; // green for top-up and refund
+                        } else if (isNegativeTransaction) {
+                          color = '#ff4d4f'; // red for rental fee and penalty
+                        } else {
+                          // Fallback: use amount sign
+                          color = amount > 0 ? '#52c41a' : '#ff4d4f';
+                        }
+
+                        return (
+                          <Text strong style={{ color }}>
+                            {amount ? amount.toLocaleString() : 0} VND
+                          </Text>
+                        );
+                      },
                     },
                     {
                       title: 'Description',
                       dataIndex: 'description',
                       key: 'description',
+                      width: 200,
+                      ellipsis: true,
                       render: (description) => description || 'N/A',
                     },
                     {
                       title: 'Date',
                       dataIndex: 'createdAt',
                       key: 'date',
+                      width: 180,
                       render: (date) => {
                         if (!date) return 'N/A';
                         return new Date(date).toLocaleString('vi-VN');
@@ -2967,10 +3080,11 @@ const WalletManagement = ({ wallet, setWallet }) => {
                       title: 'Status',
                       dataIndex: 'status',
                       key: 'status',
+                      width: 120,
                       render: (status) => {
                         const statusColor = status === 'COMPLETED' || status === 'SUCCESS' ? 'success' :
-                                          status === 'PENDING' ? 'processing' :
-                                          status === 'FAILED' ? 'error' : 'default';
+                          status === 'PENDING' ? 'processing' :
+                            status === 'FAILED' ? 'error' : 'default';
                         return (
                           <Tag color={statusColor}>
                             {status || 'N/A'}
@@ -2981,6 +3095,8 @@ const WalletManagement = ({ wallet, setWallet }) => {
                     {
                       title: 'Details',
                       key: 'details',
+                      width: 120,
+                      fixed: 'right',
                       render: (_, record) => (
                         <motion.div
                           whileHover={{ scale: 1.05 }}
@@ -3075,7 +3191,12 @@ const WalletManagement = ({ wallet, setWallet }) => {
                 );
               })()}
             </Descriptions.Item>
-            <Descriptions.Item label="Amount" span={2}>
+            <Descriptions.Item label="Previous Balance">
+              {selectedTransaction.previousBalance !== null && selectedTransaction.previousBalance !== undefined
+                ? formatCurrency(selectedTransaction.previousBalance)
+                : 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Amount">
               <Text strong style={{ fontSize: '18px', color: (selectedTransaction.amount || 0) >= 0 ? '#52c41a' : '#ff4d4f' }}>
                 {formatCurrency(selectedTransaction.amount || 0)}
               </Text>
@@ -3084,8 +3205,8 @@ const WalletManagement = ({ wallet, setWallet }) => {
               {(() => {
                 const status = selectedTransaction.status || selectedTransaction.transactionStatus || 'N/A';
                 const statusColor = status === 'COMPLETED' || status === 'SUCCESS' ? 'success' :
-                                  status === 'PENDING' ? 'warning' :
-                                  status === 'FAILED' ? 'error' : 'default';
+                  status === 'PENDING' ? 'warning' :
+                    status === 'FAILED' ? 'error' : 'default';
                 return (
                   <Tag color={statusColor}>
                     {status}
@@ -3098,7 +3219,7 @@ const WalletManagement = ({ wallet, setWallet }) => {
             </Descriptions.Item>
             <Descriptions.Item label="Transaction Date">
               {selectedTransaction.transactionDate ? formatDateTime(selectedTransaction.transactionDate) :
-               selectedTransaction.createdAt ? formatDateTime(selectedTransaction.createdAt) : 'N/A'}
+                selectedTransaction.createdAt ? formatDateTime(selectedTransaction.createdAt) : 'N/A'}
             </Descriptions.Item>
           </Descriptions>
         )}
@@ -3108,10 +3229,14 @@ const WalletManagement = ({ wallet, setWallet }) => {
 };
 
 // Borrow Tracking Component
-const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user }) => {
+const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user, penalties, penaltyDetails }) => {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [detailDrawerVisible, setDetailDrawerVisible] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState(null);
+  const [relatedPenalty, setRelatedPenalty] = useState(null);
+  const [relatedPenaltyDetails, setRelatedPenaltyDetails] = useState([]);
+  const [loadingPenalty, setLoadingPenalty] = useState(false);
 
   const fetchBorrowingRequests = useCallback(async () => {
     setLoading(true);
@@ -3123,7 +3248,16 @@ const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user }) => {
       }
       const requests = await borrowingRequestAPI.getByUser(user.id);
       console.log('Borrowing requests for user:', requests);
-      setBorrowingRequests(requests || []);
+
+      // Sort by createdAt descending (newest first)
+      const sortedRequests = (requests || []).sort((a, b) => {
+        if (!a.createdAt && !b.createdAt) return 0;
+        if (!a.createdAt) return 1;
+        if (!b.createdAt) return -1;
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      });
+
+      setBorrowingRequests(sortedRequests);
     } catch (error) {
       console.error('Error fetching borrowing requests:', error);
       message.error('Failed to load borrowing requests');
@@ -3138,9 +3272,58 @@ const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user }) => {
     }
   }, [user?.id, fetchBorrowingRequests]);
 
-  const showRequestDetails = (request) => {
+  const showRequestDetails = async (request) => {
     setSelectedRequest(request);
     setDetailDrawerVisible(true);
+
+    // If request is RETURNED, find related penalty
+    if (request.status === 'RETURNED' && penalties && penalties.length > 0) {
+      setLoadingPenalty(true);
+      try {
+        // Find penalty related to this request
+        const penalty = penalties.find(p =>
+          (p.borrowRequestId && p.borrowRequestId === request.id) ||
+          (p.request && p.request.id === request.id) ||
+          (p.requestId && p.requestId === request.id)
+        );
+
+        if (penalty) {
+          setRelatedPenalty(penalty);
+
+          // Load penalty details if available
+          if (penaltyDetails && penaltyDetails[penalty.id]) {
+            setRelatedPenaltyDetails(penaltyDetails[penalty.id]);
+          } else {
+            // Try to load penalty details
+            try {
+              const detailsResponse = await penaltyDetailAPI.findByPenaltyId(penalty.id);
+              let detailsData = [];
+              if (Array.isArray(detailsResponse)) {
+                detailsData = detailsResponse;
+              } else if (detailsResponse && detailsResponse.data && Array.isArray(detailsResponse.data)) {
+                detailsData = detailsResponse.data;
+              }
+              setRelatedPenaltyDetails(detailsData);
+            } catch (error) {
+              console.error('Error loading penalty details:', error);
+              setRelatedPenaltyDetails([]);
+            }
+          }
+        } else {
+          setRelatedPenalty(null);
+          setRelatedPenaltyDetails([]);
+        }
+      } catch (error) {
+        console.error('Error finding related penalty:', error);
+        setRelatedPenalty(null);
+        setRelatedPenaltyDetails([]);
+      } finally {
+        setLoadingPenalty(false);
+      }
+    } else {
+      setRelatedPenalty(null);
+      setRelatedPenaltyDetails([]);
+    }
   };
 
   const getStatusColor = (status) => {
@@ -3252,7 +3435,11 @@ const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user }) => {
         title="Request Details"
         placement="right"
         width={600}
-        onClose={() => setDetailDrawerVisible(false)}
+        onClose={() => {
+          setDetailDrawerVisible(false);
+          setRelatedPenalty(null);
+          setRelatedPenaltyDetails([]);
+        }}
         open={detailDrawerVisible}
       >
         {selectedRequest && (
@@ -3277,13 +3464,106 @@ const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user }) => {
               <Descriptions.Item label="Reason">
                 {selectedRequest.reason || 'N/A'}
               </Descriptions.Item>
+              <Descriptions.Item label="Borrow Date">
+                {selectedRequest.approvedDate
+                  ? new Date(selectedRequest.approvedDate).toLocaleString('vi-VN')
+                  : selectedRequest.borrowDate
+                    ? new Date(selectedRequest.borrowDate).toLocaleString('vi-VN')
+                    : selectedRequest.createdAt
+                      ? new Date(selectedRequest.createdAt).toLocaleString('vi-VN')
+                      : 'N/A'}
+              </Descriptions.Item>
               <Descriptions.Item label="Expected Return Date">
-                {selectedRequest.expectReturnDate ? new Date(selectedRequest.expectReturnDate).toLocaleString() : 'N/A'}
+                {selectedRequest.expectReturnDate ? new Date(selectedRequest.expectReturnDate).toLocaleString('vi-VN') : 'N/A'}
               </Descriptions.Item>
               <Descriptions.Item label="Deposit Amount">
                 {selectedRequest.depositAmount ? `${selectedRequest.depositAmount.toLocaleString()} VND` : 'N/A'}
               </Descriptions.Item>
             </Descriptions>
+
+            {/* Penalty Payment Section - Only show for RETURNED requests */}
+            {selectedRequest.status === 'RETURNED' && (
+              <div style={{ marginTop: '24px' }}>
+                <Divider orientation="left">
+                  <Space>
+                    <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />
+                    <span>Penalty Payment</span>
+                  </Space>
+                </Divider>
+                <Spin spinning={loadingPenalty}>
+                  {relatedPenalty ? (
+                    <Card
+                      size="small"
+                      style={{
+                        marginTop: '16px',
+                        border: relatedPenalty.resolved ? '1px solid #52c41a' : '1px solid #fa8c16'
+                      }}
+                    >
+                      <Descriptions column={1} size="small">
+                        <Descriptions.Item label="Penalty Status">
+                          <Tag color={relatedPenalty.resolved ? 'success' : 'warning'}>
+                            {relatedPenalty.resolved ? 'Resolved' : 'Unresolved'}
+                          </Tag>
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Penalty Amount">
+                          <Text strong style={{ color: '#ff4d4f', fontSize: '16px' }}>
+                            {relatedPenalty.totalAmount ? relatedPenalty.totalAmount.toLocaleString() : 0} VND
+                          </Text>
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Penalty Note">
+                          {relatedPenalty.note || 'N/A'}
+                        </Descriptions.Item>
+                        {relatedPenalty.takeEffectDate && (
+                          <Descriptions.Item label="Take Effect Date">
+                            {new Date(relatedPenalty.takeEffectDate).toLocaleString('vi-VN')}
+                          </Descriptions.Item>
+                        )}
+                        {relatedPenaltyDetails && relatedPenaltyDetails.length > 0 && (
+                          <Descriptions.Item label="Penalty Details">
+                            <List
+                              size="small"
+                              dataSource={relatedPenaltyDetails}
+                              renderItem={(detail, idx) => (
+                                <List.Item>
+                                  <Text type="secondary" style={{ fontSize: '12px' }}>
+                                    • {detail.description || 'N/A'}: {detail.amount ? detail.amount.toLocaleString() : 0} VND
+                                  </Text>
+                                </List.Item>
+                              )}
+                            />
+                          </Descriptions.Item>
+                        )}
+                        {!relatedPenalty.resolved && (
+                          <Descriptions.Item>
+                            <Button
+                              type="primary"
+                              danger
+                              icon={<DollarOutlined />}
+                              onClick={() => {
+                                navigate('/penalty-payment', {
+                                  state: { penaltyId: relatedPenalty.id }
+                                });
+                              }}
+                              block
+                            >
+                              Pay Penalty
+                            </Button>
+                          </Descriptions.Item>
+                        )}
+                      </Descriptions>
+                    </Card>
+                  ) : (
+                    <Card size="small" style={{ marginTop: '16px' }}>
+                      <Empty
+                        description="No penalty found for this request"
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        style={{ padding: '20px 0' }}
+                      />
+                    </Card>
+                  )}
+                </Spin>
+              </div>
+            )}
 
             {selectedRequest.qrCode && (
               <div style={{ marginTop: '24px', textAlign: 'center' }}>
