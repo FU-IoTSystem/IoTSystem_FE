@@ -1,5 +1,6 @@
 // const API_BASE_URL = 'https://rental-kit-fvcrenhrbva3e4f2.eastasia-01.azurewebsites.net';
 const API_BASE_URL = 'https://iot-system-kit.azurewebsites.net';
+// const API_BASE_URL = 'http://localhost:8080';
 
 // Helper function to get JWT token from localStorage
 const getAuthToken = () => {
@@ -14,11 +15,29 @@ const handleResponse = async (response) => {
       const errorJson = await response.json();
       // Extract error message from common response structures
       const errorMessage = errorJson.message || errorJson.error || errorJson.details || JSON.stringify(errorJson);
-      throw new Error(errorMessage);
+
+      // Create error object with full details
+      const error = new Error(errorMessage);
+      // Attach original response data for better error handling
+      error.response = {
+        status: response.status,
+        statusText: response.statusText,
+        data: errorJson
+      };
+      throw error;
     } catch (jsonError) {
+      // If JSON parsing fails, check if it's already an Error object
+      if (jsonError instanceof Error && jsonError.message && jsonError.message !== 'Unknown error') {
+        throw jsonError;
+      }
       // If JSON parsing fails, fall back to text
       const errorText = await response.text().catch(() => 'Unknown error');
-      throw new Error(errorText || `HTTP error! status: ${response.status}`);
+      const error = new Error(errorText || `HTTP error! status: ${response.status}`);
+      error.response = {
+        status: response.status,
+        statusText: response.statusText
+      };
+      throw error;
     }
   }
   // Try to parse JSON based on content-type; fallback to text if not JSON
@@ -338,6 +357,7 @@ export const userAPI = {
           fullName: lecturer.fullName,
           id: lecturer.id,
           phone: lecturer.phone,
+          lecturerCode: lecturer.lecturerCode,
           createdAt: lecturer.createdAt,
           status: lecturer.isActive ? 'ACTIVE' : 'INACTIVE'
         }));
@@ -368,6 +388,52 @@ export const userAPI = {
       return [];
     } catch (error) {
       console.error('Failed to fetch students:', error);
+      return [];
+    }
+  },
+
+  getStudentsByClassCode: async (classCode) => {
+    try {
+      const response = await apiRequest(`/api/getStudentsByClassCode/${classCode}`);
+      console.log('Students by class code response:', response);
+
+      if (response && response.data && Array.isArray(response.data)) {
+        return response.data.map(student => ({
+          id: student.id,
+          email: student.email,
+          fullName: student.fullName || student.email,
+          studentCode: student.studentCode,
+          phoneNumber: student.phone,
+          createdAt: student.createdAt,
+          status: student.isActive ? 'ACTIVE' : 'INACTIVE'
+        }));
+      }
+      return [];
+    } catch (error) {
+      console.error('Failed to fetch students by class code:', error);
+      return [];
+    }
+  },
+
+  getStudentsByClassId: async (classId) => {
+    try {
+      const response = await apiRequest(`/api/getStudentsByClassId/${classId}`);
+      console.log('Students by class id response:', response);
+
+      if (response && response.data && Array.isArray(response.data)) {
+        return response.data.map(student => ({
+          id: student.id,
+          email: student.email,
+          fullName: student.fullName || student.email,
+          studentCode: student.studentCode,
+          phoneNumber: student.phone,
+          createdAt: student.createdAt,
+          status: student.isActive ? 'ACTIVE' : 'INACTIVE'
+        }));
+      }
+      return [];
+    } catch (error) {
+      console.error('Failed to fetch students by class id:', error);
       return [];
     }
   },
@@ -731,6 +797,10 @@ export const penaltiesAPI = {
 
   getPenByAccount: async () => {
     return apiRequest('/api/penalties/getPenByAccount');
+  },
+
+  getPenaltyByRequestId: async (requestId) => {
+    return apiRequest(`/api/penalties/by-request/${requestId}`);
   },
 
   getById: async (id) => {
