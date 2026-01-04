@@ -133,6 +133,7 @@ function LecturerPortal({ user, onLogout }) {
   const [notifications, setNotifications] = useState([]);
   const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
   const [notificationLoading, setNotificationLoading] = useState(false);
+  const [groupBorrowStatus, setGroupBorrowStatus] = useState(null);
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [initialDataLoaded, setInitialDataLoaded] = useState(false);
@@ -269,6 +270,7 @@ function LecturerPortal({ user, onLogout }) {
           transactions = transactionData.map(txn => ({
             type: txn.type || txn.transactionType || 'UNKNOWN',
             amount: txn.amount || 0,
+            previousBalance: txn.previousBalance || null,
             date: txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('vi-VN') : 'N/A',
             description: txn.description || '',
             status: txn.status || txn.transactionStatus || 'COMPLETED',
@@ -527,6 +529,7 @@ function LecturerPortal({ user, onLogout }) {
             transactions = transactionData.map(txn => ({
               type: txn.type || txn.transactionType || 'UNKNOWN',
               amount: txn.amount || 0,
+              previousBalance: txn.previousBalance || null,
               date: txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('vi-VN') : 'N/A',
               description: txn.description || '',
               status: txn.status || txn.transactionStatus || 'COMPLETED',
@@ -568,6 +571,26 @@ function LecturerPortal({ user, onLogout }) {
           console.error('Error reloading wallet:', error);
           // Fallback: reload the page
           window.location.reload();
+        }
+
+        // After successful top-up, check if we need to redirect back to rental request flow
+        try {
+          const redirectInfoRaw = sessionStorage.getItem('afterTopupRedirect');
+          if (redirectInfoRaw) {
+            sessionStorage.removeItem('afterTopupRedirect');
+            const redirectInfo = JSON.parse(redirectInfoRaw);
+            if (redirectInfo?.type === 'RENTAL_KIT' && redirectInfo.kitId && user) {
+              console.log('Redirecting back to rental request after top-up:', redirectInfo);
+              navigate('/rental-request', {
+                state: {
+                  kitId: redirectInfo.kitId,
+                  user
+                }
+              });
+            }
+          }
+        } catch (redirectError) {
+          console.error('Error handling afterTopupRedirect:', redirectError);
         }
       } else {
         message.error('Payment execution failed. Please try again.');
@@ -611,6 +634,7 @@ function LecturerPortal({ user, onLogout }) {
             transactions = transactionData.map(txn => ({
               type: txn.type || txn.transactionType || 'UNKNOWN',
               amount: txn.amount || 0,
+              previousBalance: txn.previousBalance || null,
               date: txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('vi-VN') : 'N/A',
               description: txn.description || '',
               status: txn.status || txn.transactionStatus || 'COMPLETED',
@@ -653,12 +677,32 @@ function LecturerPortal({ user, onLogout }) {
           // Fallback: reload the page
           window.location.reload();
         }
+
+        // After successful top-up (already done), check redirect flag
+        try {
+          const redirectInfoRaw = sessionStorage.getItem('afterTopupRedirect');
+          if (redirectInfoRaw) {
+            sessionStorage.removeItem('afterTopupRedirect');
+            const redirectInfo = JSON.parse(redirectInfoRaw);
+            if (redirectInfo?.type === 'RENTAL_KIT' && redirectInfo.kitId && user) {
+              console.log('Redirecting back to rental request after PAYMENT_ALREADY_DONE:', redirectInfo);
+              navigate('/rental-request', {
+                state: {
+                  kitId: redirectInfo.kitId,
+                  user
+                }
+              });
+            }
+          }
+        } catch (redirectError) {
+          console.error('Error handling afterTopupRedirect (PAYMENT_ALREADY_DONE):', redirectError);
+        }
       } else {
         message.error(error.message || 'Payment execution failed. Please try again.');
         sessionStorage.removeItem('pendingPayPalPayment');
       }
     }
-  }, [loadData]);
+  }, [loadData, navigate, user]);
 
   const handlePayPalCancel = () => {
     message.warning('Payment was cancelled');
@@ -1143,18 +1187,26 @@ function LecturerPortal({ user, onLogout }) {
   };
 
   const handleRent = (kit) => {
-    // Check if lecturer has an approved or pending borrow request for a kit (kitType = Kit)
+    // Check if lecturer has an active borrow request for a kit (kitType = Kit)
+    // Active statuses: APPROVED, PENDING, WAITING_APPROVAL, BORROWED
     const activeKitRequest = borrowStatus.find(request => {
       const requestType = (request.requestType || '').toUpperCase();
       const status = (request.status || '').toUpperCase();
-      return requestType === 'BORROW_KIT' && (status === 'APPROVED' || status === 'PENDING');
+      const isKitRequest = requestType === 'BORROW_KIT';
+      const isActiveStatus = status === 'APPROVED' ||
+                             status === 'PENDING' ||
+                             status === 'WAITING_APPROVAL' ||
+                             status === 'BORROWED';
+      return isKitRequest && isActiveStatus;
     });
 
     if (activeKitRequest) {
       const statusText = activeKitRequest.status === 'APPROVED'
         ? 'approved'
+        : activeKitRequest.status === 'BORROWED'
+        ? 'borrowed'
         : 'pending';
-      message.warning(`You already have a ${statusText} kit rental request. Please wait for the current request to be processed or rejected before renting a new one.`);
+      message.warning(`You already have an active kit rental request (status: ${statusText}). Please wait for the current request to be completed or rejected before renting a new one.`);
       return;
     }
 
@@ -1175,11 +1227,17 @@ function LecturerPortal({ user, onLogout }) {
       const mostRecentRequest = kitRequests[0];
       const mostRecentStatus = (mostRecentRequest.status || '').toUpperCase();
 
-      // Only allow if the most recent request is REJECTED
-      if (mostRecentStatus !== 'REJECTED') {
+      // Allow if the most recent request is in a completed/final state
+      // Final states: REJECTED, RETURNED, COMPLETED, CANCELLED
+      // Block if still in active state
+      const finalStates = ['REJECTED', 'RETURNED', 'COMPLETED', 'CANCELLED'];
+      const activeStates = ['APPROVED', 'PENDING', 'WAITING_APPROVAL', 'BORROWED'];
+
+      if (!finalStates.includes(mostRecentStatus) && activeStates.includes(mostRecentStatus)) {
         message.warning(`You cannot rent a new kit. Your most recent request status is: ${mostRecentRequest.status}. Please wait for the current request to be processed or rejected.`);
         return;
       }
+      // If status is in final states or unknown, allow proceeding
     }
 
     // Validation passed, proceed to rental request page
@@ -1192,16 +1250,104 @@ function LecturerPortal({ user, onLogout }) {
     });
   };
 
-  const handleViewGroupDetails = (group) => {
+  const handleViewGroupDetails = async (group) => {
     console.log('Viewing group details:', group);
     setSelectedGroup(group);
+    setGroupBorrowStatus({ loading: true });
+
     // Load members from borrowing groups
     if (group.id) {
-      borrowingGroupAPI.getByStudentGroupId(group.id).then(members => {
+      try {
+        const members = await borrowingGroupAPI.getByStudentGroupId(group.id);
         console.log('Group members:', members);
-        setSelectedGroupMembers(members);
+        setSelectedGroupMembers(members || []);
+
+        // Detect leader from members (roles field on borrowing group)
+        const leaderMember = (members || []).find(
+          (m) => (m.roles || m.role || '').toUpperCase() === 'LEADER'
+        );
+
+        if (!leaderMember || !leaderMember.accountId) {
+          setGroupBorrowStatus({
+            loading: false,
+            hasLeader: false,
+            hasBorrowedKit: false,
+          });
+        } else {
+          try {
+            // Load borrowing requests for leader account
+            const requests = await borrowingRequestAPI.getByUser(
+              leaderMember.accountId
+            );
+            const normalizedRequests = Array.isArray(requests)
+              ? requests
+              : requests?.data || [];
+
+            // Filter active kit requests
+            const activeKitRequests = normalizedRequests.filter((req) => {
+              const type = (req.requestType || req.type || '').toUpperCase();
+              const status = (req.status || '').toUpperCase();
+              const isKitRequest = type === 'BORROW_KIT';
+              const isActiveStatus =
+                status === 'APPROVED' ||
+                status === 'BORROWED' ||
+                status === 'WAITING_APPROVAL' ||
+                status === 'PENDING';
+              return isKitRequest && isActiveStatus;
+            });
+
+            if (activeKitRequests.length === 0) {
+              setGroupBorrowStatus({
+                loading: false,
+                hasLeader: true,
+                hasBorrowedKit: false,
+              });
+            } else {
+              // Lấy request mới nhất theo createdAt hoặc borrowDate
+              const latest = [...activeKitRequests].sort((a, b) => {
+                const dateA = a.createdAt || a.borrowDate || a.approvedDate || 0;
+                const dateB = b.createdAt || b.borrowDate || b.approvedDate || 0;
+                return new Date(dateB) - new Date(dateA);
+              })[0];
+
+              setGroupBorrowStatus({
+                loading: false,
+                hasLeader: true,
+                hasBorrowedKit: true,
+                kitName: latest.kitName || latest.kit?.kitName || 'Unknown Kit',
+                status: (latest.status || '').toUpperCase(),
+              });
+            }
+          } catch (err) {
+            console.error(
+              'Error loading borrowing requests for leader:',
+              err
+            );
+            setGroupBorrowStatus({
+              loading: false,
+              hasLeader: true,
+              hasBorrowedKit: false,
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Error loading group members:', err);
+        setSelectedGroupMembers([]);
+        setGroupBorrowStatus({
+          loading: false,
+          hasLeader: false,
+          hasBorrowedKit: false,
+        });
+      }
+    } else {
+      setSelectedGroupMembers([]);
+      setGroupBorrowStatus({
+        loading: false,
+        hasLeader: false,
+        hasBorrowedKit: false,
       });
     }
+
     setGroupDetailModal(true);
   };
 
@@ -2212,12 +2358,14 @@ function LecturerPortal({ user, onLogout }) {
           setGroupDetailModal(false);
           setSelectedGroup(null);
           setSelectedGroupMembers([]);
+          setGroupBorrowStatus(null);
         }}
         footer={[
           <Button key="close" onClick={() => {
             setGroupDetailModal(false);
             setSelectedGroup(null);
             setSelectedGroupMembers([]);
+            setGroupBorrowStatus(null);
           }}>
             Close
           </Button>
@@ -2266,6 +2414,37 @@ function LecturerPortal({ user, onLogout }) {
                     </Descriptions.Item>
                     <Descriptions.Item label="Group Status">
                       <Tag color="success">Active</Tag>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Kit Borrow Status" span={2}>
+                      {(() => {
+                        if (!groupBorrowStatus || groupBorrowStatus.loading) {
+                          return <Tag color="default">Checking...</Tag>;
+                        }
+
+                        if (!groupBorrowStatus.hasLeader) {
+                          return <Tag color="default">No leader assigned</Tag>;
+                        }
+
+                        if (groupBorrowStatus.hasBorrowedKit) {
+                          return (
+                            <Space direction="vertical" size={4}>
+                              <Tag color="green">
+                                Kit borrowed by leader
+                              </Tag>
+                              <Text type="secondary">
+                                Kit: <Text strong>{groupBorrowStatus.kitName}</Text> | Status:{' '}
+                                <Text>{groupBorrowStatus.status}</Text>
+                              </Text>
+                            </Space>
+                          );
+                        }
+
+                        return (
+                          <Tag color="red">
+                            No active kit borrowing
+                          </Tag>
+                        );
+                      })()}
                     </Descriptions.Item>
                   </Descriptions>
                 </Card>
@@ -2452,20 +2631,63 @@ const DashboardContent = ({ lecturerGroups, wallet, kits, penalties, penaltyDeta
       <Col xs={24} lg={12}>
         <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
           <Card title="Recent Transactions" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            <List
-              size="small"
-              dataSource={wallet.transactions.slice(0, 5)}
-              renderItem={(item) => (
-                <List.Item>
-                  <List.Item.Meta
-                    avatar={<DollarOutlined style={{ color: '#52c41a' }} />}
-                    title={item.type}
-                    description={item.date}
-                  />
-                  <div>{item.amount.toLocaleString()} VND</div>
-                </List.Item>
-              )}
-            />
+            {wallet?.transactions && wallet.transactions.length > 0 ? (
+              <List
+                size="small"
+                dataSource={wallet.transactions.slice(0, 5)}
+                renderItem={(item) => {
+                  // Determine color based on transaction type
+                  const typeUpper = (item.type || '').toUpperCase();
+                  const isPositiveTransaction =
+                    typeUpper === 'TOP_UP' ||
+                    typeUpper === 'TOPUP' ||
+                    typeUpper === 'REFUND';
+                  const isNegativeTransaction =
+                    typeUpper === 'RENTAL_FEE' ||
+                    typeUpper === 'PENALTY_PAYMENT' ||
+                    typeUpper === 'PENALTY' ||
+                    typeUpper === 'FINE';
+
+                  // Use type-based color if available, otherwise fallback to amount-based
+                  let amountColor = '#595959'; // default gray
+                  if (isPositiveTransaction) {
+                    amountColor = '#52c41a'; // green for top-up and refund
+                  } else if (isNegativeTransaction) {
+                    amountColor = '#ff4d4f'; // red for rental fee and penalty
+                  } else {
+                    // Fallback: use amount sign
+                    amountColor = item.amount > 0 ? '#52c41a' : '#ff4d4f';
+                  }
+
+                  return (
+                    <List.Item>
+                      <List.Item.Meta
+                        avatar={<DollarOutlined style={{ color: amountColor }} />}
+                        title={
+                          <Tag color={
+                            item.type === 'TOP_UP' ? 'success' :
+                            item.type === 'RENTAL_FEE' ? 'processing' :
+                            item.type === 'PENALTY_PAYMENT' ? 'error' :
+                            item.type === 'REFUND' ? 'purple' : 'default'
+                          }>
+                            {item.type?.replace(/_/g, ' ') || 'Transaction'}
+                          </Tag>
+                        }
+                        description={item.date || item.description}
+                      />
+                      <div style={{
+                        color: amountColor,
+                        fontWeight: 'bold'
+                      }}>
+                        {isPositiveTransaction ? '+' : ''}{item.amount?.toLocaleString() || 0} VND
+                      </div>
+                    </List.Item>
+                  );
+                }}
+              />
+            ) : (
+              <Empty description="No transactions yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            )}
           </Card>
         </motion.div>
       </Col>
@@ -2563,6 +2785,7 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [selectedStudentIds, setSelectedStudentIds] = useState([]);
   const [submitting, setSubmitting] = useState(false);
+  const [searchStudentText, setSearchStudentText] = useState('');
 
   // Get unique class codes from groups
   const classCodes = [...new Set(lecturerGroups
@@ -2652,12 +2875,18 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
         studentAccountIds.includes(student.id)
       );
 
-      // Get current group member IDs
-      const currentMemberIds = (group.members || []).map(m => m.id || m.accountId).filter(id => id);
+      // Get member IDs of ALL groups with the same classId (not just current group)
+      const memberIdsInSameClassGroups = lecturerGroups
+        .filter(g => g.classId === group.classId)
+        .flatMap(g => g.members || [])
+        .map(m => m.id || m.accountId)
+        .filter(id => id);
 
-      // Filter out students already in the group
+      const uniqueMemberIdsInSameClassGroups = Array.from(new Set(memberIdsInSameClassGroups));
+
+      // Filter out students who are already in ANY group of the same class
       const availableStudentsList = studentsInClass.filter(student =>
-        !currentMemberIds.includes(student.id)
+        !uniqueMemberIdsInSameClassGroups.includes(student.id)
       );
 
       setAvailableStudents(availableStudentsList);
@@ -2718,6 +2947,7 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
     setSelectedGroup(null);
     setSelectedStudentIds([]);
     setAvailableStudents([]);
+    setSearchStudentText('');
   };
 
   return (
@@ -2923,9 +3153,34 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
               <Text strong>Available Students in {selectedGroup.className || 'Class'}</Text>
             </Divider>
 
-            <Spin spinning={loadingStudents}>
-              {availableStudents.length > 0 ? (
-                <Table
+            {/* Search Input */}
+            <div style={{ marginBottom: 16 }}>
+              <Input
+                placeholder="Search by Student Code or Email"
+                prefix={<SearchOutlined />}
+                value={searchStudentText}
+                onChange={(e) => setSearchStudentText(e.target.value)}
+                allowClear
+                style={{ width: '100%' }}
+              />
+            </div>
+
+            {/* Filter students based on search text */}
+            {(() => {
+              const filteredStudents = availableStudents.filter(student => {
+                if (!searchStudentText || searchStudentText.trim() === '') {
+                  return true;
+                }
+                const searchLower = searchStudentText.toLowerCase();
+                const studentCode = (student.studentCode || '').toLowerCase();
+                const email = (student.email || '').toLowerCase();
+                return studentCode.includes(searchLower) || email.includes(searchLower);
+              });
+
+              return (
+                <Spin spinning={loadingStudents}>
+                  {filteredStudents.length > 0 ? (
+                    <Table
                   rowSelection={{
                     type: 'checkbox',
                     selectedRowKeys: selectedStudentIds,
@@ -2970,7 +3225,7 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
                       )
                     }
                   ]}
-                  dataSource={availableStudents}
+                  dataSource={filteredStudents}
                   rowKey="id"
                   pagination={{
                     pageSize: 10,
@@ -2979,13 +3234,19 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
                   }}
                   locale={{ emptyText: 'No students available in this class' }}
                 />
-              ) : !loadingStudents ? (
-                <Empty
-                  description="No students available to add. All students in this class are already in the group or the class has no students."
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                />
-              ) : null}
-            </Spin>
+                  ) : !loadingStudents ? (
+                    <Empty
+                      description={
+                        availableStudents.length === 0
+                          ? "No students available to add. All students in this class are already in the group or the class has no students."
+                          : "No students found matching your search criteria."
+                      }
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    />
+                  ) : null}
+                </Spin>
+              );
+            })()}
           </div>
         )}
       </Modal>
@@ -3673,11 +3934,13 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
               <Spin spinning={loading}>
                 <Table
                   dataSource={transactions}
+                  scroll={{ x: 'max-content' }}
                   columns={[
                     {
                       title: 'Type',
                       dataIndex: 'type',
                       key: 'type',
+                      width: 150,
                       render: (type) => {
                         // Mapping type sang thông tin theme
                         let config = {
@@ -3709,27 +3972,70 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
                       }
                     },
                     {
+                      title: 'Previous Balance',
+                      dataIndex: 'previousBalance',
+                      key: 'previousBalance',
+                      width: 150,
+                      render: (previousBalance) => {
+                        if (previousBalance === null || previousBalance === undefined) {
+                          return <Text type="secondary">N/A</Text>;
+                        }
+                        return (
+                          <Text type="secondary">
+                            {previousBalance.toLocaleString()} VND
+                          </Text>
+                        );
+                      },
+                    },
+                    {
                       title: 'Amount',
                       dataIndex: 'amount',
                       key: 'amount',
-                      render: (amount) => (
-                        <Text strong style={{
-                          color: amount > 0 ? '#52c41a' : '#ff4d4f'
-                        }}>
-                          {amount ? amount.toLocaleString() : 0} VND
-                        </Text>
-                      ),
+                      width: 150,
+                      render: (amount, record) => {
+                        // Determine color based on transaction type
+                        const typeUpper = (record.type || '').toUpperCase();
+                        const isPositiveTransaction =
+                          typeUpper === 'TOP_UP' ||
+                          typeUpper === 'TOPUP' ||
+                          typeUpper === 'REFUND';
+                        const isNegativeTransaction =
+                          typeUpper === 'RENTAL_FEE' ||
+                          typeUpper === 'PENALTY_PAYMENT' ||
+                          typeUpper === 'PENALTY' ||
+                          typeUpper === 'FINE';
+
+                        // Use type-based color if available, otherwise fallback to amount-based
+                        let color = '#595959'; // default gray
+                        if (isPositiveTransaction) {
+                          color = '#52c41a'; // green for top-up and refund
+                        } else if (isNegativeTransaction) {
+                          color = '#ff4d4f'; // red for rental fee and penalty
+                        } else {
+                          // Fallback: use amount sign
+                          color = amount > 0 ? '#52c41a' : '#ff4d4f';
+                        }
+
+                        return (
+                          <Text strong style={{ color }}>
+                            {amount ? amount.toLocaleString() : 0} VND
+                          </Text>
+                        );
+                      },
                     },
                     {
                       title: 'Description',
                       dataIndex: 'description',
                       key: 'description',
+                      width: 200,
+                      ellipsis: true,
                       render: (description) => description || 'N/A',
                     },
                     {
                       title: 'Date',
                       dataIndex: 'createdAt',
                       key: 'date',
+                      width: 180,
                       render: (date) => {
                         if (!date) return 'N/A';
                         return new Date(date).toLocaleString('vi-VN');
@@ -3739,6 +4045,7 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
                       title: 'Status',
                       dataIndex: 'status',
                       key: 'status',
+                      width: 120,
                       render: (status) => {
                         const statusColor = status === 'COMPLETED' || status === 'SUCCESS' ? 'success' :
                                           status === 'PENDING' ? 'processing' :
@@ -3753,6 +4060,8 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
                     {
                       title: 'Details',
                       key: 'details',
+                      width: 120,
+                      fixed: 'right',
                       render: (_, record) => (
                         <motion.div
                           whileHover={{ scale: 1.05 }}
@@ -3847,7 +4156,12 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
                 );
               })()}
             </Descriptions.Item>
-            <Descriptions.Item label="Amount" span={2}>
+            <Descriptions.Item label="Previous Balance">
+              {selectedTransaction.previousBalance !== null && selectedTransaction.previousBalance !== undefined
+                ? formatCurrency(selectedTransaction.previousBalance)
+                : 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Amount">
               <Text strong style={{ fontSize: '18px', color: (selectedTransaction.amount || 0) >= 0 ? '#52c41a' : '#ff4d4f' }}>
                 {formatCurrency(selectedTransaction.amount || 0)}
               </Text>
@@ -4330,8 +4644,8 @@ const ProfileManagement = ({ profile, setProfile, loading, setLoading, user }) =
                         )}
                       </Descriptions.Item>
 
-                      <Descriptions.Item label="Student Code">
-                        <Text>{profile.studentCode || 'N/A'}</Text>
+                      <Descriptions.Item label="Lecturer Code">
+                        <Text>{profile.lecturerCode || 'N/A'}</Text>
                         <Tag color="orange" style={{ marginLeft: 8 }}>Cannot be changed</Tag>
                       </Descriptions.Item>
 
