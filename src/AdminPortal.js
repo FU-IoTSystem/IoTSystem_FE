@@ -79,7 +79,7 @@ import {
   LeftOutlined,
   RightOutlined
 } from '@ant-design/icons';
-import { kitAPI, kitComponentAPI, borrowingRequestAPI, walletTransactionAPI, userAPI, authAPI, classesAPI, studentGroupAPI, borrowingGroupAPI, penaltyPoliciesAPI, penaltiesAPI, penaltyDetailAPI, damageReportAPI, notificationAPI, excelImportAPI } from './api';
+import { kitAPI, kitComponentAPI, borrowingRequestAPI, walletTransactionAPI, userAPI, authAPI, classesAPI, studentGroupAPI, borrowingGroupAPI, penaltyPoliciesAPI, penaltiesAPI, penaltyDetailAPI, damageReportAPI, notificationAPI, excelImportAPI, classAssignmentAPI } from './api';
 import webSocketService from './utils/websocket';
 
 const { Header, Sider, Content } = Layout;
@@ -104,6 +104,7 @@ function AdminPortal({ onLogout }) {
   const [selectedStudents, setSelectedStudents] = useState([]);
   const [groupMembersModalVisible, setGroupMembersModalVisible] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState(null);
+  const [savingGroupMembers, setSavingGroupMembers] = useState(false);
 
   // Kit Inspection and Fine Management states
   const [kitInspectionModalVisible, setKitInspectionModalVisible] = useState(false);
@@ -190,7 +191,13 @@ function AdminPortal({ onLogout }) {
           status: p.resolved ? 'paid' : 'pending',
           damageAssessment: {},
         }));
-        setFines(mapped);
+        // Sort by createdAt descending (newest first)
+        const sorted = mapped.sort((a, b) => {
+          const dateA = new Date(a.createdAt).getTime();
+          const dateB = new Date(b.createdAt).getTime();
+          return dateB - dateA;
+        });
+        setFines(sorted);
       } catch (e) {
         console.error('Error loading unresolved penalties:', e);
       }
@@ -816,33 +823,83 @@ function AdminPortal({ onLogout }) {
 
   // Group Management Functions
 
-  const adjustGroupMembers = (group) => {
+  const adjustGroupMembers = async (group) => {
     setSelectedGroup(group);
     setSelectedStudents(group.members || []);
+
+    // Load available students when opening the modal
+    try {
+      // Get students by classId if available, otherwise get all students
+      let studentsInClass = [];
+      if (group.classId) {
+        studentsInClass = await userAPI.getStudentsByClassId(group.classId);
+        console.log('Students in class (by classId):', studentsInClass);
+      } else {
+        // Fallback to all students if no classId
+        studentsInClass = await userAPI.getStudents();
+        console.log('All students (no classId):', studentsInClass);
+      }
+
+      setAvailableStudents(studentsInClass || []);
+    } catch (error) {
+      console.error('Error loading students for adjust members:', error);
+      notification.error({
+        message: 'Error',
+        description: 'Failed to load available students for this class',
+        placement: 'topRight',
+      });
+      setAvailableStudents([]);
+    }
+
     setGroupMembersModalVisible(true);
   };
 
   const saveGroupMembers = async () => {
-    console.log('=== saveGroupMembers called ===');
-    console.log('Selected group:', selectedGroup);
-    console.log('Current members (emails):', selectedGroup?.members);
-    console.log('New members (emails):', selectedStudents);
+    if (!selectedGroup) {
+      notification.error({
+        message: 'Error',
+        description: 'No group selected',
+        placement: 'topRight',
+      });
+      return;
+    }
 
-    // Get full student objects including IDs
-    const allStudents = await userAPI.getStudents();
-    const currentMembersEmails = selectedGroup?.members || [];
-    const newMembersEmails = selectedStudents || [];
+    const MAX_GROUP_MEMBERS = 4;
+    const newMembersCount = selectedStudents?.length || 0;
 
-    // Find members to remove (in current but not in new)
-    const membersToRemove = currentMembersEmails.filter(email => !newMembersEmails.includes(email));
+    // Validate maximum members
+    if (newMembersCount > MAX_GROUP_MEMBERS) {
+      notification.warning({
+        message: 'Too Many Members',
+        description: `A group can have maximum ${MAX_GROUP_MEMBERS} members. You selected ${newMembersCount} members.`,
+        placement: 'topRight',
+        duration: 4,
+      });
+      return;
+    }
 
-    // Find members to add (in new but not in current)
-    const membersToAdd = newMembersEmails.filter(email => !currentMembersEmails.includes(email));
-
-    console.log('Members to remove:', membersToRemove);
-    console.log('Members to add:', membersToAdd);
+    setSavingGroupMembers(true);
 
     try {
+      console.log('=== saveGroupMembers called ===');
+      console.log('Selected group:', selectedGroup);
+      console.log('Current members (emails):', selectedGroup?.members);
+      console.log('New members (emails):', selectedStudents);
+
+      // Get full student objects including IDs
+      const allStudents = await userAPI.getStudents();
+      const currentMembersEmails = selectedGroup?.members || [];
+      const newMembersEmails = selectedStudents || [];
+
+      // Find members to remove (in current but not in new)
+      const membersToRemove = currentMembersEmails.filter(email => !newMembersEmails.includes(email));
+
+      // Find members to add (in new but not in current)
+      const membersToAdd = newMembersEmails.filter(email => !currentMembersEmails.includes(email));
+
+      console.log('Members to remove:', membersToRemove);
+      console.log('Members to add:', membersToAdd);
+
       // Remove members
       for (const email of membersToRemove) {
         const student = allStudents.find(s => s.email === email);
@@ -857,7 +914,7 @@ function AdminPortal({ onLogout }) {
         const email = membersToAdd[i];
         const student = allStudents.find(s => s.email === email);
         if (student) {
-          // First new member becomes MEMBER (not LEADER to avoid conflict)
+          // New members become MEMBER (not LEADER to avoid conflict)
           const role = 'MEMBER';
 
           const borrowingGroupData = {
@@ -871,29 +928,38 @@ function AdminPortal({ onLogout }) {
         }
       }
 
-      // Update local state
-      setGroups(prev => prev.map(group =>
-        group.id === selectedGroup.id
-          ? { ...group, members: selectedStudents }
-          : group
-      ));
-
+      // Close modal first
       setGroupMembersModalVisible(false);
+
+      // Store group name for notification before clearing
+      const groupName = selectedGroup?.groupName || 'group';
+
       setSelectedGroup(null);
       setSelectedStudents([]);
 
       notification.success({
-        message: 'Group Updated',
-        description: `Successfully updated ${selectedGroup?.groupName || 'group'}. Removed ${membersToRemove.length}, added ${membersToAdd.length}.`,
+        message: 'Group Updated Successfully',
+        description: `Successfully updated ${groupName}. ${membersToRemove.length > 0 ? `Removed ${membersToRemove.length} member(s). ` : ''}${membersToAdd.length > 0 ? `Added ${membersToAdd.length} member(s).` : 'No changes made.'}`,
         placement: 'topRight',
+        duration: 4,
       });
+
+      // Trigger groups reload if callback is provided (will be handled by GroupManagement component)
+      if (selectedKey === 'groups') {
+        // Groups will be reloaded when GroupManagement component detects the change
+        // or we can trigger a window event to notify
+        window.dispatchEvent(new CustomEvent('groupsUpdated'));
+      }
     } catch (error) {
       console.error('Error updating group members:', error);
       notification.error({
         message: 'Error',
         description: error.response?.data?.message || error.message || 'Failed to update group members',
         placement: 'topRight',
+        duration: 4,
       });
+    } finally {
+      setSavingGroupMembers(false);
     }
   };
 
@@ -1104,12 +1170,25 @@ function AdminPortal({ onLogout }) {
             penaltyId: penaltyId
           }));
 
+          // Build penalty details from damaged components
+          const damagedComponentsDetails = Object.entries(damageAssessment || {})
+            .filter(([_, assessment]) => assessment && assessment.damaged)
+            .map(([componentName, assessment]) => ({
+              amount: assessment.value || 0,
+              description: `Damage to ${componentName}`,
+              policiesId: null, // No policy for component damage
+              penaltyId: penaltyId
+            }));
+
+          // Combine policy penalty details and component damage penalty details
+          const allPenaltyDetails = [...penaltyDetailsData, ...damagedComponentsDetails];
+
           // Rental fee is handled in penalty payment logic, not as a separate penalty detail
           // No need to add rental fee as penalty detail
 
-          if (penaltyDetailsData.length > 0) {
-            console.log('Creating penalty details:', penaltyDetailsData);
-            const penaltyDetailsResponse = await penaltyDetailAPI.createMultiple(penaltyDetailsData);
+          if (allPenaltyDetails.length > 0) {
+            console.log('Creating penalty details:', allPenaltyDetails);
+            const penaltyDetailsResponse = await penaltyDetailAPI.createMultiple(allPenaltyDetails);
             console.log('Penalty details created:', penaltyDetailsResponse);
           }
         }
@@ -1180,7 +1259,15 @@ function AdminPortal({ onLogout }) {
           dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days from now
         };
 
-        setFines(prev => [...prev, newFine]);
+        setFines(prev => {
+          const updated = [...prev, newFine];
+          // Sort by createdAt descending (newest first)
+          return updated.sort((a, b) => {
+            const dateA = new Date(a.createdAt).getTime();
+            const dateB = new Date(b.createdAt).getTime();
+            return dateB - dateA;
+          });
+        });
 
         notification.success({
           message: 'Kit Inspection Completed',
@@ -1205,7 +1292,15 @@ function AdminPortal({ onLogout }) {
           dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
         };
 
-        setFines(prev => [...prev, newFine]);
+        setFines(prev => {
+          const updated = [...prev, newFine];
+          // Sort by createdAt descending (newest first)
+          return updated.sort((a, b) => {
+            const dateA = new Date(a.createdAt).getTime();
+            const dateB = new Date(b.createdAt).getTime();
+            return dateB - dateA;
+          });
+        });
       }
 
       try {
@@ -1771,7 +1866,7 @@ function AdminPortal({ onLogout }) {
                 {selectedKey === 'fines' && <FineManagement fines={fines} setFines={setFines} setLogHistory={setLogHistory} />}
                 {selectedKey === 'transactions' && <TransactionHistory transactions={transactions} setTransactions={setTransactions} />}
                 {selectedKey === 'log-history' && <LogHistory logHistory={logHistory} setLogHistory={setLogHistory} />}
-                {selectedKey === 'groups' && <GroupManagement groups={groups} setGroups={setGroups} adjustGroupMembers={adjustGroupMembers} availableStudents={availableStudents} />}
+                {selectedKey === 'groups' && <GroupManagement groups={groups} setGroups={setGroups} adjustGroupMembers={adjustGroupMembers} availableStudents={availableStudents} onGroupsUpdated={() => { }} />}
                 {selectedKey === 'users' && <UserManagement users={users} setUsers={setUsers} />}
                 {selectedKey === 'penalty-policies' && <PenaltyPoliciesManagement penaltyPolicies={penaltyPolicies} setPenaltyPolicies={setPenaltyPolicies} />}
               </motion.div>
@@ -1782,14 +1877,21 @@ function AdminPortal({ onLogout }) {
 
       {/* Group Members Modal */}
       <Modal
-        title={`Adjust Members - ${selectedGroup?.name}`}
+        title={`Adjust Members - ${selectedGroup?.groupName || selectedGroup?.name || ''}`}
         open={groupMembersModalVisible}
         onCancel={() => {
-          setGroupMembersModalVisible(false);
-          setSelectedGroup(null);
-          setSelectedStudents([]);
+          if (!savingGroupMembers) {
+            setGroupMembersModalVisible(false);
+            setSelectedGroup(null);
+            setSelectedStudents([]);
+          }
         }}
         onOk={saveGroupMembers}
+        okText="Save Changes"
+        cancelText="Cancel"
+        confirmLoading={savingGroupMembers}
+        okButtonProps={{ disabled: savingGroupMembers }}
+        cancelButtonProps={{ disabled: savingGroupMembers }}
         width={800}
         centered
         destroyOnClose
@@ -1802,9 +1904,9 @@ function AdminPortal({ onLogout }) {
         </div>
 
         <Transfer
-          dataSource={availableStudents.map(student => ({
+          dataSource={(availableStudents || []).map(student => ({
             key: student.email,
-            title: student.name,
+            title: student.fullName || student.name || student.email,
             description: student.email,
             ...student
           }))}
@@ -1815,6 +1917,9 @@ function AdminPortal({ onLogout }) {
             <div style={{ padding: '8px 0' }}>
               <div style={{ fontWeight: 'bold' }}>{item.title}</div>
               <div style={{ color: '#666', fontSize: '12px' }}>{item.description}</div>
+              {item.studentCode && (
+                <div style={{ color: '#999', fontSize: '11px' }}>Code: {item.studentCode}</div>
+              )}
             </div>
           )}
           listStyle={{
@@ -1822,9 +1927,15 @@ function AdminPortal({ onLogout }) {
             height: 400,
           }}
           showSearch
-          filterOption={(inputValue, item) =>
-            item.title.indexOf(inputValue) !== -1 || item.description.indexOf(inputValue) !== -1
-          }
+          filterOption={(inputValue, item) => {
+            const title = (item.title || '').toLowerCase();
+            const description = (item.description || '').toLowerCase();
+            const studentCode = (item.studentCode || '').toLowerCase();
+            const searchLower = inputValue.toLowerCase();
+            return title.indexOf(searchLower) !== -1 ||
+              description.indexOf(searchLower) !== -1 ||
+              studentCode.indexOf(searchLower) !== -1;
+          }}
         />
 
         <div style={{ marginTop: 16, padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
@@ -1832,10 +1943,10 @@ function AdminPortal({ onLogout }) {
           <div style={{ marginTop: 8 }}>
             {selectedStudents.length > 0 ? (
               selectedStudents.map(email => {
-                const student = availableStudents.find(s => s.email === email);
+                const student = (availableStudents || []).find(s => s.email === email);
                 return (
                   <Tag key={email} style={{ margin: '4px' }}>
-                    {student ? student.name : email}
+                    {student ? (student.fullName || student.name || email) : email}
                   </Tag>
                 );
               })
@@ -2442,38 +2553,71 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
     let message = 'Import completed';
     let successCount = 0;
     let errorCount = 0;
+    let isSuccess = true;
+    let errors = [];
 
     if (typeof response === 'string') {
       message = response;
+      isSuccess = false;
     } else if (response) {
       message = response.message || 'Import completed';
       successCount = response.successCount || 0;
       errorCount = response.errorCount || 0;
+      isSuccess = response.success !== false; // Check success field explicitly
 
       if (response.errors && response.errors.length > 0) {
-        console.warn('Import errors:', response.errors);
+        errors = response.errors;
+        console.warn('Import errors:', errors);
       }
     }
 
-    if (successCount > 0 || errorCount === 0) {
+    // If all rows failed (successCount === 0 and errorCount > 0), treat as failure
+    if (successCount === 0 && errorCount > 0) {
+      isSuccess = false;
+    }
+
+    // Build error message with details
+    let errorDetails = '';
+    if (errors.length > 0) {
+      const errorList = errors.slice(0, 5).join('; '); // Show first 5 errors
+      errorDetails = errors.length > 5
+        ? `${errorList}; ... and ${errors.length - 5} more error(s)`
+        : errorList;
+    }
+
+    if (isSuccess && successCount > 0) {
+      // Success: at least some rows imported
       notification.success({
         message: 'Import Successful',
         description: `Successfully imported ${successCount} component(s). ${errorCount > 0 ? `${errorCount} error(s) occurred.` : ''}`,
         placement: 'topRight',
         duration: 5,
       });
-    } else {
+      // Refresh components list only if import was successful
+      if (editingKit && editingKit.id) {
+        loadComponents();
+      }
+    } else if (successCount > 0 && errorCount > 0) {
+      // Partial success: some rows imported, some failed
       notification.warning({
         message: 'Import Completed with Errors',
-        description: message,
+        description: `${message}${errorDetails ? ` Errors: ${errorDetails}` : ''}`,
         placement: 'topRight',
-        duration: 5,
+        duration: 8,
       });
-    }
-
-    // Refresh components list
-    if (editingKit && editingKit.id) {
-      loadComponents();
+      // Refresh components list to show imported data
+      if (editingKit && editingKit.id) {
+        loadComponents();
+      }
+    } else {
+      // Complete failure: no rows imported
+      notification.error({
+        message: 'Import Failed',
+        description: `${message}${errorDetails ? ` Errors: ${errorDetails}` : ''}`,
+        placement: 'topRight',
+        duration: 8,
+      });
+      // Do not refresh data if import completely failed
     }
   };
 
@@ -2484,32 +2628,61 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
       let message = 'Import completed';
       let successCount = 0;
       let errorCount = 0;
+      let isSuccess = true;
+      let errors = [];
 
       if (typeof response === 'string') {
         message = response;
+        isSuccess = false;
       } else if (response) {
         message = response.message || 'Import completed';
         successCount = response.successCount || 0;
         errorCount = response.errorCount || 0;
+        isSuccess = response.success !== false; // Check success field explicitly
 
         if (response.errors && response.errors.length > 0) {
-          console.warn('Import errors:', response.errors);
+          errors = response.errors;
+          console.warn('Import errors:', errors);
         }
       }
 
-      if (successCount > 0 || errorCount === 0) {
+      // If all rows failed (successCount === 0 and errorCount > 0), treat as failure
+      if (successCount === 0 && errorCount > 0) {
+        isSuccess = false;
+      }
+
+      // Build error message with details
+      let errorDetails = '';
+      if (errors.length > 0) {
+        const errorList = errors.slice(0, 5).join('; '); // Show first 5 errors
+        errorDetails = errors.length > 5
+          ? `${errorList}; ... and ${errors.length - 5} more error(s)`
+          : errorList;
+      }
+
+      if (isSuccess && successCount > 0) {
+        // Success: at least some rows imported
         notification.success({
           message: 'Import Successful',
           description: `Successfully imported ${successCount} ${role.toLowerCase()}(s). ${errorCount > 0 ? `${errorCount} error(s) occurred.` : ''}`,
           placement: 'topRight',
           duration: 5,
         });
-      } else {
+      } else if (successCount > 0 && errorCount > 0) {
+        // Partial success: some rows imported, some failed
         notification.warning({
           message: 'Import Completed with Errors',
-          description: message,
+          description: `${message}${errorDetails ? ` Errors: ${errorDetails}` : ''}`,
           placement: 'topRight',
-          duration: 5,
+          duration: 8,
+        });
+      } else {
+        // Complete failure: no rows imported
+        notification.error({
+          message: 'Import Failed',
+          description: `${message}${errorDetails ? ` Errors: ${errorDetails}` : ''}`,
+          placement: 'topRight',
+          duration: 8,
         });
       }
     } catch (error) {
@@ -2949,7 +3122,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
       console.error('Import error:', error);
       notification.error({
         message: 'Import Failed',
-        description: error.message || 'Failed to import components. Please check file format. Expected Excel format with columns: index, name, link, quantity.',
+        description: error.message || 'Failed to import components. Please check file format. Expected Excel format with columns: index, name, link, quantity, priceperComp, image_url.',
         placement: 'topRight',
         duration: 5,
       });
@@ -3004,17 +3177,36 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
         let message = 'Import completed';
         let successCount = 0;
         let errorCount = 0;
+        let isSuccess = true;
+        let errors = [];
 
         if (typeof response === 'string') {
           message = response;
+          isSuccess = false;
         } else if (response) {
           message = response.message || 'Import completed';
           successCount = response.successCount || 0;
           errorCount = response.errorCount || 0;
+          isSuccess = response.success !== false; // Check success field explicitly
 
           if (response.errors && response.errors.length > 0) {
-            console.warn('Import errors:', response.errors);
+            errors = response.errors;
+            console.warn('Import errors:', errors);
           }
+        }
+
+        // If all rows failed (successCount === 0 and errorCount > 0), treat as failure
+        if (successCount === 0 && errorCount > 0) {
+          isSuccess = false;
+        }
+
+        // Build error message with details
+        let errorDetails = '';
+        if (errors.length > 0) {
+          const errorList = errors.slice(0, 5).join('; '); // Show first 5 errors
+          errorDetails = errors.length > 5
+            ? `${errorList}; ... and ${errors.length - 5} more error(s)`
+            : errorList;
         }
 
         // Refresh kits list
@@ -3023,7 +3215,8 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           setKits(updatedKitsResponse);
         }
 
-        if (successCount > 0 || errorCount === 0) {
+        if (isSuccess && successCount > 0) {
+          // Success: at least some rows imported
           notification.success({
             message: 'Kit Created & Components Imported',
             description: `Kit created successfully. ${successCount} component(s) imported from sheet "${sheetName}". ${errorCount > 0 ? `${errorCount} error(s) occurred.` : ''}`,
@@ -3034,12 +3227,21 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           // Close modal and reset form
           setModalVisible(false);
           form.resetFields();
-        } else {
+        } else if (successCount > 0 && errorCount > 0) {
+          // Partial success: some rows imported, some failed
           notification.warning({
             message: 'Kit Created, Import Completed with Errors',
-            description: `Kit created successfully. ${message}`,
+            description: `Kit created successfully. ${message}${errorDetails ? ` Errors: ${errorDetails}` : ''}`,
             placement: 'topRight',
-            duration: 5,
+            duration: 8,
+          });
+        } else {
+          // Complete failure: no rows imported
+          notification.error({
+            message: 'Kit Created, Import Failed',
+            description: `Kit created successfully. ${message}${errorDetails ? ` Errors: ${errorDetails}` : ''}`,
+            placement: 'topRight',
+            duration: 8,
           });
         }
       } else {
@@ -3054,7 +3256,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
       console.error('Import error:', error);
       notification.error({
         message: 'Import Failed',
-        description: error.message || 'Failed to create kit or import components. Please check file format. Expected Excel format with columns: index, name, link, quantity.',
+        description: error.message || 'Failed to create kit or import components. Please check file format. Expected Excel format with columns: index, name, link, quantity, priceperComp, image_url.',
         placement: 'topRight',
         duration: 5,
       });
@@ -3734,7 +3936,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
                 </Button>
               </Upload>
               <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginTop: 4 }}>
-                Excel format: index, name, link, quantity. Kit will be created first, then components will be imported.
+                Excel format: index, name, link, quantity, priceperComp, image_url. Kit will be created first, then components will be imported.
               </Text>
             </Form.Item>
           )}
@@ -3771,7 +3973,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
                 </Button>
               </Upload>
               <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginTop: 4 }}>
-                Excel format: index, name, link, quantity
+                Excel format: index, name, link, quantity, priceperComp, image_url
               </Text>
             </Form.Item>
           )}
@@ -5392,13 +5594,18 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
 };
 
 // Group Management Component
-const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStudents }) => {
+const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStudents, onGroupsUpdated }) => {
+  const MAX_GROUP_MEMBERS = 4; // Maximum number of members allowed in a group
+
   const [form] = Form.useForm();
   const [modalVisible, setModalVisible] = useState(false);
   const [lecturers, setLecturers] = useState([]);
+  const [allLecturers, setAllLecturers] = useState([]);
   const [loadingLecturers, setLoadingLecturers] = useState(false);
   const [classes, setClasses] = useState([]);
   const [loadingClasses, setLoadingClasses] = useState(false);
+  const [classAssignments, setClassAssignments] = useState([]);
+  const [groupSearchText, setGroupSearchText] = useState('');
 
   // Add student modal state
   const [addStudentModalVisible, setAddStudentModalVisible] = useState(false);
@@ -5406,16 +5613,43 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
   const [studentsToAdd, setStudentsToAdd] = useState([]);
   const [isFirstMember, setIsFirstMember] = useState(false);
   const [addingLoading, setAddingLoading] = useState(false);
+  const [currentMemberCount, setCurrentMemberCount] = useState(0);
+  const [membersNeeded, setMembersNeeded] = useState(0);
 
   // Load lecturers and classes when component mounts
   useEffect(() => {
     loadLecturers();
     loadClasses();
+    loadClassAssignments();
     loadGroups();
+
+    // Listen for groups updated event to reload
+    const handleGroupsUpdated = () => {
+      loadGroups();
+    };
+
+    window.addEventListener('groupsUpdated', handleGroupsUpdated);
+
+    return () => {
+      window.removeEventListener('groupsUpdated', handleGroupsUpdated);
+    };
   }, []);
 
   const loadGroups = async () => {
     try {
+      // Load accounts to be able to map LecturerCode / StudentCode for searching
+      const [allStudents, allLecturers] = await Promise.all([
+        userAPI.getStudents(),
+        userAPI.getLecturers()
+      ]);
+
+      const studentCodeByEmail = new Map(
+        (allStudents || []).map(s => [s.email, s.studentCode])
+      );
+      const lecturerCodeByEmail = new Map(
+        (allLecturers || []).map(l => [l.email, l.lecturerCode])
+      );
+
       const studentGroups = await studentGroupAPI.getAll();
 
       // Get all borrowing groups for each student group
@@ -5436,14 +5670,24 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
           // Find leader
           const leader = borrowingGroups.find(bg => bg.roles === 'LEADER');
 
+          const lecturerEmail = group.lecturerEmail || (group.accountId ? group.lecturerEmail : null);
+          const lecturerCode = lecturerEmail ? lecturerCodeByEmail.get(lecturerEmail) || null : null;
+
+          const memberEmails = members.map(m => m.email);
+          const memberStudentCodes = memberEmails
+            .map(email => studentCodeByEmail.get(email))
+            .filter(code => !!code);
+
           return {
             id: group.id,
             groupName: group.groupName || group.name, // Support both field names
             classId: group.classId,
-            lecturer: group.lecturerEmail || (group.accountId ? group.lecturerEmail : null), // Use lecturerEmail from response
+            lecturer: lecturerEmail, // Use lecturerEmail from response
             lecturerName: group.lecturerName, // Store lecturer name for display
             leader: leader ? leader.accountEmail : null,
-            members: members.map(m => m.email),
+            members: memberEmails,
+            lecturerCode: lecturerCode,
+            memberStudentCodes: memberStudentCodes,
             status: group.status,
             lecturerId: group.accountId // Store lecturer account ID
           };
@@ -5466,7 +5710,8 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
     setLoadingLecturers(true);
     try {
       const lecturerList = await userAPI.getLecturers();
-      setLecturers(lecturerList);
+      setAllLecturers(lecturerList || []);
+      setLecturers(lecturerList || []); // Initially show all lecturers
     } catch (error) {
       console.error('Failed to load lecturers:', error);
       notification.error({
@@ -5480,16 +5725,32 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
     }
   };
 
+  const loadClassAssignments = async () => {
+    try {
+      const assignmentsResponse = await classAssignmentAPI.getAll();
+      const assignments = Array.isArray(assignmentsResponse)
+        ? assignmentsResponse
+        : (assignmentsResponse?.data || []);
+      setClassAssignments(assignments);
+    } catch (error) {
+      console.error('Error loading class assignments:', error);
+      setClassAssignments([]);
+    }
+  };
+
   const loadClasses = async () => {
     setLoadingClasses(true);
     try {
       const classesList = await classesAPI.getAllClasses();
-      // Map classes to dropdown options
+      // Map classes to dropdown options with teacher info
       const classOptions = classesList.map(cls => ({
         value: cls.id,
         label: `${cls.classCode} - ${cls.semester}`,
         classCode: cls.classCode,
-        semester: cls.semester
+        semester: cls.semester,
+        teacherId: cls.teacherId,
+        teacherEmail: cls.teacherEmail,
+        teacherName: cls.teacherName
       }));
       setClasses(classOptions);
     } catch (error) {
@@ -5503,6 +5764,92 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
     } finally {
       setLoadingClasses(false);
     }
+  };
+
+  // Filter lecturers based on selected classId
+  const filterLecturersByClass = (classId) => {
+    if (!classId) {
+      // If no class selected, show all lecturers
+      setLecturers(allLecturers);
+      return;
+    }
+
+    console.log('Filtering lecturers for classId:', classId);
+    console.log('All classAssignments:', classAssignments);
+    console.log('All lecturers:', allLecturers);
+
+    // Find all class assignments for this classId
+    const assignmentsForClass = classAssignments.filter((assignment) => {
+      const assignmentClassId = assignment.classId || assignment.classesId || assignment.class_id;
+      // Convert to string for comparison in case of UUID mismatch
+      const classIdStr = String(classId);
+      const assignmentClassIdStr = String(assignmentClassId);
+      return assignmentClassIdStr === classIdStr;
+    });
+
+    console.log('Assignments for class:', assignmentsForClass);
+
+    // Get lecturer account IDs and emails from assignments
+    const lecturerAccountIds = new Set();
+    const lecturerEmails = new Set();
+
+    assignmentsForClass.forEach((assignment) => {
+      // Check if assignment is for a lecturer based on roleName
+      const roleName = (assignment.roleName || assignment.role || '').toUpperCase();
+      const isLecturerAssignment = roleName === 'LECTURER' || roleName === 'TEACHER';
+
+      console.log('Assignment:', assignment, 'roleName:', roleName, 'isLecturer:', isLecturerAssignment);
+
+      if (isLecturerAssignment) {
+        if (assignment.accountId) {
+          lecturerAccountIds.add(String(assignment.accountId));
+        }
+        if (assignment.accountEmail) {
+          lecturerEmails.add(assignment.accountEmail.toLowerCase());
+        }
+      }
+    });
+
+    // Also check from classes data - get teacherId/teacherEmail from selected class
+    const selectedClass = classes.find(cls => String(cls.value) === String(classId));
+    if (selectedClass) {
+      if (selectedClass.teacherId) {
+        lecturerAccountIds.add(String(selectedClass.teacherId));
+      }
+      if (selectedClass.teacherEmail) {
+        lecturerEmails.add(selectedClass.teacherEmail.toLowerCase());
+      }
+    }
+
+    console.log('Lecturer account IDs:', Array.from(lecturerAccountIds));
+    console.log('Lecturer emails:', Array.from(lecturerEmails));
+
+    // Filter lecturers that match the account IDs or emails
+    const filteredLecturers = allLecturers.filter((lecturer) => {
+      const lecturerIdStr = lecturer.id ? String(lecturer.id) : null;
+      const lecturerEmailLower = lecturer.email ? lecturer.email.toLowerCase() : null;
+      const lecturerValue = lecturer.value ? String(lecturer.value) : null;
+
+      const matches =
+        (lecturerIdStr && lecturerAccountIds.has(lecturerIdStr)) ||
+        (lecturerValue && lecturerAccountIds.has(lecturerValue)) ||
+        (lecturerEmailLower && lecturerEmails.has(lecturerEmailLower));
+
+      return matches;
+    });
+
+    console.log('Filtered lecturers:', filteredLecturers);
+
+    // If no lecturers found, show all lecturers as fallback
+    if (filteredLecturers.length === 0) {
+      console.log('No lecturers found for class, showing all lecturers');
+      setLecturers(allLecturers);
+    } else {
+      setLecturers(filteredLecturers);
+    }
+
+    // Clear lecturer selection when class changes
+    form.setFieldsValue({ lecturer: undefined });
   };
 
   const columns = [
@@ -5540,13 +5887,23 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
       title: 'Members',
       dataIndex: 'members',
       key: 'members',
-      render: (members) => (
-        <div>
-          {members?.map((member, index) => (
-            <Tag key={index} style={{ marginBottom: 4 }}>{member}</Tag>
-          ))}
-        </div>
-      )
+      render: (members, record) => {
+        const memberCount = members?.length || 0;
+        const isFull = memberCount >= MAX_GROUP_MEMBERS;
+        return (
+          <div>
+            <div style={{ marginBottom: 4 }}>
+              <Text strong style={{ color: isFull ? '#52c41a' : '#1890ff' }}>
+                {memberCount}/{MAX_GROUP_MEMBERS}
+              </Text>
+              {isFull && <Tag color="green" style={{ marginLeft: 8 }}>Full</Tag>}
+            </div>
+            {members?.map((member, index) => (
+              <Tag key={index} style={{ marginBottom: 4 }}>{member}</Tag>
+            ))}
+          </div>
+        );
+      }
     },
     {
       title: 'Actions',
@@ -5562,12 +5919,15 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
               size="small"
               icon={<UserOutlined />}
               onClick={() => handleAddStudentToGroup(record)}
+              disabled={(record.members?.length || 0) >= MAX_GROUP_MEMBERS}
               style={{
-                background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+                background: (record.members?.length || 0) >= MAX_GROUP_MEMBERS
+                  ? '#d9d9d9'
+                  : 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
                 border: 'none'
               }}
             >
-              Add Student
+              {(record.members?.length || 0) >= MAX_GROUP_MEMBERS ? 'Full' : 'Add Student'}
             </Button>
           </motion.div>
           <motion.div
@@ -5616,9 +5976,34 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
     setAddingLoading(true);
 
     try {
-      // Get all students
-      const allStudents = await userAPI.getStudents();
-      console.log('All students:', allStudents);
+      // Get current members of the group
+      const existingMembers = await borrowingGroupAPI.getByStudentGroupId(groupRecord.id);
+      const memberCount = existingMembers.length;
+
+      // Check if group already has enough members
+      if (memberCount >= MAX_GROUP_MEMBERS) {
+        notification.warning({
+          message: 'Group is Full',
+          description: `This group already has ${memberCount} members (maximum: ${MAX_GROUP_MEMBERS}). Cannot add more members.`,
+          placement: 'topRight',
+          duration: 4,
+        });
+        setAddingLoading(false);
+        return;
+      }
+
+      // Calculate how many members are needed to reach MAX_GROUP_MEMBERS
+      const needed = MAX_GROUP_MEMBERS - memberCount;
+
+      // Store member count info for modal display
+      setCurrentMemberCount(memberCount);
+      setMembersNeeded(needed);
+
+      // Get students by classId for this group
+      const allStudents = groupRecord.classId
+        ? await userAPI.getStudentsByClassId(groupRecord.classId)
+        : await userAPI.getStudents();
+      console.log('Students in class:', allStudents);
 
       // Get all existing borrowing groups to check which students are already in groups
       const allBorrowingGroups = await borrowingGroupAPI.getAll();
@@ -5634,9 +6019,10 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
         return !isInAnyGroup;
       });
 
-      console.log('Total students:', allStudents.length);
-      console.log('Students in groups:', allStudents.length - availableStudents.length);
-      console.log('Available students:', availableStudents.length);
+      console.log('Total students in class:', allStudents.length);
+      console.log('Available students in class:', availableStudents.length);
+      console.log('Current members:', memberCount);
+      console.log('Members needed:', needed);
 
       if (availableStudents.length === 0) {
         notification.warning({
@@ -5644,30 +6030,30 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
           description: 'All students are already assigned to groups',
           placement: 'topRight',
         });
+        setAddingLoading(false);
         return;
       }
 
-      // Check if group already has students
-      const existingMembers = await borrowingGroupAPI.getByStudentGroupId(groupRecord.id);
-      const firstMember = existingMembers.length === 0;
-
-      // Select random 2-4 students (or less if not enough available)
-      const minStudents = 2;
-      const maxStudents = 4;
-      const availableCount = availableStudents.length;
-      const numberOfStudentsToAdd = Math.min(maxStudents, Math.max(minStudents, availableCount));
-
-      console.log('Available students:', availableCount);
-      console.log('Number of students to add (calculated):', numberOfStudentsToAdd);
-
-      if (availableCount < minStudents) {
+      // Check if there are enough available students
+      if (availableStudents.length < needed) {
         notification.warning({
-          message: 'Insufficient Students',
-          description: `Only ${availableCount} student(s) available. Need at least ${minStudents}.`,
+          message: 'Insufficient Available Students',
+          description: `This group needs ${needed} more member(s) to reach ${MAX_GROUP_MEMBERS} members, but only ${availableStudents.length} student(s) are available.`,
           placement: 'topRight',
+          duration: 4,
         });
+        setAddingLoading(false);
         return;
       }
+
+      // Check if this is the first member (group has no members yet)
+      const firstMember = memberCount === 0;
+
+      // Select exactly the number of students needed (or all available if less than needed)
+      const numberOfStudentsToAdd = Math.min(needed, availableStudents.length);
+
+      console.log('Available students:', availableStudents.length);
+      console.log('Number of students to add (calculated):', numberOfStudentsToAdd);
 
       const shuffledStudents = [...availableStudents].sort(() => 0.5 - Math.random());
       const selectedStudents = shuffledStudents.slice(0, numberOfStudentsToAdd);
@@ -5796,25 +6182,71 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
 
       const response = await studentGroupAPI.create(groupData);
 
-      if (response) {
-        // Create local group object for UI
-        const newGroup = {
-          id: response.id || Date.now(),
-          name: values.name,
-          lecturer: values.lecturer,
-          classId: values.classId,
-          leader: null, // No leader initially
-          members: [], // Empty members initially
-          status: 'active',
-          createdAt: new Date().toISOString()
-        };
+      if (response && response.id) {
+        const newGroupId = response.id;
 
-        setGroups(prev => [...prev, newGroup]);
+        // Get students by classId
+        let studentsToAdd = [];
+        if (values.classId) {
+          const studentsInClass = await userAPI.getStudentsByClassId(values.classId);
+          console.log('Students in class for new group:', studentsInClass);
+
+          // Get all existing borrowing groups to check which students are already in groups
+          const allBorrowingGroups = await borrowingGroupAPI.getAll();
+
+          // Filter available students (not in any group) and in this class
+          const availableStudents = studentsInClass.filter(student => {
+            const isInAnyGroup = allBorrowingGroups.some(bg => {
+              const bgAccountId = bg.accountId?.toString();
+              const studentId = student.id?.toString();
+              return bgAccountId === studentId;
+            });
+            return !isInAnyGroup;
+          });
+
+          // Limit to maximum 4 members for a new group
+          const maxMembersToAdd = 4;
+          studentsToAdd = availableStudents.slice(0, maxMembersToAdd);
+        }
+
+        // Add students to the group (first one becomes LEADER, others become MEMBER)
+        let addedCount = 0;
+        if (studentsToAdd.length > 0) {
+          for (let i = 0; i < studentsToAdd.length; i++) {
+            const student = studentsToAdd[i];
+            const role = i === 0 ? 'LEADER' : 'MEMBER';
+
+            const borrowingGroupData = {
+              studentGroupId: newGroupId,
+              accountId: student.id,
+              roles: role
+            };
+
+            try {
+              await borrowingGroupAPI.addMemberToGroup(borrowingGroupData);
+              addedCount++;
+              console.log(`Added student ${student.fullName || student.email} as ${role}`);
+            } catch (addError) {
+              console.error(`Error adding student ${student.email}:`, addError);
+            }
+          }
+        }
+
+        // Reload groups to show updated data (this will include the newly created group)
+        await loadGroups();
+
         notification.success({
           message: 'Group Created Successfully',
-          description: `Group "${values.name}" created. You can now add students to this group.`,
+          description: `Group "${values.name}" created${addedCount > 0 ? ` and ${addedCount} student(s) from this class added automatically.` : '. No available students in this class.'}`,
           placement: 'topRight',
           duration: 4,
+        });
+      } else {
+        notification.error({
+          message: 'Error',
+          description: 'Failed to create group - no response ID',
+          placement: 'topRight',
+          duration: 3,
         });
       }
 
@@ -5875,9 +6307,35 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
             borderRadius: '20px 20px 0 0'
           }}
         >
+          {/* Search by LecturerCode / StudentCode */}
+          <div style={{ marginBottom: 16 }}>
+            <Input
+              placeholder="Search by LecturerCode or StudentCode..."
+              prefix={<SearchOutlined />}
+              value={groupSearchText}
+              onChange={(e) => setGroupSearchText(e.target.value)}
+              allowClear
+              style={{ maxWidth: 360, borderRadius: 8 }}
+            />
+          </div>
+
           <Table
             columns={columns}
-            dataSource={groups}
+            dataSource={
+              groupSearchText
+                ? groups.filter(g => {
+                  const query = groupSearchText.toLowerCase();
+                  const lecturerCode = (g.lecturerCode || '').toLowerCase();
+                  const memberCodes = (g.memberStudentCodes || []).map(code => (code || '').toLowerCase());
+
+                  if (lecturerCode.includes(query)) {
+                    return true;
+                  }
+
+                  return memberCodes.some(code => code.includes(query));
+                })
+                : groups
+            }
             rowKey="id"
             pagination={{
               showSizeChanger: true,
@@ -5894,14 +6352,25 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
         onCancel={() => {
           setModalVisible(false);
           form.resetFields();
+          setLecturers(allLecturers); // Reset to all lecturers when closing
         }}
         footer={null}
       >
-        <Form form={form} layout="vertical" onFinish={handleSubmit}>
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={handleSubmit}
+          onValuesChange={(changedValues, allValues) => {
+            // When classId changes, filter lecturers
+            if (changedValues.classId !== undefined) {
+              filterLecturersByClass(changedValues.classId);
+            }
+          }}
+        >
           <Form.Item name="name" label="Group Name" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="classId" label="IoT Subject" rules={[{ required: true, message: 'Please select a class' }]}>
+          <Form.Item name="classId" label="IoT Subject (Class Code)" rules={[{ required: true, message: 'Please select a class' }]}>
             <Select
               showSearch
               placeholder="Search and select IoT subject"
@@ -5911,14 +6380,18 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
                 (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
               }
               options={classes}
+              onChange={(value) => {
+                filterLecturersByClass(value);
+              }}
             />
           </Form.Item>
           <Form.Item name="lecturer" label="Lecturer" rules={[{ required: true, message: 'Please select a lecturer' }]}>
             <Select
               showSearch
-              placeholder="Search and select lecturer"
+              placeholder={lecturers.length === 0 ? "Select class code first" : "Search and select lecturer"}
               optionFilterProp="children"
               loading={loadingLecturers}
+              disabled={lecturers.length === 0 && allLecturers.length > 0}
               filterOption={(input, option) =>
                 (option?.label ?? '').toLowerCase().includes(input.toLowerCase()) ||
                 (option?.email ?? '').toLowerCase().includes(input.toLowerCase())
@@ -5928,7 +6401,7 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
           </Form.Item>
           <Alert
             message="Automatic Member Assignment"
-            description="When you create a group, the system will automatically assign up to 3 random available students. The first assigned student will become the group leader."
+            description="When you create a group, the system will automatically add all available students from the selected IoT Subject (ClassCode) to this group. The first student will become the group leader."
             type="info"
             showIcon
             style={{ marginBottom: 16 }}
@@ -5951,12 +6424,23 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
 
       {/* Add Student Modal */}
       <Modal
-        title={`Add ${studentsToAdd.length} Students to Group "${selectedGroupRecord?.groupName}"`}
+        title={
+          <div>
+            <div>Add Students to Group "{selectedGroupRecord?.groupName}"</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Current: {currentMemberCount}/{MAX_GROUP_MEMBERS} members | Adding: {studentsToAdd.length} student(s) to reach {MAX_GROUP_MEMBERS} members
+            </Text>
+          </div>
+        }
         open={addStudentModalVisible}
         onOk={handleConfirmAddStudents}
-        onCancel={() => setAddStudentModalVisible(false)}
+        onCancel={() => {
+          setAddStudentModalVisible(false);
+          setCurrentMemberCount(0);
+          setMembersNeeded(0);
+        }}
         confirmLoading={addingLoading}
-        okText={`Add ${studentsToAdd.length} Students`}
+        okText={`Add ${studentsToAdd.length} Student${studentsToAdd.length > 1 ? 's' : ''}`}
         cancelText="Cancel"
         width={600}
       >
@@ -5977,6 +6461,18 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
                         </Tag>
                         {student.fullName} ({student.email})
                       </span>
+                    }
+                    description={
+                      <div style={{ fontSize: 12 }}>
+                        <div>
+                          <Text strong>ClassCode:</Text>{' '}
+                          <Text type="secondary">{student.classCode || 'N/A'}</Text>
+                        </div>
+                        <div>
+                          <Text strong>StudentCode:</Text>{' '}
+                          <Text type="secondary">{student.studentCode || 'N/A'}</Text>
+                        </div>
+                      </div>
                     }
                   />
                 </List.Item>
@@ -6853,6 +7349,21 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
                 }
               },
               {
+                title: 'Previous Balance',
+                dataIndex: 'previousBalance',
+                key: 'previousBalance',
+                render: (previousBalance) => {
+                  if (previousBalance === null || previousBalance === undefined) {
+                    return <Text type="secondary">N/A</Text>;
+                  }
+                  return (
+                    <Text type="secondary">
+                      {previousBalance.toLocaleString()} VND
+                    </Text>
+                  );
+                }
+              },
+              {
                 title: 'Amount',
                 dataIndex: 'amount',
                 key: 'amount',
@@ -6941,7 +7452,12 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
                 {selectedTransaction.type ? selectedTransaction.type.replace(/_/g, ' ') : selectedTransaction.transactionType ? selectedTransaction.transactionType.replace(/_/g, ' ') : 'N/A'}
               </Tag>
             </Descriptions.Item>
-            <Descriptions.Item label="Amount" span={2}>
+            <Descriptions.Item label="Previous Balance">
+              {selectedTransaction.previousBalance !== null && selectedTransaction.previousBalance !== undefined
+                ? formatAmount(selectedTransaction.previousBalance)
+                : 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Amount">
               <Text strong style={{ fontSize: '18px', color: (selectedTransaction.amount || 0) >= 0 ? '#52c41a' : '#ff4d4f' }}>
                 {formatAmount(selectedTransaction.amount || 0)}
               </Text>
