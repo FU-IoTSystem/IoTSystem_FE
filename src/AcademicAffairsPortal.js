@@ -7,6 +7,7 @@ import {
   Button,
   Input,
   Select,
+  AutoComplete,
   Modal,
   Form,
   message,
@@ -254,6 +255,15 @@ function AcademicAffairsPortal({ user, onLogout }) {
         const lecturersData = await userAPI.getLecturers();
         console.log('Fetched lecturers data:', lecturersData);
 
+        // Fetch class assignments to get class codes for lecturers (if not already fetched)
+        let classAssignmentsDataForLecturers = [];
+        try {
+          classAssignmentsDataForLecturers = await classAssignmentAPI.getAll();
+          console.log('Fetched class assignments data for lecturers:', classAssignmentsDataForLecturers);
+        } catch (error) {
+          console.error('Error fetching class assignments for lecturers:', error);
+        }
+
         const formatDate = (dateStr) => {
           if (!dateStr) return '-';
           try {
@@ -272,15 +282,39 @@ function AcademicAffairsPortal({ user, onLogout }) {
           }
         };
 
-        const mappedLecturers = lecturersData.map(lecturer => ({
-          id: lecturer.id || lecturer.email,
-          name: lecturer.fullName,
-          email: lecturer.email,
-          lecturerCode: lecturer.lecturerCode || 'N/A',
-          phoneNumber: lecturer.phone || '',
-          createdAt: formatDate(lecturer.createdAt),
-          status: lecturer.status || 'ACTIVE'
-        }));
+        // Create a map of lecturer IDs to their class codes
+        const lecturerClassMap = {};
+        const assignmentsArrayForLecturers = Array.isArray(classAssignmentsDataForLecturers) ? classAssignmentsDataForLecturers : [];
+        assignmentsArrayForLecturers.forEach(assignment => {
+          const roleName = assignment.roleName || assignment.role || '';
+          const roleUpper = roleName.toUpperCase();
+          const isLecturer = roleUpper === 'LECTURER' || roleUpper === 'TEACHER' || roleUpper === 'LECTURER_ROLE';
+
+          if (isLecturer && assignment.accountId && assignment.classCode) {
+            const lecturerId = assignment.accountId.toString();
+            if (!lecturerClassMap[lecturerId]) {
+              lecturerClassMap[lecturerId] = [];
+            }
+            lecturerClassMap[lecturerId].push(assignment.classCode);
+          }
+        });
+
+        const mappedLecturers = lecturersData.map(lecturer => {
+          const lecturerId = lecturer.id?.toString();
+          const classCodes = lecturerClassMap[lecturerId] || [];
+          const lecturerClass = classCodes.length > 0 ? classCodes.join(', ') : 'N/A';
+
+          return {
+            id: lecturer.id || lecturer.email,
+            name: lecturer.fullName,
+            email: lecturer.email,
+            lecturerCode: lecturer.lecturerCode || 'N/A',
+            phoneNumber: lecturer.phone || '',
+            lecturerClass: lecturerClass,
+            createdAt: formatDate(lecturer.createdAt),
+            status: lecturer.status || 'ACTIVE'
+          };
+        });
 
         setLecturers(mappedLecturers);
       } catch (error) {
@@ -1010,59 +1044,113 @@ function AcademicAffairsPortal({ user, onLogout }) {
   };
 
   const handleDeleteStudent = async (record) => {
-    Modal.confirm({
-      title: 'Are you sure you want to delete this student?',
-      content: `This will permanently delete ${record.name} from the system.`,
-      okText: 'Yes',
-      okType: 'danger',
-      cancelText: 'No',
-      onOk: async () => {
-        try {
-          setLoading(true);
-          await userAPI.deleteUser(record.id);
+    try {
+      // Fetch class assignments to get ClassCode
+      setLoading(true);
+      const allAssignments = await classAssignmentAPI.getAll();
+      const assignmentsArray = Array.isArray(allAssignments) ? allAssignments : [];
 
-          // Refresh students list from API
-          const studentsData = await userAPI.getStudents();
+      // Find class assignments for this student
+      const studentAssignments = assignmentsArray.filter(assignment => {
+        const assignmentAccountId = assignment.accountId?.toString();
+        const recordId = record.id?.toString();
+        const roleName = assignment.roleName || assignment.role || '';
+        const roleUpper = roleName.toUpperCase();
+        const isStudent = roleUpper === 'STUDENT' || roleUpper === 'STUDENT_ROLE';
+        return assignmentAccountId === recordId && isStudent;
+      });
 
-          const formatDate = (dateStr) => {
-            if (!dateStr) return '-';
-            try {
-              const date = new Date(dateStr);
-              return date.toLocaleString('vi-VN', {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-              });
-            } catch (e) {
-              console.error('Error formatting date:', e, dateStr);
-              return '-';
-            }
-          };
+      // Get ClassCodes from assignments
+      const classCodes = studentAssignments
+        .map(assignment => assignment.classCode || 'N/A')
+        .filter(code => code !== 'N/A');
 
-          const mappedStudents = studentsData.map(student => ({
-            id: student.id,
-            name: student.fullName,
-            email: student.email,
-            studentCode: student.studentCode,
-            phoneNumber: student.phoneNumber,
-            createdAt: formatDate(student.createdAt),
-            status: student.status
-          }));
+      const classCodeText = classCodes.length > 0
+        ? `\n\nClass Code(s): ${classCodes.join(', ')}`
+        : '\n\nClass Code: Not assigned';
 
-          setStudents(mappedStudents);
+      Modal.confirm({
+        title: 'Are you sure you want to delete this student?',
+        content: `This will permanently delete ${record.name} from the system.${classCodeText}`,
+        okText: 'Yes',
+        okType: 'danger',
+        cancelText: 'No',
+        onOk: async () => {
+          try {
+            setLoading(true);
+            await userAPI.deleteUser(record.id);
 
-          message.success('Student deleted successfully');
-        } catch (error) {
-          console.error('Error deleting student:', error);
-          message.error('Failed to delete student: ' + error.message);
-        } finally {
-          setLoading(false);
-        }
-      },
-    });
+            // Refresh all data including ClassAssignments to update classCode
+            await loadData();
+
+            message.success('Student deleted successfully');
+          } catch (error) {
+            console.error('Error deleting student:', error);
+            message.error('Failed to delete student: ' + error.message);
+          } finally {
+            setLoading(false);
+          }
+        },
+      });
+    } catch (error) {
+      console.error('Error fetching class assignments:', error);
+      // Still show confirmation dialog even if fetch fails
+      Modal.confirm({
+        title: 'Are you sure you want to delete this student?',
+        content: `This will permanently delete ${record.name} from the system.`,
+        okText: 'Yes',
+        okType: 'danger',
+        cancelText: 'No',
+        onOk: async () => {
+          try {
+            setLoading(true);
+            await userAPI.deleteUser(record.id);
+
+            // Refresh students list from API
+            const studentsData = await userAPI.getStudents();
+
+            const formatDate = (dateStr) => {
+              if (!dateStr) return '-';
+              try {
+                const date = new Date(dateStr);
+                return date.toLocaleString('vi-VN', {
+                  year: 'numeric',
+                  month: '2-digit',
+                  day: '2-digit',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit'
+                });
+              } catch (e) {
+                console.error('Error formatting date:', e, dateStr);
+                return '-';
+              }
+            };
+
+            const mappedStudents = studentsData.map(student => ({
+              id: student.id,
+              name: student.fullName,
+              email: student.email,
+              studentCode: student.studentCode,
+              phoneNumber: student.phoneNumber,
+              createdAt: formatDate(student.createdAt),
+              status: student.status
+            }));
+
+            setStudents(mappedStudents);
+
+            message.success('Student deleted successfully');
+          } catch (error) {
+            console.error('Error deleting student:', error);
+            message.error('Failed to delete student: ' + error.message);
+          } finally {
+            setLoading(false);
+          }
+        },
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleStudentSubmit = async () => {
@@ -1166,29 +1254,34 @@ function AcademicAffairsPortal({ user, onLogout }) {
   // Lecturer Management Functions
   const handleAddLecturer = async () => {
     lecturerForm.resetFields();
-    setLecturerModal({ visible: true, data: {} });
 
     // Fetch available classes for ClassCode dropdown
     try {
       const classesData = await classesAPI.getAllClasses();
-      const classOptions = classesData.map(cls => ({
+      const classOptions = (classesData || []).map(cls => ({
         value: cls.classCode,
-        label: `${cls.classCode} - ${cls.semester || ''}`
+        label: `${cls.classCode} - ${cls.semester || ''}`,
+        classCode: cls.classCode,
+        semester: cls.semester
       }));
       setAvailableClasses(classOptions);
     } catch (error) {
       console.error('Error fetching classes:', error);
       setAvailableClasses([]);
     }
+
+    setLecturerModal({ visible: true, data: {} });
   };
 
   const handleEditLecturer = async (record) => {
     // Fetch available classes for ClassCode dropdown
     try {
       const classesData = await classesAPI.getAllClasses();
-      const classOptions = classesData.map(cls => ({
+      const classOptions = (classesData || []).map(cls => ({
         value: cls.classCode,
-        label: `${cls.classCode} - ${cls.semester || ''}`
+        label: `${cls.classCode} - ${cls.semester || ''}`,
+        classCode: cls.classCode,
+        semester: cls.semester
       }));
       setAvailableClasses(classOptions);
     } catch (error) {
@@ -1196,150 +1289,213 @@ function AcademicAffairsPortal({ user, onLogout }) {
       setAvailableClasses([]);
     }
 
+    // Get current classCode from lecturer's class assignments
+    let currentClassCode = null;
+    try {
+      const allAssignments = await classAssignmentAPI.getAll();
+      const assignmentsArray = Array.isArray(allAssignments) ? allAssignments : [];
+      const lecturerAssignments = assignmentsArray.filter(assignment => {
+        const roleName = assignment.roleName || assignment.role || '';
+        const roleUpper = roleName.toUpperCase();
+        const isLecturer = roleUpper === 'LECTURER' || roleUpper === 'LECTURER_ROLE';
+        const assignmentAccountId = assignment.accountId?.toString();
+        const recordId = record.id?.toString();
+        return isLecturer && assignmentAccountId === recordId;
+      });
+
+      if (lecturerAssignments.length > 0) {
+        // Get classCode from first assignment
+        const firstAssignment = lecturerAssignments[0];
+        if (firstAssignment.classCode) {
+          currentClassCode = firstAssignment.classCode;
+        } else if (firstAssignment.classId) {
+          // Find class by ID
+          const classesData = await classesAPI.getAllClasses();
+          const targetClass = classesData.find(cls => cls.id?.toString() === firstAssignment.classId?.toString());
+          if (targetClass) {
+            currentClassCode = targetClass.classCode;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching lecturer class assignments:', error);
+    }
+
     // Convert date string to dayjs object for DatePicker
     const formData = {
       ...record,
-      hireDate: record.hireDate ? dayjs(record.hireDate) : null
+      hireDate: record.hireDate ? dayjs(record.hireDate) : null,
+      classCode: currentClassCode
     };
     lecturerForm.setFieldsValue(formData);
     setLecturerModal({ visible: true, data: record });
   };
 
   const handleDeleteLecturer = async (record) => {
-    Modal.confirm({
-      title: 'Are you sure you want to delete this lecturer?',
-      content: `This will permanently delete ${record.name} from the system.`,
-      okText: 'Yes',
-      okType: 'danger',
-      cancelText: 'No',
-      onOk: async () => {
-        try {
-          setLoading(true);
-          await userAPI.deleteUser(record.id);
+    try {
+      // Fetch class assignments to get ClassCode
+      setLoading(true);
+      const allAssignments = await classAssignmentAPI.getAll();
+      const assignmentsArray = Array.isArray(allAssignments) ? allAssignments : [];
 
-          // Refresh lecturers list from API
-          const lecturersData = await userAPI.getLecturers();
+      // Find class assignments for this lecturer
+      const lecturerAssignments = assignmentsArray.filter(assignment => {
+        const assignmentAccountId = assignment.accountId?.toString();
+        const recordId = record.id?.toString();
+        const roleName = assignment.roleName || assignment.role || '';
+        const roleUpper = roleName.toUpperCase();
+        const isLecturer = roleUpper === 'LECTURER' || roleUpper === 'TEACHER' || roleUpper === 'LECTURER_ROLE';
+        return assignmentAccountId === recordId && isLecturer;
+      });
 
-          const formatDate = (dateStr) => {
-            if (!dateStr) return '-';
-            try {
-              const date = new Date(dateStr);
-              return date.toLocaleString('vi-VN', {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-              });
-            } catch (e) {
-              console.error('Error formatting date:', e, dateStr);
-              return '-';
+      // Get ClassCodes from assignments
+      const classCodes = lecturerAssignments
+        .map(assignment => assignment.classCode || 'N/A')
+        .filter(code => code !== 'N/A');
+
+      const classCodeText = classCodes.length > 0
+        ? `\n\nClass Code(s): ${classCodes.join(', ')}`
+        : '\n\nClass Code: Not assigned';
+
+      Modal.confirm({
+        title: 'Are you sure you want to delete this lecturer?',
+        content: `This will permanently delete ${record.name} from the system.${classCodeText}`,
+        okText: 'Yes',
+        okType: 'danger',
+        cancelText: 'No',
+        onOk: async () => {
+          try {
+            setLoading(true);
+            await userAPI.deleteUser(record.id);
+
+            // Refresh all data including ClassAssignments to update classCode
+            await loadData();
+
+            message.success('Lecturer deleted successfully');
+          } catch (error) {
+            console.error('Error deleting lecturer:', error);
+            console.error('Error details:', {
+              message: error.message,
+              error: error,
+              response: error.response,
+              errorString: error.toString(),
+              errorJSON: JSON.stringify(error, Object.getOwnPropertyNames(error))
+            });
+
+            // Parse error message - handleResponse throws Error with message from backend JSON
+            // The error message from backend is in format: "Failed to delete user: Failed to delete borrowing requests: ..."
+            let errorMessage = 'Unknown error';
+
+            // Try multiple ways to extract error message
+            // 1. Check error.message first
+            if (error.message && error.message !== 'Unknown error' && error.message.trim() !== '') {
+              errorMessage = error.message;
             }
-          };
-
-          const mappedLecturers = lecturersData.map(lecturer => ({
-            id: lecturer.id || lecturer.email,
-            name: lecturer.fullName,
-            email: lecturer.email,
-            phoneNumber: lecturer.phone || '',
-            createdAt: formatDate(lecturer.createdAt),
-            status: lecturer.status || 'ACTIVE'
-          }));
-
-          setLecturers(mappedLecturers);
-
-          message.success('Lecturer deleted successfully');
-        } catch (error) {
-          console.error('Error deleting lecturer:', error);
-          console.error('Error details:', {
-            message: error.message,
-            error: error,
-            response: error.response,
-            errorString: error.toString(),
-            errorJSON: JSON.stringify(error, Object.getOwnPropertyNames(error))
-          });
-
-          // Parse error message - handleResponse throws Error with message from backend JSON
-          // The error message from backend is in format: "Failed to delete user: Failed to delete borrowing requests: ..."
-          let errorMessage = 'Unknown error';
-
-          // Try multiple ways to extract error message
-          // 1. Check error.message first
-          if (error.message && error.message !== 'Unknown error' && error.message.trim() !== '') {
-            errorMessage = error.message;
-          }
-          // 2. Check error.response.data (axios-style)
-          else if (error.response?.data?.message) {
-            errorMessage = error.response.data.message;
-          } else if (error.response?.data?.error) {
-            errorMessage = error.response.data.error;
-          }
-          // 3. Check error.stack (might contain message)
-          else if (error.stack) {
-            // Extract message from stack trace if it contains useful info
-            const stackLines = error.stack.split('\n');
-            if (stackLines.length > 0 && stackLines[0].includes('Error:')) {
-              const stackMessage = stackLines[0].replace('Error:', '').trim();
-              if (stackMessage && stackMessage !== 'Unknown error') {
-                errorMessage = stackMessage;
+            // 2. Check error.response.data (axios-style)
+            else if (error.response?.data?.message) {
+              errorMessage = error.response.data.message;
+            } else if (error.response?.data?.error) {
+              errorMessage = error.response.data.error;
+            }
+            // 3. Check error.stack (might contain message)
+            else if (error.stack) {
+              // Extract message from stack trace if it contains useful info
+              const stackLines = error.stack.split('\n');
+              if (stackLines.length > 0 && stackLines[0].includes('Error:')) {
+                const stackMessage = stackLines[0].replace('Error:', '').trim();
+                if (stackMessage && stackMessage !== 'Unknown error') {
+                  errorMessage = stackMessage;
+                }
               }
             }
-          }
-          // 4. Check error.toString()
-          else if (error.toString && error.toString() !== '[object Object]' && error.toString() !== 'Error: Unknown error') {
-            const toStringResult = error.toString();
-            if (toStringResult.includes('Error:')) {
-              errorMessage = toStringResult.split('Error:')[1]?.trim() || errorMessage;
-            } else {
-              errorMessage = toStringResult;
-            }
-          }
-          // 5. Check if error is a string
-          else if (typeof error === 'string' && error !== 'Unknown error') {
-            errorMessage = error;
-          }
-          // 6. Try to stringify and parse
-          else {
-            try {
-              const errorStr = JSON.stringify(error, Object.getOwnPropertyNames(error));
-              if (errorStr && errorStr !== '{}' && errorStr !== '{"message":"Unknown error"}') {
-                const parsed = JSON.parse(errorStr);
-                errorMessage = parsed.message || parsed.error || parsed.data?.message || errorStr;
+            // 4. Check error.toString()
+            else if (error.toString && error.toString() !== '[object Object]' && error.toString() !== 'Error: Unknown error') {
+              const toStringResult = error.toString();
+              if (toStringResult.includes('Error:')) {
+                errorMessage = toStringResult.split('Error:')[1]?.trim() || errorMessage;
+              } else {
+                errorMessage = toStringResult;
               }
-            } catch (e) {
-              console.error('Failed to stringify error:', e);
             }
-          }
-
-          // Final fallback: if still "Unknown error", check if we can get more info from console
-          if (errorMessage === 'Unknown error' || errorMessage.trim() === '') {
-            console.warn('Could not extract error message, error object:', error);
-            // Try one more time with a different approach
-            if (error.constructor && error.constructor.name !== 'Error') {
-              errorMessage = `Error type: ${error.constructor.name}`;
+            // 5. Check if error is a string
+            else if (typeof error === 'string' && error !== 'Unknown error') {
+              errorMessage = error;
             }
-          }
+            // 6. Try to stringify and parse
+            else {
+              try {
+                const errorStr = JSON.stringify(error, Object.getOwnPropertyNames(error));
+                if (errorStr && errorStr !== '{}' && errorStr !== '{"message":"Unknown error"}') {
+                  const parsed = JSON.parse(errorStr);
+                  errorMessage = parsed.message || parsed.error || parsed.data?.message || errorStr;
+                }
+              } catch (e) {
+                console.error('Failed to stringify error:', e);
+              }
+            }
 
-          // Log for debugging
-          console.log('Parsed error message:', errorMessage);
-          console.log('Error message length:', errorMessage.length);
-          console.log('Error message includes "borrowing":', errorMessage.toLowerCase().includes('borrowing'));
-          console.log('Error message includes "foreign key":', errorMessage.toLowerCase().includes('foreign key'));
+            // Final fallback: if still "Unknown error", check if we can get more info from console
+            if (errorMessage === 'Unknown error' || errorMessage.trim() === '') {
+              console.warn('Could not extract error message, error object:', error);
+              // Try one more time with a different approach
+              if (error.constructor && error.constructor.name !== 'Error') {
+                errorMessage = `Error type: ${error.constructor.name}`;
+              }
+            }
 
-          const errorMessageLower = errorMessage.toLowerCase();
+            // Log for debugging
+            console.log('Parsed error message:', errorMessage);
+            console.log('Error message length:', errorMessage.length);
+            console.log('Error message includes "borrowing":', errorMessage.toLowerCase().includes('borrowing'));
+            console.log('Error message includes "foreign key":', errorMessage.toLowerCase().includes('foreign key'));
 
-          // Check for foreign key constraint violations
-          // Error message format: "Failed to delete user: Failed to delete borrowing requests: ... violates foreign key constraint ... on table \"request_kit_components\""
-          if (errorMessageLower.includes('foreign key constraint') ||
-            errorMessageLower.includes('violates foreign key') ||
-            errorMessageLower.includes('still referenced') ||
-            errorMessageLower.includes('still referenced from table')) {
+            const errorMessageLower = errorMessage.toLowerCase();
 
-            // Check if it's related to borrowing requests and request_kit_components
-            if (errorMessageLower.includes('borrowing_requests') ||
+            // Check for foreign key constraint violations
+            // Error message format: "Failed to delete user: Failed to delete borrowing requests: ... violates foreign key constraint ... on table \"request_kit_components\""
+            if (errorMessageLower.includes('foreign key constraint') ||
+              errorMessageLower.includes('violates foreign key') ||
+              errorMessageLower.includes('still referenced') ||
+              errorMessageLower.includes('still referenced from table')) {
+
+              // Check if it's related to borrowing requests and request_kit_components
+              if (errorMessageLower.includes('borrowing_requests') ||
+                errorMessageLower.includes('request_kit_components') ||
+                errorMessageLower.includes('borrowing request') ||
+                errorMessageLower.includes('failed to delete borrowing')) {
+                notification.error({
+                  message: 'Cannot Delete Lecturer',
+                  description: `Cannot delete lecturer "${record.name}" because this lecturer has borrowing requests that contain kit components. Please resolve or delete all borrowing requests and their associated kit components first before deleting this lecturer.`,
+                  placement: 'topRight',
+                  duration: 8,
+                });
+                return; // Exit early to prevent showing generic error
+              }
+              // Check if it's related to class relationship
+              else if (errorMessageLower.includes('class') ||
+                errorMessageLower.includes('classes')) {
+                notification.error({
+                  message: 'Cannot Delete Lecturer',
+                  description: `Cannot delete lecturer "${record.name}" because this lecturer is assigned to one or more classes. Please remove the lecturer from all classes first before deleting.`,
+                  placement: 'topRight',
+                  duration: 6,
+                });
+                return; // Exit early to prevent showing generic error
+              }
+              // Generic foreign key constraint error
+              else {
+                notification.error({
+                  message: 'Cannot Delete Lecturer',
+                  description: `Cannot delete lecturer "${record.name}" because this lecturer has relationships with other data in the system. Please remove all related records (classes, borrowing requests, etc.) first before deleting.`,
+                  placement: 'topRight',
+                  duration: 8,
+                });
+                return; // Exit early to prevent showing generic error
+              }
+            }
+            // Check for other relationship errors (check this before generic constraint check)
+            else if (errorMessageLower.includes('borrowing_requests') ||
               errorMessageLower.includes('request_kit_components') ||
-              errorMessageLower.includes('borrowing request') ||
               errorMessageLower.includes('failed to delete borrowing')) {
               notification.error({
                 message: 'Cannot Delete Lecturer',
@@ -1349,69 +1505,67 @@ function AcademicAffairsPortal({ user, onLogout }) {
               });
               return; // Exit early to prevent showing generic error
             }
-            // Check if it's related to class relationship
-            else if (errorMessageLower.includes('class') ||
-              errorMessageLower.includes('classes')) {
+            // Check for other relationship errors
+            else if (errorMessageLower.includes('relationship') ||
+              errorMessageLower.includes('constraint') ||
+              errorMessageLower.includes('cannot delete') ||
+              errorMessageLower.includes('has relationship') ||
+              errorMessageLower.includes('referenced') ||
+              errorMessageLower.includes('borrowing') ||
+              errorMessageLower.includes('request')) {
               notification.error({
                 message: 'Cannot Delete Lecturer',
-                description: `Cannot delete lecturer "${record.name}" because this lecturer is assigned to one or more classes. Please remove the lecturer from all classes first before deleting.`,
+                description: `Cannot delete lecturer "${record.name}" because this lecturer is assigned to one or more classes or has borrowing requests. Please remove the lecturer from all classes and resolve all borrowing requests first before deleting.`,
                 placement: 'topRight',
                 duration: 6,
               });
               return; // Exit early to prevent showing generic error
+            } else {
+              // Show generic error only if no specific error was detected
+              message.error('Failed to delete lecturer: ' + errorMessage);
             }
-            // Generic foreign key constraint error
-            else {
-              notification.error({
-                message: 'Cannot Delete Lecturer',
-                description: `Cannot delete lecturer "${record.name}" because this lecturer has relationships with other data in the system. Please remove all related records (classes, borrowing requests, etc.) first before deleting.`,
-                placement: 'topRight',
-                duration: 8,
-              });
-              return; // Exit early to prevent showing generic error
-            }
+          } finally {
+            setLoading(false);
           }
-          // Check for other relationship errors (check this before generic constraint check)
-          else if (errorMessageLower.includes('borrowing_requests') ||
-            errorMessageLower.includes('request_kit_components') ||
-            errorMessageLower.includes('failed to delete borrowing')) {
-            notification.error({
-              message: 'Cannot Delete Lecturer',
-              description: `Cannot delete lecturer "${record.name}" because this lecturer has borrowing requests that contain kit components. Please resolve or delete all borrowing requests and their associated kit components first before deleting this lecturer.`,
-              placement: 'topRight',
-              duration: 8,
-            });
-            return; // Exit early to prevent showing generic error
+        },
+      });
+    } catch (error) {
+      console.error('Error fetching class assignments:', error);
+      // Still show confirmation dialog even if fetch fails
+      Modal.confirm({
+        title: 'Are you sure you want to delete this lecturer?',
+        content: `This will permanently delete ${record.name} from the system.`,
+        okText: 'Yes',
+        okType: 'danger',
+        cancelText: 'No',
+        onOk: async () => {
+          try {
+            setLoading(true);
+            await userAPI.deleteUser(record.id);
+
+            // Refresh all data including ClassAssignments to update classCode
+            await loadData();
+
+            message.success('Lecturer deleted successfully');
+          } catch (error) {
+            console.error('Error deleting lecturer:', error);
+            message.error('Failed to delete lecturer: ' + error.message);
+          } finally {
+            setLoading(false);
           }
-          // Check for other relationship errors
-          else if (errorMessageLower.includes('relationship') ||
-            errorMessageLower.includes('constraint') ||
-            errorMessageLower.includes('cannot delete') ||
-            errorMessageLower.includes('has relationship') ||
-            errorMessageLower.includes('referenced') ||
-            errorMessageLower.includes('borrowing') ||
-            errorMessageLower.includes('request')) {
-            notification.error({
-              message: 'Cannot Delete Lecturer',
-              description: `Cannot delete lecturer "${record.name}" because this lecturer is assigned to one or more classes or has borrowing requests. Please remove the lecturer from all classes and resolve all borrowing requests first before deleting.`,
-              placement: 'topRight',
-              duration: 6,
-            });
-            return; // Exit early to prevent showing generic error
-          } else {
-            // Show generic error only if no specific error was detected
-            message.error('Failed to delete lecturer: ' + errorMessage);
-          }
-        } finally {
-          setLoading(false);
-        }
-      },
-    });
+        },
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleLecturerSubmit = async () => {
     try {
       const values = await lecturerForm.validateFields();
+
+      // Normalize classCode
+      const classCodeToUse = values.classCode ? values.classCode.trim() : null;
 
       if (lecturerModal.data.id) {
         // Edit existing lecturer - check for duplicates before updating
@@ -1439,14 +1593,14 @@ function AcademicAffairsPortal({ user, onLogout }) {
           }
         }
 
-        // Update lecturer via API
+        // Update lecturer via API - backend will handle class creation/assignment
         try {
           await userAPI.updateLecturer(lecturerModal.data.id, {
             name: values.name,
             email: values.email,
             phoneNumber: values.phoneNumber,
             lecturerCode: values.lecturerCode,
-            classCode: values.classCode
+            classCode: classCodeToUse
           });
 
           // Refresh lecturers list
@@ -1467,20 +1621,27 @@ function AcademicAffairsPortal({ user, onLogout }) {
           throw apiError;
         }
       } else {
-        // Create new lecturer via API
-        const response = await userAPI.createSingleLecturer({
-          name: values.name,
-          email: values.email,
-          phoneNumber: values.phoneNumber,
-          lecturerCode: values.lecturerCode,
-          classCode: values.classCode
-        });
+        // Create new lecturer - backend will handle class creation/assignment
+        try {
+          const response = await userAPI.createSingleLecturer({
+            name: values.name,
+            email: values.email,
+            phoneNumber: values.phoneNumber,
+            lecturerCode: values.lecturerCode,
+            classCode: classCodeToUse
+          });
 
-        console.log('Lecturer created:', response);
+          console.log('Lecturer created:', response);
 
-        // Refresh lecturers list
-        await loadData();
-        message.success('Lecturer created successfully');
+          // Refresh lecturers list
+          await loadData();
+          message.success('Lecturer created successfully');
+        } catch (apiError) {
+          console.error('API error:', apiError);
+          const errorMessage = apiError.message || 'Failed to create lecturer';
+          message.error(errorMessage);
+          throw apiError;
+        }
       }
 
       setLecturerModal({ visible: false, data: {} });
@@ -1947,16 +2108,31 @@ function AcademicAffairsPortal({ user, onLogout }) {
               <Form.Item
                 name="classCode"
                 label="Class Code"
-                rules={[{ required: false, message: 'Please select class code' }]}
+                rules={[{ required: false, message: 'Please select or enter class code' }]}
+                tooltip="Select existing class from dropdown or type to create new class"
               >
-                <Select
-                  placeholder="Select class code"
-                  showSearch
-                  filterOption={(input, option) =>
-                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                <AutoComplete
+                  placeholder="Select existing class or type to create new"
+                  options={Array.isArray(availableClasses) ? availableClasses.map(cls => ({
+                    value: cls.classCode || cls.value,
+                    label: cls.classCode ? `${cls.classCode} - ${cls.semester || ''}`.trim() : (cls.label || cls.value || '')
+                  })) : []}
+                  filterOption={(inputValue, option) =>
+                    (option?.label ?? '').toLowerCase().includes(inputValue.toLowerCase()) ||
+                    (option?.value ?? '').toLowerCase().includes(inputValue.toLowerCase())
                   }
-                  options={availableClasses}
                   allowClear
+                  onSelect={(value) => {
+                    // Keep the classCode value when selecting
+                    lecturerForm.setFieldsValue({ classCode: value });
+                  }}
+                  onBlur={(e) => {
+                    // When user types and blurs, keep the typed value
+                    const typedValue = e.target.value;
+                    if (typedValue) {
+                      lecturerForm.setFieldsValue({ classCode: typedValue.trim() });
+                    }
+                  }}
                 />
               </Form.Item>
             </Col>
@@ -2548,7 +2724,9 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
         value: student.id,
         label: `${student.fullName} (${student.email})`,
         email: student.email,
-        fullName: student.fullName
+        fullName: student.fullName,
+        studentCode: student.studentCode,
+        phoneNumber: student.phoneNumber
       }));
       setAllStudents(studentOptions); // Store all students
       setStudents(studentOptions); // Set initial students list
@@ -2605,6 +2783,9 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
 
       // Restore all students list after closing modal
       setStudents(allStudents);
+
+      // Reload unassigned students to update the list
+      await loadEnrollmentData();
     } catch (error) {
       console.error('Error enrolling students:', error);
       notification.error({
@@ -2881,6 +3062,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
 
   return (
     <div>
+      {/* Class Assignment Section */}
       <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
         <Card
           title="Class Assignment"
@@ -2984,7 +3166,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
                 (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
               }
               options={allClasses}
-              disabled={true}
+              disabled={studentModal.data?.id && !studentModal.data?.classId ? false : true}
             />
           </Form.Item>
           <Form.Item
@@ -3555,7 +3737,8 @@ const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecture
         lecturer.name?.toLowerCase().includes(searchLower) ||
         lecturer.email?.toLowerCase().includes(searchLower) ||
         lecturer.lecturerCode?.toLowerCase().includes(searchLower) ||
-        lecturer.phoneNumber?.toLowerCase().includes(searchLower)
+        lecturer.phoneNumber?.toLowerCase().includes(searchLower) ||
+        lecturer.lecturerClass?.toLowerCase().includes(searchLower)
       );
     }
 
@@ -3683,17 +3866,17 @@ const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecture
           <Table
             dataSource={filteredAndSortedLecturers}
             columns={[
+              { title: 'Lecturer Code', dataIndex: 'lecturerCode', key: 'lecturerCode', render: (text) => text || 'N/A' },
               { title: 'Name', dataIndex: 'name', key: 'name' },
               { title: 'Email', dataIndex: 'email', key: 'email' },
-              { title: 'Lecturer Code', dataIndex: 'lecturerCode', key: 'lecturerCode', render: (text) => text || 'N/A' },
               { title: 'Phone Number', dataIndex: 'phoneNumber', key: 'phoneNumber' },
-              { title: 'Hire Date', dataIndex: 'createdAt', key: 'createdAt' },
               {
                 title: 'Status',
                 dataIndex: 'status',
                 key: 'status',
                 render: (status) => <Tag color={getStatusColor(status)}>{status}</Tag>
               },
+              { title: 'Hire Date', dataIndex: 'createdAt', key: 'createdAt' },
               {
                 title: 'Actions',
                 key: 'actions',
