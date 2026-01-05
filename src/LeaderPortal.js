@@ -1634,14 +1634,21 @@ function LeaderPortal({ user, onLogout }) {
                     key: 'componentType',
                     render: (type) => <Tag color="purple">{type || 'N/A'}</Tag>
                   },
-                  // Only show Available column for component-rental modal type
+                  // Show quantity column based on modal type
                   ...(kitDetailModalType === 'component-rental' ? [
                     {
                       title: 'Available',
                       dataIndex: 'quantityAvailable',
                       key: 'quantityAvailable',
                     }
-                  ] : []),
+                  ] : [
+                    {
+                      title: 'Quantity',
+                      dataIndex: 'quantityTotal',
+                      key: 'quantityTotal',
+                      render: (quantityTotal) => quantityTotal || 0
+                    }
+                  ]),
                   {
                     title: 'Description',
                     dataIndex: 'description',
