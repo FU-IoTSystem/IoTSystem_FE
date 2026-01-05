@@ -2103,12 +2103,21 @@ function LecturerPortal({ user, onLogout }) {
                                           </Tag>
                                         </div>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                          <Text type="secondary" style={{ fontSize: '13px' }}>
-                                            <strong>Total:</strong> {component.quantityTotal || component.quantity || 0}
-                                          </Text>
-                                          <Text type="secondary" style={{ fontSize: '13px', color: '#52c41a' }}>
-                                            <strong>Available:</strong> {component.quantityAvailable || 0}
-                                          </Text>
+                                          {/* For component-rental, show Total Quantity as fixed value; for kit-rental, show both Total and Available */}
+                                          {kitDetailModalType === 'component-rental' ? (
+                                            <Text type="secondary" style={{ fontSize: '13px' }}>
+                                              <strong>Total Quantity:</strong> {component.quantityTotal || component.quantity || 0}
+                                            </Text>
+                                          ) : (
+                                            <>
+                                              <Text type="secondary" style={{ fontSize: '13px' }}>
+                                                <strong>Total:</strong> {component.quantityTotal || component.quantity || 0}
+                                              </Text>
+                                              <Text type="secondary" style={{ fontSize: '13px', color: '#52c41a' }}>
+                                                <strong>Available:</strong> {component.quantityAvailable || 0}
+                                              </Text>
+                                            </>
+                                          )}
                                         </div>
                                         <div style={{ marginTop: 4 }}>
                                           <Text strong style={{ color: '#1890ff', fontSize: '14px' }}>
