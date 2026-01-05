@@ -243,7 +243,8 @@ export const userAPI = {
       studentCode: studentData.studentCode,
       roles: 'STUDENT',
       phoneNumber: studentData.phoneNumber,
-      fullName: studentData.name
+      fullName: studentData.name,
+      classCode: studentData.classCode || null
     };
 
     console.log('Request data:', requestData);
@@ -268,7 +269,8 @@ export const userAPI = {
       studentCode: studentData.studentCode || '',
       roles: 'STUDENT',
       phoneNumber: studentData.phoneNumber || '',
-      fullName: studentData.name
+      fullName: studentData.name,
+      classCode: studentData.classCode || null
     };
 
     console.log('Update request data:', requestData);
@@ -294,7 +296,8 @@ export const userAPI = {
       studentCode: lecturerData.studentCode || '',
       roles: 'LECTURER',
       phoneNumber: lecturerData.phoneNumber,
-      fullName: lecturerData.name
+      fullName: lecturerData.name,
+      classCode: lecturerData.classCode || null
     };
 
     console.log('Request data:', requestData);
@@ -319,7 +322,8 @@ export const userAPI = {
       studentCode: lecturerData.studentCode || '',
       roles: 'LECTURER',
       phoneNumber: lecturerData.phoneNumber || '',
-      fullName: lecturerData.name
+      fullName: lecturerData.name,
+      classCode: lecturerData.classCode || null
     };
 
     console.log('Update request data:', requestData);
@@ -1231,6 +1235,12 @@ export const borrowingRequestAPI = {
     const statusParams = statuses.map(s => `statuses=${encodeURIComponent(s)}`).join('&');
     const response = await apiRequest(`/api/borrowing-requests/by-statuses?${statusParams}`);
     return response.data || [];
+  },
+
+  getBorrowPenaltyStats: async () => {
+    const response = await apiRequest('/api/borrowing-requests/stats/borrow-penalty');
+    const payload = response?.data ?? response;
+    return Array.isArray(payload) ? payload : [];
   },
 
   getById: async (id) => {

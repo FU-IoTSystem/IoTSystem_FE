@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Layout,
   Menu,
@@ -36,7 +36,8 @@ import {
   Checkbox,
   InputNumber,
   Carousel,
-  Pagination
+  Pagination,
+  Progress
 } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as XLSX from 'xlsx';
@@ -81,10 +82,12 @@ import {
 } from '@ant-design/icons';
 import { kitAPI, kitComponentAPI, borrowingRequestAPI, walletTransactionAPI, userAPI, authAPI, classesAPI, studentGroupAPI, borrowingGroupAPI, penaltyPoliciesAPI, penaltiesAPI, penaltyDetailAPI, damageReportAPI, notificationAPI, excelImportAPI, classAssignmentAPI } from './api';
 import webSocketService from './utils/websocket';
+import './AdminPortalDashboard.css';
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 const { Option } = Select;
+const { RangePicker } = DatePicker;
 
 function AdminPortal({ onLogout }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -119,6 +122,8 @@ function AdminPortal({ onLogout }) {
   const [logHistory, setLogHistory] = useState([]);
   const [penaltyPolicies, setPenaltyPolicies] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [borrowPenaltyStats, setBorrowPenaltyStats] = useState([]);
+  const [customDateRange, setCustomDateRange] = useState([]);
   const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
   const [notificationLoading, setNotificationLoading] = useState(false);
 
@@ -180,6 +185,7 @@ function AdminPortal({ onLogout }) {
         const mapped = data.map(p => ({
           id: p.id,
           kitId: p.borrowRequestId || 'N/A',
+          borrowRequestId: p.borrowRequestId || p.requestId || null,
           kitName: 'N/A',
           studentEmail: p.accountEmail || 'N/A',
           studentName: p.accountEmail || 'N/A',
@@ -204,6 +210,42 @@ function AdminPortal({ onLogout }) {
     };
     if (selectedKey === 'fines') {
       loadUnresolvedPenalties();
+    }
+  }, [selectedKey]);
+
+  // Load all penalties for dashboard statistics
+  useEffect(() => {
+    const loadAllPenalties = async () => {
+      try {
+        const res = await penaltiesAPI.getAll();
+        console.log('All penalties response:', res);
+        const data = Array.isArray(res) ? res : (res && Array.isArray(res.data) ? res.data : []);
+        const mapped = data.map(p => ({
+          id: p.id,
+          borrowRequestId: p.borrowRequestId || p.requestId || null,
+          fineAmount: (p.totalAmount !== undefined && p.totalAmount !== null) ? Number(p.totalAmount) : 0,
+          createdAt: p.takeEffectDate || new Date().toISOString(),
+          status: p.resolved ? 'paid' : 'pending',
+          resolved: p.resolved || false,
+        }));
+        // Update fines with all penalties for dashboard
+        setFines(prev => {
+          // Merge with existing fines, avoiding duplicates
+          const existingIds = new Set(prev.map(f => f.id));
+          const newFines = mapped.filter(f => !existingIds.has(f.id));
+          // Update existing fines with resolved status if available
+          const updated = prev.map(f => {
+            const match = mapped.find(m => m.id === f.id);
+            return match ? { ...f, status: match.status, resolved: match.resolved } : f;
+          });
+          return [...updated, ...newFines];
+        });
+      } catch (e) {
+        console.error('Error loading all penalties:', e);
+      }
+    };
+    if (selectedKey === 'dashboard') {
+      loadAllPenalties();
     }
   }, [selectedKey]);
 
@@ -275,7 +317,7 @@ function AdminPortal({ onLogout }) {
             lecturerCode: profile.lecturerCode,
             role: profile.role?.toLowerCase() || 'member',
             status: 'Active', // Default status since ProfileResponse doesn't have status
-            createdAt: new Date().toISOString()
+            createdAt: profile.createdAt || profile.updatedAt || new Date().toISOString()
           }));
 
           fetchedUsers = mappedUsers;
@@ -426,6 +468,19 @@ function AdminPortal({ onLogout }) {
         console.error('Error loading wallet transactions:', transactionsError);
         transactionsData = [];
         setTransactions([]);
+      }
+
+      // Fetch borrowing/penalty stats for dashboard
+      try {
+        const statsResponse = await borrowingRequestAPI.getBorrowPenaltyStats();
+        const statsData = Array.isArray(statsResponse) ? statsResponse : (statsResponse?.data ?? []);
+        console.log('Borrow/penalty stats raw response:', statsResponse);
+        console.log('Borrow/penalty stats loaded:', statsData.length, 'items');
+        console.log('Sample stat:', statsData[0]);
+        setBorrowPenaltyStats(statsData);
+      } catch (statsError) {
+        console.error('Error loading borrow/penalty stats:', statsError);
+        setBorrowPenaltyStats([]);
       }
 
       setFines([]);
@@ -1859,7 +1914,15 @@ function AdminPortal({ onLogout }) {
                 variants={pageVariants}
                 transition={pageTransition}
               >
-                {selectedKey === 'dashboard' && <DashboardContent systemStats={systemStats} />}
+                {selectedKey === 'dashboard' && (
+                  <DashboardContent
+                    systemStats={systemStats}
+                    users={users}
+                    rentalRequests={rentalRequests}
+                    fines={fines}
+                    borrowPenaltyStats={borrowPenaltyStats}
+                  />
+                )}
                 {selectedKey === 'kits' && <KitManagement kits={kits} setKits={setKits} handleExportKits={handleExportKits} handleImportKits={handleImportKits} />}
                 {selectedKey === 'rentals' && <RentalApprovals rentalRequests={rentalRequests} setRentalRequests={setRentalRequests} setLogHistory={setLogHistory} setTransactions={setTransactions} setRefundRequests={setRefundRequests} onNavigateToRefunds={() => setSelectedKey('refunds')} />}
                 {selectedKey === 'refunds' && <RefundApprovals refundRequests={refundRequests} setRefundRequests={setRefundRequests} openRefundKitInspection={openRefundKitInspection} setLogHistory={setLogHistory} />}
@@ -2244,7 +2307,198 @@ function AdminPortal({ onLogout }) {
 }
 
 // Dashboard Component
-const DashboardContent = ({ systemStats }) => {
+const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPenaltyStats }) => {
+  const [customDateRange, setCustomDateRange] = useState([]);
+  const mapRoleToGroup = (role) => {
+    const normalized = (role || '').toLowerCase();
+    if (normalized.includes('student')) return 'student';
+    if (normalized.includes('lecturer')) return 'lecturer';
+    // Gom quản trị vào nhóm khác để không hiển thị riêng
+    return 'other';
+  };
+
+  const getSemesterLabel = (dateValue) => {
+    const parsed = dayjs(dateValue);
+    if (!parsed.isValid()) {
+      return 'N/A';
+    }
+    const month = parsed.month();
+    const year = parsed.year();
+    return month <= 5 ? `${year}-SPRING` : `${year}-FALL`;
+  };
+
+  const normalizeDate = (value) => {
+    const parsed = dayjs(value);
+    return parsed.isValid() ? parsed : null;
+  };
+
+  const filteredUsers = useMemo(() => {
+    const list = Array.isArray(users) ? users : [];
+    return list.filter((user) => {
+      const createdAt = normalizeDate(user.createdAt || user.updatedAt);
+      if (!createdAt) {
+        return false;
+      }
+      // Apply custom date range if selected
+      if (Array.isArray(customDateRange) && customDateRange.length === 2) {
+        const [start, end] = customDateRange;
+        if (start && end) {
+          const startDay = start.startOf('day');
+          const endDay = end.startOf('day');
+          if (createdAt.isBefore(startDay, 'day') || createdAt.isAfter(endDay, 'day')) {
+            return false;
+          }
+        }
+      }
+      return true;
+    });
+  }, [users, customDateRange]);
+
+  const roleCounts = useMemo(() => {
+    const base = { student: 0, lecturer: 0, other: 0 };
+    filteredUsers.forEach((user) => {
+      const key = mapRoleToGroup(user.role);
+      base[key] = (base[key] || 0) + 1;
+    });
+    return base;
+  }, [filteredUsers]);
+
+  const totalFilteredUsers = filteredUsers.length;
+  const totalUsers = Array.isArray(users) ? users.length : 0;
+
+  const rangeLabel = useMemo(() => {
+    if (Array.isArray(customDateRange) && customDateRange.length === 2) {
+      const [start, end] = customDateRange;
+      if (start && end) {
+        return `${start.format('DD/MM/YYYY')} - ${end.format('DD/MM/YYYY')}`;
+      }
+    }
+    return 'toàn bộ thời gian';
+  }, [customDateRange]);
+
+  const userChartSegments = [
+    { key: 'student', label: 'Sinh viên', color: '#1677ff', count: roleCounts.student },
+    { key: 'lecturer', label: 'Giảng viên', color: '#52c41a', count: roleCounts.lecturer },
+    { key: 'other', label: 'Khác', color: '#faad14', count: roleCounts.other }
+  ];
+
+  // Get date range based on filter
+  const getDateRange = useMemo(() => {
+    const statsList = Array.isArray(borrowPenaltyStats) ? borrowPenaltyStats : [];
+    // Collect all available dates from stats
+    const allDates = statsList
+      .map((s) => normalizeDate(s.statDate || s.createdAt))
+      .filter(Boolean)
+      .map((d) => d.startOf('day'));
+
+    const today = dayjs();
+    const maxDate = allDates.length > 0
+      ? allDates.reduce((max, d) => (d.isAfter(max) ? d : max), allDates[0])
+      : today;
+    const minDate = allDates.length > 0
+      ? allDates.reduce((min, d) => (d.isBefore(min) ? d : min), allDates[0])
+      : today;
+
+    const buildRange = (start, end) => {
+      const days = [];
+      let current = start.startOf('day');
+      const endDay = end.startOf('day');
+      while (current.isBefore(endDay) || current.isSame(endDay, 'day')) {
+        days.push(current.format('YYYY-MM-DD'));
+        current = current.add(1, 'day');
+      }
+      return days;
+    };
+
+    // Custom range (user selection)
+    if (Array.isArray(customDateRange) && customDateRange.length === 2) {
+      const [start, end] = customDateRange;
+      if (start && end) {
+        return buildRange(start, end);
+      }
+    }
+
+    // Default: show span of available data
+    return buildRange(minDate, maxDate);
+  }, [borrowPenaltyStats, customDateRange]);
+
+  // Filter and group stats by date from API
+  const statsByDate = useMemo(() => {
+    const statsList = Array.isArray(borrowPenaltyStats) ? borrowPenaltyStats : [];
+    const now = dayjs();
+    const grouped = {};
+
+    console.log('Processing stats:', statsList.length, 'items');
+    console.log('Date range:', getDateRange);
+
+    statsList.forEach((stat) => {
+      // Parse statDate - could be string or LocalDate format (YYYY-MM-DD)
+      let statDate = stat.statDate || stat.createdAt;
+      if (!statDate) {
+        console.warn('Stat missing date:', stat);
+        return;
+      }
+
+      // Handle different date formats - LocalDate comes as "YYYY-MM-DD" string
+      const dateValue = normalizeDate(statDate);
+      if (!dateValue) {
+        console.warn('Invalid date format:', statDate, typeof statDate);
+        return;
+      }
+
+      const dateKey = dateValue.format('YYYY-MM-DD');
+
+      // Apply custom range filter if selected
+      if (Array.isArray(customDateRange) && customDateRange.length === 2) {
+        const [start, end] = customDateRange;
+        if (start && end) {
+          const startDay = start.startOf('day');
+          const endDay = end.startOf('day');
+          if (dateValue.isBefore(startDay, 'day') || dateValue.isAfter(endDay, 'day')) {
+            return;
+          }
+        }
+      }
+
+      // Add to grouped data
+      if (!grouped[dateKey]) {
+        grouped[dateKey] = { returnedCount: 0, penaltyAmount: 0 };
+      }
+      // totalBorrow is count of requests, totalPenalty is sum of penalty amounts
+      grouped[dateKey].returnedCount += (Number(stat.totalBorrow) || 0);
+      grouped[dateKey].penaltyAmount += (Number(stat.totalPenalty) || 0);
+      console.log('Added stat to', dateKey, ':', stat.totalBorrow, stat.totalPenalty);
+    });
+
+    console.log('Grouped stats:', grouped);
+    console.log('Grouped stats keys:', Object.keys(grouped));
+    return grouped;
+  }, [borrowPenaltyStats, getDateRange, customDateRange]);
+
+  // Prepare chart data: array of { date, returnedCount, penaltyAmount }
+  const chartData = useMemo(() => {
+    const data = getDateRange.map(dateKey => ({
+      date: dateKey,
+      dateLabel: dayjs(dateKey).format('DD/MM'),
+      returnedCount: statsByDate[dateKey]?.returnedCount || 0,
+      penaltyAmount: statsByDate[dateKey]?.penaltyAmount || 0
+    }));
+
+    // Sort by date
+    data.sort((a, b) => {
+      const dateA = dayjs(a.date);
+      const dateB = dayjs(b.date);
+      return dateA.isBefore(dateB) ? -1 : dateA.isAfter(dateB) ? 1 : 0;
+    });
+
+    console.log('Chart data prepared:', data.length, 'days');
+    return data;
+  }, [getDateRange, statsByDate]);
+
+  // Calculate max values for scaling
+  const maxReturnedCount = Math.max(...chartData.map(d => d.returnedCount), 1);
+  const maxPenaltyAmount = Math.max(...chartData.map(d => d.penaltyAmount), 1);
+
   // Animation variants for dashboard
   const statCardVariants = {
     hidden: { opacity: 0, y: 30, scale: 0.9 },
@@ -2372,75 +2626,134 @@ const DashboardContent = ({ systemStats }) => {
         ))}
       </Row>
 
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col xs={24}>
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.8, duration: 0.5 }}
-          >
-            <Card
-              title="Recent Activity"
-              extra={<a href="#" style={{ color: '#667eea', fontWeight: 'bold' }}>View All</a>}
-              style={{
-                borderRadius: '20px',
-                background: 'rgba(255, 255, 255, 0.95)',
-                backdropFilter: 'blur(10px)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
-                border: '1px solid rgba(255,255,255,0.2)',
-                overflow: 'hidden'
-              }}
-              headStyle={{
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                color: '#fff',
-                borderBottom: 'none',
-                borderRadius: '20px 20px 0 0'
-              }}
-              bodyStyle={{
-                maxHeight: '500px',
-                overflowY: 'auto',
-                padding: '20px'
-              }}
-            >
-              {systemStats.recentActivity && systemStats.recentActivity.length > 0 ? (
-                <Timeline>
-                  {systemStats.recentActivity.map((activity, index) => (
-                    <motion.div
-                      key={index}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.9 + index * 0.1, duration: 0.3 }}
-                    >
-                      <Timeline.Item color="blue">
-                        <motion.p
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          transition={{ delay: 1 + index * 0.1, duration: 0.3 }}
-                          style={{ marginBottom: '4px' }}
-                        >
-                          {activity.action}
-                        </motion.p>
-                        <motion.p
-                          style={{ fontSize: 12, color: '#999', marginBottom: 0 }}
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          transition={{ delay: 1.1 + index * 0.1, duration: 0.3 }}
-                        >
-                          {activity.user} • {activity.time}
-                        </motion.p>
-                      </Timeline.Item>
-                    </motion.div>
-                  ))}
-                </Timeline>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.8, duration: 0.5 }}
+        className="user-chart-wrapper"
+      >
+        <Card
+          title="Thống kê người dùng"
+          className="user-chart-card"
+        >
+          <div className="user-chart-grid">
+            {userChartSegments.map((segment) => {
+              const percent = totalFilteredUsers
+                ? Math.round((segment.count / totalFilteredUsers) * 100)
+                : 0;
+              return (
+                <div className="user-chart-item" key={segment.key}>
+                  <div className="user-chart-circle">
+                    <Progress
+                      type="dashboard"
+                      percent={percent}
+                      size={148}
+                      strokeColor={segment.color}
+                      trailColor="#f0f2f5"
+                      format={() => segment.count}
+                    />
+                  </div>
+                  <div className="user-chart-legend">
+                    <span className={`user-chart-dot dot-${segment.key}`} />
+                    <div className="user-chart-legend-text">
+                      <span className="user-chart-legend-label">{segment.label}</span>
+                      <span className="user-chart-legend-percent">{percent}%</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="user-chart-summary">
+            <Text type="secondary">
+              Tổng {totalFilteredUsers} / {totalUsers} người dùng trong {rangeLabel}
+            </Text>
+          </div>
+        </Card>
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 1.0, duration: 0.5 }}
+        className="request-chart-wrapper"
+      >
+        <Card
+          title="Thống kê trả kit và tiền phạt theo ngày"
+          className="request-chart-card"
+          extra={
+            <RangePicker
+              allowClear
+              format="DD/MM/YYYY"
+              value={customDateRange}
+              onChange={(vals) => setCustomDateRange(vals || [])}
+            />
+          }
+        >
+          <div className="request-chart-container">
+            <div className="request-chart-legend">
+              <div className="request-chart-legend-item">
+                <span className="request-chart-legend-dot" style={{ backgroundColor: '#1677ff' }} />
+                <span>Số lượng trả</span>
+              </div>
+              <div className="request-chart-legend-item">
+                <span className="request-chart-legend-dot" style={{ backgroundColor: '#ff4d4f' }} />
+                <span>Tiền phạt đã đóng (VND)</span>
+              </div>
+            </div>
+            <div className="request-bars-timeline">
+              {chartData.length > 0 ? (
+                chartData.map((data, index) => (
+                  <div key={data.date} className="request-bar-group">
+                    <div className="request-bar-date-label">{data.dateLabel}</div>
+                    <div className="request-bar-pair">
+                      <div className="request-bar-item">
+                        <div className="request-bar-column">
+                          <div
+                            className="request-bar-fill"
+                            style={{
+                              height: `${Math.min((data.returnedCount / maxReturnedCount) * 100, 100)}%`,
+                              backgroundColor: '#1677ff'
+                            }}
+                            title={`${data.returnedCount} kit trả`}
+                          />
+                        </div>
+                        <div className="request-bar-value-label">{data.returnedCount}</div>
+                      </div>
+                      <div className="request-bar-item">
+                        <div className="request-bar-column">
+                          <div
+                            className="request-bar-fill"
+                            style={{
+                              height: `${Math.min((data.penaltyAmount / maxPenaltyAmount) * 100, 100)}%`,
+                              backgroundColor: '#ff4d4f'
+                            }}
+                            title={`${data.penaltyAmount.toLocaleString('vi-VN')} VND`}
+                          />
+                        </div>
+                        <div className="request-bar-value-label">
+                          {(data.penaltyAmount / 1000000).toFixed(1)}M
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))
               ) : (
-                <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
-                  No recent activity
+                <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
+                  <Empty description="Không có dữ liệu thống kê trong khoảng thời gian đã chọn" />
                 </div>
               )}
-            </Card>
-          </motion.div>
-        </Col>
-      </Row>
+            </div>
+          </div>
+          <div className="request-chart-summary">
+            <Text type="secondary">
+              Tổng {chartData.reduce((sum, d) => sum + d.returnedCount, 0)} kit đã trả và {
+                chartData.reduce((sum, d) => sum + d.penaltyAmount, 0).toLocaleString('vi-VN')
+              } VND tiền phạt đã đóng trong {rangeLabel}
+            </Text>
+          </div>
+        </Card>
+      </motion.div>
     </div>
   );
 };
