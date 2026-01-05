@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Layout,
   Menu,
@@ -24,7 +25,9 @@ import {
   Input,
   InputNumber,
   Select,
-  Divider
+  Divider,
+  Popover,
+  Drawer
 } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -47,9 +50,24 @@ import {
   ExclamationCircleOutlined,
   ShoppingOutlined,
   InfoCircleOutlined,
-  RollbackOutlined
+  RollbackOutlined,
+  EyeOutlined
 } from '@ant-design/icons';
-import { authAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, walletTransactionAPI, classesAPI, userAPI, penaltiesAPI, penaltyDetailAPI, paymentAPI } from './api';
+import {
+  authAPI,
+  borrowingGroupAPI,
+  studentGroupAPI,
+  walletAPI,
+  walletTransactionAPI,
+  classesAPI,
+  userAPI,
+  penaltiesAPI,
+  penaltyDetailAPI,
+  paymentAPI,
+  classAssignmentAPI,
+  notificationAPI,
+  borrowingRequestAPI
+} from './api';
 import dayjs from 'dayjs';
 
 // Default wallet structure
@@ -81,6 +99,7 @@ const formatDateTimeDisplay = (dateString) => {
 };
 
 function MemberPortal({ user, onLogout }) {
+  const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const [selectedKey, setSelectedKey] = useState('dashboard');
   const [loading, setLoading] = useState(false);
@@ -88,14 +107,24 @@ function MemberPortal({ user, onLogout }) {
   const [wallet, setWallet] = useState(defaultWallet);
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [borrowingRequests, setBorrowingRequests] = useState([]);
+  const [penalties, setPenalties] = useState([]);
+  const [penaltyDetails, setPenaltyDetails] = useState([]);
 
   // Group management states
   const [createGroupModalVisible, setCreateGroupModalVisible] = useState(false);
   const [joinGroupModalVisible, setJoinGroupModalVisible] = useState(false);
   const [availableGroups, setAvailableGroups] = useState([]);
   const [lecturers, setLecturers] = useState([]);
+  const [allLecturers, setAllLecturers] = useState([]);
   const [classes, setClasses] = useState([]);
+  const [classAssignments, setClassAssignments] = useState([]);
   const [form] = Form.useForm();
+
+  // Notifications states
+  const [notifications, setNotifications] = useState([]);
+  const [notificationLoading, setNotificationLoading] = useState(false);
+  const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
 
   // Animation variants
   const pageVariants = {
@@ -113,8 +142,182 @@ function MemberPortal({ user, onLogout }) {
   useEffect(() => {
     if (user && user.id) {
       loadData();
+      loadNotifications();
     }
   }, [user]);
+
+  // Load notifications
+  const loadNotifications = async () => {
+    try {
+      setNotificationLoading(true);
+      const response = await notificationAPI.getMyNotifications();
+      const data = response?.data ?? response;
+      const notificationsArray = Array.isArray(data) ? data : [];
+
+      // Sort notifications by createdAt descending (newest first)
+      const sortedNotifications = notificationsArray.sort((a, b) => {
+        const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0);
+        const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0);
+        return dateB - dateA; // Descending order (newest first)
+      });
+
+      setNotifications(sortedNotifications);
+    } catch (error) {
+      console.error('Error loading notifications:', error);
+      setNotifications([]);
+    } finally {
+      setNotificationLoading(false);
+    }
+  };
+
+  // Handle notification click - navigate based on notification type
+  const handleNotificationClick = async (notificationItem) => {
+    // Mark as read if not already read
+    if (!notificationItem.isRead && notificationItem.id) {
+      try {
+        await notificationAPI.markAsRead(notificationItem.id);
+        // Update notification state to mark as read
+        setNotifications(prev =>
+          prev.map(item =>
+            item.id === notificationItem.id
+              ? { ...item, isRead: true }
+              : item
+          )
+        );
+      } catch (error) {
+        console.error('Error marking notification as read:', error);
+      }
+    }
+
+    // Close popover
+    setNotificationPopoverOpen(false);
+
+    // Navigate based on notification subType
+    const subType = notificationItem.subType || notificationItem.type || '';
+
+    switch (subType) {
+      case 'UNPAID_PENALTY':
+        // Navigate to penalty payment page
+        // Check if penaltyId is in message or extract from notification
+        const penaltyIdMatch = notificationItem.message?.match(/penalty[:\s]+([a-f0-9-]+)/i) ||
+          notificationItem.message?.match(/phạt[:\s]+([a-f0-9-]+)/i);
+        if (penaltyIdMatch && penaltyIdMatch[1]) {
+          navigate(`/penalty-payment?penaltyId=${penaltyIdMatch[1]}`);
+        } else {
+          // Navigate to wallet page to see penalties
+          setSelectedKey('wallet');
+        }
+        break;
+
+      case 'DEPOSIT_SUCCESS':
+      case 'TOP_UP_SUCCESS':
+        // Navigate to wallet page
+        setSelectedKey('wallet');
+        break;
+
+      case 'OVERDUE_RETURN':
+        // Navigate to wallet page (where penalties are shown)
+        setSelectedKey('wallet');
+        break;
+
+      case 'RENTAL_APPROVED':
+      case 'RENTAL_REJECTED':
+        // Navigate to dashboard or wallet
+        setSelectedKey('dashboard');
+        break;
+
+      case 'GROUP_INVITATION':
+      case 'GROUP_UPDATE':
+        // Navigate to group info
+        setSelectedKey('group');
+        break;
+
+      default:
+        // Default: navigate to dashboard
+        setSelectedKey('dashboard');
+        break;
+    }
+  };
+
+  // Handle notification popover open/close
+  const handleNotificationOpenChange = (open) => {
+    setNotificationPopoverOpen(open);
+    if (open) {
+      loadNotifications();
+    }
+  };
+
+  // Render notification content (matching LeaderPortal.js layout)
+  const renderNotificationContent = () => (
+    <div style={{ width: 320, maxHeight: '400px', overflowY: 'auto' }}>
+      <Spin spinning={notificationLoading}>
+        {notifications.length > 0 ? (
+          <List
+            rowKey={(item) => item.id || item.title}
+            dataSource={notifications}
+            renderItem={(item) => {
+              // Get type info from notificationTypeStyles, fallback to subType or type
+              const typeKey = item.type || item.subType || 'SYSTEM';
+              const typeInfo = notificationTypeStyles[typeKey] || notificationTypeStyles[item.subType] || { color: 'blue', label: item.subType || item.type || 'Thông báo' };
+              const notificationDate = item.createdAt ? formatDateTimeDisplay(item.createdAt) : 'N/A';
+              const isUnread = !item.isRead;
+              return (
+                <List.Item
+                  style={{
+                    alignItems: 'flex-start',
+                    backgroundColor: isUnread ? '#f0f7ff' : 'transparent',
+                    cursor: 'pointer',
+                    padding: '12px'
+                  }}
+                  onClick={() => handleNotificationClick(item)}
+                >
+                  <List.Item.Meta
+                    title={
+                      <Space size={8} align="start">
+                        <Tag color={typeInfo.color}>{typeInfo.label}</Tag>
+                        <Text strong={isUnread}>{item.title || item.subType}</Text>
+                        {isUnread && <Badge dot color="blue" />}
+                      </Space>
+                    }
+                    description={
+                      <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                        <Text type="secondary">{item.message}</Text>
+                        <Text type="secondary" style={{ fontSize: '12px' }}>
+                          {notificationDate}
+                        </Text>
+                      </Space>
+                    }
+                  />
+                </List.Item>
+              );
+            }}
+          />
+        ) : (
+          <Empty description="Không có thông báo" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        )}
+      </Spin>
+    </div>
+  );
+
+  // Calculate unread notifications count
+  const unreadNotificationsCount = notifications.filter((item) => !item.isRead).length;
+
+  // Notification type styles (matching LeaderPortal.js layout)
+  const notificationTypeStyles = {
+    ALERT: { color: 'volcano', label: 'Cảnh báo' },
+    DEPOSIT: { color: 'green', label: 'Giao dịch ví' },
+    SYSTEM: { color: 'blue', label: 'Hệ thống' },
+    USER: { color: 'purple', label: 'Người dùng' },
+    // Additional subTypes for MemberPortal
+    UNPAID_PENALTY: { color: 'error', label: 'Phí phạt' },
+    OVERDUE_RETURN: { color: 'error', label: 'Quá hạn' },
+    DEPOSIT_SUCCESS: { color: 'success', label: 'Nạp tiền' },
+    TOP_UP_SUCCESS: { color: 'success', label: 'Nạp tiền' },
+    RENTAL_APPROVED: { color: 'success', label: 'Duyệt thuê' },
+    RENTAL_REJECTED: { color: 'error', label: 'Từ chối' },
+    GROUP_INVITATION: { color: 'blue', label: 'Nhóm' },
+    GROUP_UPDATE: { color: 'blue', label: 'Nhóm' }
+  };
 
   // Load lecturers and classes for create group form
   useEffect(() => {
@@ -125,24 +328,189 @@ function MemberPortal({ user, onLogout }) {
 
   const loadLecturersAndClasses = async () => {
     try {
-      // Load lecturers
+      // Load all lecturers
       const lecturersData = await userAPI.getLecturers();
-      setLecturers(lecturersData || []);
+      setAllLecturers(lecturersData || []);
+      setLecturers(lecturersData || []); // Initially show all lecturers
 
-      // Load classes
-      const classesData = await classesAPI.getAllClasses();
-      const classOptions = (classesData || []).map(cls => ({
-        value: cls.id,
-        label: `${cls.classCode || cls.className || 'Unknown'} - ${cls.semester || 'N/A'}`,
-        id: cls.id,
-        classCode: cls.classCode,
-        semester: cls.semester
-      }));
+      // Load all class assignments to filter lecturers by class
+      try {
+        const assignmentsResponse = await classAssignmentAPI.getAll();
+        const assignments = Array.isArray(assignmentsResponse)
+          ? assignmentsResponse
+          : (assignmentsResponse?.data || []);
+        setClassAssignments(assignments || []);
+      } catch (assignmentError) {
+        console.error('Error loading class assignments:', assignmentError);
+        setClassAssignments([]);
+      }
+
+      // Load classes that current member is studying (via ClassAssignment)
+      let classOptions = [];
+
+      try {
+        // Get all class assignments and detect those that belong to current user
+        const assignmentsResponse = await classAssignmentAPI.getAll();
+        const assignments = Array.isArray(assignmentsResponse)
+          ? assignmentsResponse
+          : (assignmentsResponse?.data || []);
+
+        const myAssignments = (assignments || []).filter((assignment) => {
+          // Try possible field names that reference current account
+          const byStudentId =
+            (assignment.studentId && assignment.studentId === user?.id) ||
+            (assignment.accountId && assignment.accountId === user?.id);
+
+          return !!byStudentId;
+        });
+
+        const classIds = Array.from(
+          new Set(
+            myAssignments
+              .map((assignment) => assignment.classId || assignment.classesId || assignment.class_id)
+              .filter(Boolean)
+          )
+        );
+
+        const allClassesResponse = await classesAPI.getAllClasses();
+        const allClasses = Array.isArray(allClassesResponse)
+          ? allClassesResponse
+          : (allClassesResponse?.data || []);
+
+        const filteredClasses = classIds.length
+          ? allClasses.filter((cls) => classIds.includes(cls.id))
+          : [];
+
+        classOptions = filteredClasses.map((cls) => ({
+          value: cls.id,
+          label: `${cls.classCode || cls.className || 'Unknown'} - ${cls.semester || 'N/A'}`,
+          id: cls.id,
+          classCode: cls.classCode,
+          semester: cls.semester,
+          teacherId: cls.teacherId,
+          teacherEmail: cls.teacherEmail,
+          teacherName: cls.teacherName
+        }));
+
+        // Fallback: if no classes detected from assignments, use all classes
+        if (!classOptions.length) {
+          const fallbackClassesData = allClasses.length ? allClasses : (await classesAPI.getAllClasses());
+          classOptions = (fallbackClassesData || []).map((cls) => ({
+            value: cls.id,
+            label: `${cls.classCode || cls.className || 'Unknown'} - ${cls.semester || 'N/A'}`,
+            id: cls.id,
+            classCode: cls.classCode,
+            semester: cls.semester,
+            teacherId: cls.teacherId,
+            teacherEmail: cls.teacherEmail,
+            teacherName: cls.teacherName
+          }));
+        }
+      } catch (classError) {
+        console.error('Error loading classes from assignments:', classError);
+        // Hard fallback: keep old behavior – load all classes
+        const classesData = await classesAPI.getAllClasses();
+        classOptions = (classesData || []).map((cls) => ({
+          value: cls.id,
+          label: `${cls.classCode || cls.className || 'Unknown'} - ${cls.semester || 'N/A'}`,
+          id: cls.id,
+          classCode: cls.classCode,
+          semester: cls.semester,
+          teacherId: cls.teacherId,
+          teacherEmail: cls.teacherEmail,
+          teacherName: cls.teacherName
+        }));
+      }
+
       setClasses(classOptions);
     } catch (error) {
       console.error('Error loading lecturers and classes:', error);
       message.error('Failed to load lecturers and classes');
     }
+  };
+
+  // Filter lecturers based on selected classId
+  const filterLecturersByClass = (classId) => {
+    if (!classId) {
+      // If no class selected, show all lecturers
+      setLecturers(allLecturers);
+      return;
+    }
+
+    console.log('Filtering lecturers for classId:', classId);
+    console.log('All classAssignments:', classAssignments);
+    console.log('All lecturers:', allLecturers);
+
+    // Find all class assignments for this classId
+    const assignmentsForClass = classAssignments.filter((assignment) => {
+      const assignmentClassId = assignment.classId || assignment.classesId || assignment.class_id;
+      // Convert to string for comparison in case of UUID mismatch
+      const classIdStr = String(classId);
+      const assignmentClassIdStr = String(assignmentClassId);
+      return assignmentClassIdStr === classIdStr;
+    });
+
+    console.log('Assignments for class:', assignmentsForClass);
+
+    // Get lecturer account IDs and emails from assignments
+    const lecturerAccountIds = new Set();
+    const lecturerEmails = new Set();
+
+    assignmentsForClass.forEach((assignment) => {
+      // Check if assignment is for a lecturer based on roleName
+      const roleName = (assignment.roleName || assignment.role || '').toUpperCase();
+      const isLecturerAssignment = roleName === 'LECTURER' || roleName === 'TEACHER';
+
+      console.log('Assignment:', assignment, 'roleName:', roleName, 'isLecturer:', isLecturerAssignment);
+
+      if (isLecturerAssignment) {
+        if (assignment.accountId) {
+          lecturerAccountIds.add(String(assignment.accountId));
+        }
+        if (assignment.accountEmail) {
+          lecturerEmails.add(assignment.accountEmail.toLowerCase());
+        }
+      }
+    });
+
+    // Also check from classes data - get teacherId/teacherEmail from selected class
+    const selectedClass = classes.find(cls => String(cls.id || cls.value) === String(classId));
+    if (selectedClass) {
+      if (selectedClass.teacherId) {
+        lecturerAccountIds.add(String(selectedClass.teacherId));
+      }
+      if (selectedClass.teacherEmail) {
+        lecturerEmails.add(selectedClass.teacherEmail.toLowerCase());
+      }
+    }
+
+    console.log('Lecturer account IDs:', Array.from(lecturerAccountIds));
+    console.log('Lecturer emails:', Array.from(lecturerEmails));
+
+    // Filter lecturers that match the account IDs or emails
+    const filteredLecturers = allLecturers.filter((lecturer) => {
+      const lecturerIdStr = lecturer.id ? String(lecturer.id) : null;
+      const lecturerEmailLower = lecturer.email ? lecturer.email.toLowerCase() : null;
+
+      const matches =
+        (lecturerIdStr && lecturerAccountIds.has(lecturerIdStr)) ||
+        (lecturerEmailLower && lecturerEmails.has(lecturerEmailLower));
+
+      return matches;
+    });
+
+    console.log('Filtered lecturers:', filteredLecturers);
+
+    // If no lecturers found, show all lecturers as fallback
+    if (filteredLecturers.length === 0) {
+      console.log('No lecturers found for class, showing all lecturers');
+      setLecturers(allLecturers);
+    } else {
+      setLecturers(filteredLecturers);
+    }
+
+    // Clear lecturer selection when class changes
+    form.setFieldsValue({ lecturer: undefined });
   };
 
   // Group management functions
@@ -331,6 +699,7 @@ function MemberPortal({ user, onLogout }) {
               id: studentGroup.id,
               name: studentGroup.groupName,
               leader: leaderMember ? (leaderMember.name || leaderMember.email) : 'N/A',
+              leaderId: leaderMember?.id || null,
               leaderEmail: leaderMember?.email || null,
               members: members.filter(m => (m.role || '').toUpperCase() === 'MEMBER'),
               lecturer: studentGroup.lecturerEmail || null,
@@ -392,6 +761,51 @@ function MemberPortal({ user, onLogout }) {
         setAvailableGroups([]);
       }
 
+      // Load penalties
+      try {
+        const penaltiesResponse = await penaltiesAPI.getPenByAccount();
+        console.log('Penalties response:', penaltiesResponse);
+
+        let penaltiesData = [];
+        if (Array.isArray(penaltiesResponse)) {
+          penaltiesData = penaltiesResponse;
+        } else if (penaltiesResponse && penaltiesResponse.data && Array.isArray(penaltiesResponse.data)) {
+          penaltiesData = penaltiesResponse.data;
+        }
+
+        setPenalties(penaltiesData);
+
+        // Load penalty details for each penalty
+        if (penaltiesData.length > 0) {
+          const detailsPromises = penaltiesData.map(async (penalty) => {
+            try {
+              const detailsResponse = await penaltyDetailAPI.findByPenaltyId(penalty.id);
+              let detailsData = [];
+              if (Array.isArray(detailsResponse)) {
+                detailsData = detailsResponse;
+              } else if (detailsResponse && detailsResponse.data && Array.isArray(detailsResponse.data)) {
+                detailsData = detailsResponse.data;
+              }
+              return { penaltyId: penalty.id, details: detailsData };
+            } catch (error) {
+              console.error(`Error loading penalty details for penalty ${penalty.id}:`, error);
+              return { penaltyId: penalty.id, details: [] };
+            }
+          });
+
+          const allDetails = await Promise.all(detailsPromises);
+          const detailsMap = {};
+          allDetails.forEach(({ penaltyId, details }) => {
+            detailsMap[penaltyId] = details;
+          });
+          setPenaltyDetails(detailsMap);
+        }
+      } catch (error) {
+        console.error('Error loading penalties:', error);
+        setPenalties([]);
+        setPenaltyDetails([]);
+      }
+
       console.log('Member data loaded successfully');
     } catch (error) {
       console.error('Error loading data:', error);
@@ -405,6 +819,7 @@ function MemberPortal({ user, onLogout }) {
     { key: 'dashboard', icon: <DashboardOutlined />, label: 'Dashboard' },
     { key: 'group', icon: <TeamOutlined />, label: 'Group Info' },
     { key: 'wallet', icon: <WalletOutlined />, label: 'Wallet' },
+    { key: 'borrow-tracking', icon: <ShoppingOutlined />, label: 'Borrow Tracking' },
     { key: 'profile', icon: <UserOutlined />, label: 'Profile' },
   ];
 
@@ -538,20 +953,36 @@ function MemberPortal({ user, onLogout }) {
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Badge count={1} size="small" style={{ cursor: 'pointer' }}>
-                  <div style={{
-                    padding: '12px',
-                    borderRadius: '12px',
-                    background: 'rgba(102, 126, 234, 0.1)',
-                    color: '#667eea',
-                    fontSize: '18px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    <BellOutlined />
-                  </div>
-                </Badge>
+                <Popover
+                  content={renderNotificationContent()}
+                  title={
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text strong>Notifications</Text>
+                      {unreadNotificationsCount > 0 && (
+                        <Tag color="blue">{unreadNotificationsCount} unread</Tag>
+                      )}
+                    </div>
+                  }
+                  trigger="click"
+                  open={notificationPopoverOpen}
+                  onOpenChange={handleNotificationOpenChange}
+                  placement="bottomRight"
+                >
+                  <Badge count={unreadNotificationsCount} size="small" style={{ cursor: 'pointer' }}>
+                    <div style={{
+                      padding: '12px',
+                      borderRadius: '12px',
+                      background: 'rgba(102, 126, 234, 0.1)',
+                      color: '#667eea',
+                      fontSize: '18px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      <BellOutlined />
+                    </div>
+                  </Badge>
+                </Popover>
               </motion.div>
               <motion.div
                 whileHover={{ scale: 1.1 }}
@@ -623,15 +1054,16 @@ function MemberPortal({ user, onLogout }) {
                 variants={pageVariants}
                 transition={pageTransition}
               >
-                                 {selectedKey === 'dashboard' && <DashboardContent group={group} wallet={wallet} />}
-                 {selectedKey === 'group' && <GroupInfo
-                   group={group}
-                   onCreateGroup={() => setCreateGroupModalVisible(true)}
-                   onJoinGroup={() => setJoinGroupModalVisible(true)}
-                   availableGroups={availableGroups}
-                 />}
-                 {selectedKey === 'wallet' && <WalletManagement wallet={wallet} setWallet={setWallet} loadData={loadData} />}
-                 {selectedKey === 'profile' && <ProfileManagement profile={profile} setProfile={setProfile} loading={profileLoading} setLoading={setProfileLoading} user={user} />}
+                {selectedKey === 'dashboard' && <DashboardContent group={group} wallet={wallet} />}
+                {selectedKey === 'group' && <GroupInfo
+                  group={group}
+                  onCreateGroup={() => setCreateGroupModalVisible(true)}
+                  onJoinGroup={() => setJoinGroupModalVisible(true)}
+                  availableGroups={availableGroups}
+                />}
+                {selectedKey === 'wallet' && <WalletManagement wallet={wallet} setWallet={setWallet} loadData={loadData} />}
+                {selectedKey === 'borrow-tracking' && <BorrowTracking borrowingRequests={borrowingRequests} setBorrowingRequests={setBorrowingRequests} user={user} group={group} penalties={penalties} penaltyDetails={penaltyDetails} />}
+                {selectedKey === 'profile' && <ProfileManagement profile={profile} setProfile={setProfile} loading={profileLoading} setLoading={setProfileLoading} user={user} />}
               </motion.div>
             </AnimatePresence>
           </Spin>
@@ -642,7 +1074,11 @@ function MemberPortal({ user, onLogout }) {
       <Modal
         title="Create New Group"
         open={createGroupModalVisible}
-        onCancel={() => setCreateGroupModalVisible(false)}
+        onCancel={() => {
+          setCreateGroupModalVisible(false);
+          form.resetFields();
+          setLecturers(allLecturers); // Reset to all lecturers when closing
+        }}
         footer={null}
         width={600}
       >
@@ -650,6 +1086,12 @@ function MemberPortal({ user, onLogout }) {
           form={form}
           layout="vertical"
           onFinish={handleCreateGroup}
+          onValuesChange={(changedValues, allValues) => {
+            // When classId changes, filter lecturers
+            if (changedValues.classId !== undefined) {
+              filterLecturersByClass(changedValues.classId);
+            }
+          }}
         >
           <Form.Item
             name="name"
@@ -660,25 +1102,18 @@ function MemberPortal({ user, onLogout }) {
           </Form.Item>
 
           <Form.Item
-            name="lecturer"
-            label="Lecturer"
-            rules={[{ required: true, message: 'Please select a lecturer' }]}
-          >
-            <Select placeholder="Select lecturer" loading={lecturers.length === 0}>
-              {lecturers.map(lecturer => (
-                <Select.Option key={lecturer.id || lecturer.email} value={lecturer.email}>
-                  {lecturer.fullName || lecturer.email} {lecturer.email && `(${lecturer.email})`}
-                </Select.Option>
-              ))}
-            </Select>
-          </Form.Item>
-
-          <Form.Item
             name="classId"
-            label="Class"
-            rules={[{ required: false, message: 'Please select a class (optional)' }]}
+            label="Class Code"
+            rules={[{ required: false, message: 'Please select a class' }]}
           >
-            <Select placeholder="Select class (optional)" allowClear loading={classes.length === 0}>
+            <Select
+              placeholder="Select class (optional)"
+              allowClear
+              loading={classes.length === 0}
+              onChange={(value) => {
+                filterLecturersByClass(value);
+              }}
+            >
               {classes.map(cls => (
                 <Select.Option key={cls.id || cls.value} value={cls.id || cls.value}>
                   {cls.label || `${cls.classCode} - ${cls.semester}`}
@@ -687,9 +1122,31 @@ function MemberPortal({ user, onLogout }) {
             </Select>
           </Form.Item>
 
+          <Form.Item
+            name="lecturer"
+            label="Lecturer"
+            rules={[{ required: true, message: 'Please select a lecturer' }]}
+          >
+            <Select
+              placeholder={lecturers.length === 0 ? "Select class code first" : "Select lecturer"}
+              loading={lecturers.length === 0 && allLecturers.length > 0}
+              disabled={lecturers.length === 0}
+            >
+              {lecturers.map(lecturer => (
+                <Select.Option key={lecturer.id || lecturer.email} value={lecturer.email}>
+                  {lecturer.fullName || lecturer.email} {lecturer.email && `(${lecturer.email})`}
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+
           <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
             <Space>
-              <Button onClick={() => setCreateGroupModalVisible(false)}>
+              <Button onClick={() => {
+                setCreateGroupModalVisible(false);
+                form.resetFields();
+                setLecturers(allLecturers); // Reset to all lecturers when canceling
+              }}>
                 Cancel
               </Button>
               <Button type="primary" htmlType="submit">
@@ -874,30 +1331,55 @@ const DashboardContent = ({ group, wallet }) => (
               <List
                 size="small"
                 dataSource={wallet.transactions.slice(0, 5)}
-                renderItem={(item) => (
-                  <List.Item>
-                    <List.Item.Meta
-                      avatar={<DollarOutlined style={{ color: item.amount > 0 ? '#52c41a' : '#ff4d4f' }} />}
-                      title={
-                        <Tag color={
-                          item.type === 'TOP_UP' ? 'success' :
-                          item.type === 'RENTAL_FEE' ? 'processing' :
-                          item.type === 'PENALTY_PAYMENT' ? 'error' :
-                          item.type === 'REFUND' ? 'purple' : 'default'
-                        }>
-                          {item.type?.replace(/_/g, ' ') || 'Transaction'}
-                        </Tag>
-                      }
-                      description={item.date || item.description}
-                    />
-                    <div style={{
-                      color: item.amount > 0 ? '#52c41a' : '#ff4d4f',
-                      fontWeight: 'bold'
-                    }}>
-                      {item.amount > 0 ? '+' : ''}{item.amount?.toLocaleString() || 0} VND
-                    </div>
-                  </List.Item>
-                )}
+                renderItem={(item) => {
+                  // Determine color based on transaction type
+                  const typeUpper = (item.type || '').toUpperCase();
+                  const isPositiveTransaction =
+                    typeUpper === 'TOP_UP' ||
+                    typeUpper === 'TOPUP' ||
+                    typeUpper === 'REFUND';
+                  const isNegativeTransaction =
+                    typeUpper === 'RENTAL_FEE' ||
+                    typeUpper === 'PENALTY_PAYMENT' ||
+                    typeUpper === 'PENALTY' ||
+                    typeUpper === 'FINE';
+
+                  // Use type-based color if available, otherwise fallback to amount-based
+                  let amountColor = '#595959'; // default gray
+                  if (isPositiveTransaction) {
+                    amountColor = '#52c41a'; // green for top-up and refund
+                  } else if (isNegativeTransaction) {
+                    amountColor = '#ff4d4f'; // red for rental fee and penalty
+                  } else {
+                    // Fallback: use amount sign
+                    amountColor = item.amount > 0 ? '#52c41a' : '#ff4d4f';
+                  }
+
+                  return (
+                    <List.Item>
+                      <List.Item.Meta
+                        avatar={<DollarOutlined style={{ color: amountColor }} />}
+                        title={
+                          <Tag color={
+                            item.type === 'TOP_UP' ? 'success' :
+                              item.type === 'RENTAL_FEE' ? 'processing' :
+                                item.type === 'PENALTY_PAYMENT' ? 'error' :
+                                  item.type === 'REFUND' ? 'purple' : 'default'
+                          }>
+                            {item.type?.replace(/_/g, ' ') || 'Transaction'}
+                          </Tag>
+                        }
+                        description={item.date || item.description}
+                      />
+                      <div style={{
+                        color: amountColor,
+                        fontWeight: 'bold'
+                      }}>
+                        {isPositiveTransaction ? '+' : ''}{item.amount?.toLocaleString() || 0} VND
+                      </div>
+                    </List.Item>
+                  );
+                }}
               />
             ) : (
               <Empty description="No transactions yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
@@ -914,81 +1396,81 @@ const GroupInfo = ({ group, onCreateGroup, onJoinGroup, availableGroups }) => (
   <div>
     <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
       <Card title="Group Information" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            {group ? (
-              <Row gutter={[24, 24]}>
-                <Col xs={24} md={12}>
-                  <Card title="Basic Info" size="small">
-                    <Descriptions column={1} bordered>
-                      <Descriptions.Item label="Group Name">
-                        <Text strong>{group.name}</Text>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Leader">
-                        <Tag color="gold">{group.leader}</Tag>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Total Members">
-                        <Badge count={(group.members?.length || 0) + 1} showZero color="#52c41a" />
-                      </Descriptions.Item>
-                      {group.lecturer && (
-                        <Descriptions.Item label="Lecturer">
-                          <Tag color="purple">{group.lecturer}</Tag>
-                        </Descriptions.Item>
-                      )}
-                      {group.classCode && (
-                        <Descriptions.Item label="Class Code">
-                          <Text code>{group.classCode}</Text>
-                        </Descriptions.Item>
-                      )}
-                      <Descriptions.Item label="Status">
-                        <Tag color={group.status === 'active' ? 'success' : 'error'}>
-                          {group.status || 'inactive'}
-                        </Tag>
-                      </Descriptions.Item>
-                    </Descriptions>
-                  </Card>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Card title="Members" size="small">
-                    <List
-                      size="small"
-                      dataSource={[
-                        ...(group.members || []),
-                        ...(group.leader ? [{ name: group.leader, email: group.leaderEmail, role: 'LEADER' }] : [])
-                      ]}
-                      renderItem={(member) => {
-                        const memberName = typeof member === 'string' ? member : (member.name || member.email);
-                        const memberEmail = typeof member === 'string' ? member : member.email;
-                        const memberRole = typeof member === 'string' ? 'MEMBER' : (member.role || 'MEMBER');
-                        const isLeader = memberRole === 'LEADER';
+        {group ? (
+          <Row gutter={[24, 24]}>
+            <Col xs={24} md={12}>
+              <Card title="Basic Info" size="small">
+                <Descriptions column={1} bordered>
+                  <Descriptions.Item label="Group Name">
+                    <Text strong>{group.name}</Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Leader">
+                    <Tag color="gold">{group.leader}</Tag>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Total Members">
+                    <Badge count={(group.members?.length || 0) + 1} showZero color="#52c41a" />
+                  </Descriptions.Item>
+                  {group.lecturer && (
+                    <Descriptions.Item label="Lecturer">
+                      <Tag color="purple">{group.lecturer}</Tag>
+                    </Descriptions.Item>
+                  )}
+                  {group.classCode && (
+                    <Descriptions.Item label="Class Code">
+                      <Text code>{group.classCode}</Text>
+                    </Descriptions.Item>
+                  )}
+                  <Descriptions.Item label="Status">
+                    <Tag color={group.status === 'active' ? 'success' : 'error'}>
+                      {group.status || 'inactive'}
+                    </Tag>
+                  </Descriptions.Item>
+                </Descriptions>
+              </Card>
+            </Col>
+            <Col xs={24} md={12}>
+              <Card title="Members" size="small">
+                <List
+                  size="small"
+                  dataSource={[
+                    ...(group.members || []),
+                    ...(group.leader ? [{ name: group.leader, email: group.leaderEmail, role: 'LEADER' }] : [])
+                  ]}
+                  renderItem={(member) => {
+                    const memberName = typeof member === 'string' ? member : (member.name || member.email);
+                    const memberEmail = typeof member === 'string' ? member : member.email;
+                    const memberRole = typeof member === 'string' ? 'MEMBER' : (member.role || 'MEMBER');
+                    const isLeader = memberRole === 'LEADER';
 
-                        return (
-                          <List.Item>
-                            <List.Item.Meta
-                              avatar={
-                                <Avatar
-                                  icon={<UserOutlined />}
-                                  style={{ backgroundColor: isLeader ? '#faad14' : '#52c41a' }}
-                                >
-                                  {isLeader ? 'L' : 'M'}
-                                </Avatar>
-                              }
-                              title={
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <span>{memberName}</span>
-                                  <Tag color={isLeader ? 'gold' : 'blue'} size="small">
-                                    {memberRole}
-                                  </Tag>
-                                </div>
-                              }
-                              description={memberEmail || 'Group Member'}
-                            />
-                          </List.Item>
-                        );
-                      }}
-                    />
-                  </Card>
-                </Col>
-              </Row>
-            ) : (
+                    return (
+                      <List.Item>
+                        <List.Item.Meta
+                          avatar={
+                            <Avatar
+                              icon={<UserOutlined />}
+                              style={{ backgroundColor: isLeader ? '#faad14' : '#52c41a' }}
+                            >
+                              {isLeader ? 'L' : 'M'}
+                            </Avatar>
+                          }
+                          title={
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span>{memberName}</span>
+                              <Tag color={isLeader ? 'gold' : 'blue'} size="small">
+                                {memberRole}
+                              </Tag>
+                            </div>
+                          }
+                          description={memberEmail || 'Group Member'}
+                        />
+                      </List.Item>
+                    );
+                  }}
+                />
+              </Card>
+            </Col>
+          </Row>
+        ) : (
           <div>
             <Alert
               message="No Group Found"
@@ -1114,6 +1596,8 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
   const [payingPenalty, setPayingPenalty] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
+  const [detailsModalVisible, setDetailsModalVisible] = useState(false);
+  const [selectedTransaction, setSelectedTransaction] = useState(null);
 
   // Predefined amount options for topup
   const amountOptions = [
@@ -1236,6 +1720,7 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
       const mappedTransactions = transactionsData.map(txn => ({
         type: txn.type || txn.transactionType || 'UNKNOWN',
         amount: txn.amount || 0,
+        previousBalance: txn.previousBalance || null,
         date: txn.createdAt ? formatDateTimeDisplay(txn.createdAt) : 'N/A',
         description: txn.description || '',
         status: txn.status || txn.transactionStatus || 'COMPLETED',
@@ -1435,26 +1920,48 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
     }
   };
 
+  const handleShowDetails = (transaction) => {
+    setSelectedTransaction(transaction);
+    setDetailsModalVisible(true);
+  };
+
+  const handleCloseDetails = () => {
+    setDetailsModalVisible(false);
+    setSelectedTransaction(null);
+  };
+
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'currency',
+      currency: 'VND'
+    }).format(amount || 0);
+  };
+
+  const formatDateTime = (dateTimeString) => {
+    if (!dateTimeString) return 'N/A';
+    return formatDateTimeDisplay(dateTimeString);
+  };
+
   return (
-  <div>
-    <Row gutter={[24, 24]}>
-      <Col xs={24} md={8}>
-        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-          <Card
-            style={{
-              borderRadius: '16px',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              color: 'white'
-            }}
-          >
-            <Statistic
-              title="Current Balance"
+    <div>
+      <Row gutter={[24, 24]}>
+        <Col xs={24} md={8}>
+          <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+            <Card
+              style={{
+                borderRadius: '16px',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                color: 'white'
+              }}
+            >
+              <Statistic
+                title="Current Balance"
                 value={wallet.balance || 0}
-              prefix={<DollarOutlined />}
-              suffix="VND"
-              valueStyle={{ color: 'white', fontWeight: 'bold' }}
-            />
+                prefix={<DollarOutlined />}
+                suffix="VND"
+                valueStyle={{ color: 'white', fontWeight: 'bold' }}
+              />
               <Space direction="vertical" style={{ width: '100%', marginTop: '16px' }}>
                 <Button
                   type="primary"
@@ -1479,12 +1986,12 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
                   Pay Penalties
                 </Button>
               </Space>
-          </Card>
-        </motion.div>
-      </Col>
+            </Card>
+          </motion.div>
+        </Col>
 
-      <Col xs={24} md={16}>
-        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+        <Col xs={24} md={16}>
+          <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
             <Card
               title="Transaction History"
               extra={
@@ -1499,13 +2006,15 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
               style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
             >
               <Spin spinning={transactionsLoading}>
-            <Table
+                <Table
                   dataSource={transactions}
-              columns={[
-                {
-                  title: 'Type',
-                  dataIndex: 'type',
-                  key: 'type',
+                  scroll={{ x: 'max-content' }}
+                  columns={[
+                    {
+                      title: 'Type',
+                      dataIndex: 'type',
+                      key: 'type',
+                      width: 150,
                       render: (type) => {
                         const config = getTransactionTypeConfig(type);
                         return (
@@ -1527,29 +2036,72 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
                           </Tag>
                         );
                       }
-                },
-                {
-                  title: 'Amount',
-                  dataIndex: 'amount',
-                  key: 'amount',
-                      render: (amount) => (
-                        <Text strong style={{
-                          color: amount > 0 ? '#52c41a' : '#ff4d4f'
-                        }}>
-                          {amount ? amount.toLocaleString() : 0} VND
-                        </Text>
-                      ),
+                    },
+                    {
+                      title: 'Previous Balance',
+                      dataIndex: 'previousBalance',
+                      key: 'previousBalance',
+                      width: 150,
+                      render: (previousBalance) => {
+                        if (previousBalance === null || previousBalance === undefined) {
+                          return <Text type="secondary">N/A</Text>;
+                        }
+                        return (
+                          <Text type="secondary">
+                            {previousBalance.toLocaleString()} VND
+                          </Text>
+                        );
+                      },
+                    },
+                    {
+                      title: 'Amount',
+                      dataIndex: 'amount',
+                      key: 'amount',
+                      width: 150,
+                      render: (amount, record) => {
+                        // Determine color based on transaction type
+                        const typeUpper = (record.type || '').toUpperCase();
+                        const isPositiveTransaction =
+                          typeUpper === 'TOP_UP' ||
+                          typeUpper === 'TOPUP' ||
+                          typeUpper === 'REFUND';
+                        const isNegativeTransaction =
+                          typeUpper === 'RENTAL_FEE' ||
+                          typeUpper === 'PENALTY_PAYMENT' ||
+                          typeUpper === 'PENALTY' ||
+                          typeUpper === 'FINE';
+
+                        // Use type-based color if available, otherwise fallback to amount-based
+                        let color = '#595959'; // default gray
+                        if (isPositiveTransaction) {
+                          color = '#52c41a'; // green for top-up and refund
+                        } else if (isNegativeTransaction) {
+                          color = '#ff4d4f'; // red for rental fee and penalty
+                        } else {
+                          // Fallback: use amount sign
+                          color = amount > 0 ? '#52c41a' : '#ff4d4f';
+                        }
+
+                        return (
+                          <Text strong style={{ color }}>
+                            {amount ? amount.toLocaleString() : 0} VND
+                          </Text>
+                        );
+                      },
                     },
                     {
                       title: 'Description',
                       dataIndex: 'description',
                       key: 'description',
+                      width: 200,
+                      ellipsis: true,
                       render: (description) => description || 'N/A',
                     },
                     {
                       title: 'Date',
                       dataIndex: 'createdAt',
                       key: 'date',
+                      width: 180,
                       render: (date) => {
                         if (!date) return 'N/A';
                         return formatDateTimeDisplay(date);
@@ -1559,16 +2111,38 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
                       title: 'Status',
                       dataIndex: 'status',
                       key: 'status',
+                      width: 120,
                       render: (status) => {
                         const statusColor = status === 'COMPLETED' || status === 'SUCCESS' ? 'success' :
-                                          status === 'PENDING' ? 'processing' :
-                                          status === 'FAILED' ? 'error' : 'default';
+                          status === 'PENDING' ? 'processing' :
+                            status === 'FAILED' ? 'error' : 'default';
                         return (
                           <Tag color={statusColor}>
                             {status || 'N/A'}
                           </Tag>
                         );
                       },
+                    },
+                    {
+                      title: 'Details',
+                      key: 'details',
+                      width: 120,
+                      fixed: 'right',
+                      render: (_, record) => (
+                        <motion.div
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                        >
+                          <Button
+                            type="default"
+                            size="small"
+                            icon={<EyeOutlined />}
+                            onClick={() => handleShowDetails(record)}
+                          >
+                            Details
+                          </Button>
+                        </motion.div>
+                      )
                     },
                   ]}
                   rowKey={(record, index) => record.id || record.transactionId || index}
@@ -1580,10 +2154,10 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
                   locale={{ emptyText: 'No transactions found' }}
                 />
               </Spin>
-          </Card>
-        </motion.div>
-      </Col>
-    </Row>
+            </Card>
+          </motion.div>
+        </Col>
+      </Row>
 
       {/* Top Up Modal */}
       <Modal
@@ -1807,8 +2381,85 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
           )}
         </Spin>
       </Modal>
-  </div>
-);
+
+      {/* Transaction Details Modal */}
+      <Modal
+        title="Transaction Details"
+        open={detailsModalVisible}
+        onCancel={handleCloseDetails}
+        footer={[
+          <Button key="close" onClick={handleCloseDetails}>
+            Close
+          </Button>
+        ]}
+        width={700}
+        centered
+        destroyOnClose
+      >
+        {selectedTransaction && (
+          <Descriptions bordered column={2}>
+            <Descriptions.Item label="Transaction ID" span={2}>
+              <Text code>{selectedTransaction.transactionId || selectedTransaction.id || 'N/A'}</Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="Transaction Type">
+              {(() => {
+                const type = selectedTransaction.type || selectedTransaction.transactionType || 'UNKNOWN';
+                const config = getTransactionTypeConfig(type);
+                return (
+                  <Tag
+                    color={config.color}
+                    style={{
+                      background: config.bg,
+                      border: config.border,
+                      color: config.text,
+                      fontWeight: 'bold',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      fontSize: 13,
+                      letterSpacing: 1
+                    }}
+                  >
+                    {config.icon} <span>{config.label}</span>
+                  </Tag>
+                );
+              })()}
+            </Descriptions.Item>
+            <Descriptions.Item label="Previous Balance">
+              {selectedTransaction.previousBalance !== null && selectedTransaction.previousBalance !== undefined
+                ? formatCurrency(selectedTransaction.previousBalance)
+                : 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Amount">
+              <Text strong style={{ fontSize: '18px', color: (selectedTransaction.amount || 0) >= 0 ? '#52c41a' : '#ff4d4f' }}>
+                {formatCurrency(selectedTransaction.amount || 0)}
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="Status">
+              {(() => {
+                const status = selectedTransaction.status || selectedTransaction.transactionStatus || 'N/A';
+                const statusColor = status === 'COMPLETED' || status === 'SUCCESS' ? 'success' :
+                  status === 'PENDING' ? 'warning' :
+                    status === 'FAILED' ? 'error' : 'default';
+                return (
+                  <Tag color={statusColor}>
+                    {status}
+                  </Tag>
+                );
+              })()}
+            </Descriptions.Item>
+            <Descriptions.Item label="Description" span={2}>
+              {selectedTransaction.description || 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Transaction Date">
+              {selectedTransaction.transactionDate ? formatDateTime(selectedTransaction.transactionDate) :
+                selectedTransaction.createdAt ? formatDateTime(selectedTransaction.createdAt) : 'N/A'}
+            </Descriptions.Item>
+          </Descriptions>
+        )}
+      </Modal>
+    </div>
+  );
 };
 
 
@@ -2035,6 +2686,462 @@ const ProfileManagement = ({ profile, setProfile, loading, setLoading, user }) =
           </Spin>
         </Card>
       </motion.div>
+    </div>
+  );
+};
+
+// Borrow Tracking Component (View Only for Members - Shows Leader's Requests)
+const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user, group, penalties, penaltyDetails }) => {
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(false);
+  const [detailDrawerVisible, setDetailDrawerVisible] = useState(false);
+  const [selectedRequest, setSelectedRequest] = useState(null);
+  const [relatedPenalty, setRelatedPenalty] = useState(null);
+  const [relatedPenaltyDetails, setRelatedPenaltyDetails] = useState([]);
+  const [loadingPenalty, setLoadingPenalty] = useState(false);
+  const [leaderPenalties, setLeaderPenalties] = useState([]);
+  const [leaderPenaltyDetails, setLeaderPenaltyDetails] = useState({});
+
+  const fetchBorrowingRequests = useCallback(async () => {
+    setLoading(true);
+    try {
+      // Get leader ID from group
+      const leaderId = group?.leaderId;
+
+      if (!leaderId) {
+        console.warn('No leader found in group');
+        setBorrowingRequests([]);
+        message.warning('No leader found in your group. Please contact admin.');
+        return;
+      }
+
+      console.log('Fetching borrowing requests for leader ID:', leaderId);
+      const requests = await borrowingRequestAPI.getByUser(leaderId);
+      console.log('Borrowing requests for leader:', requests);
+
+      // Sort by createdAt descending (newest first)
+      const sortedRequests = (requests || []).sort((a, b) => {
+        if (!a.createdAt && !b.createdAt) return 0;
+        if (!a.createdAt) return 1;
+        if (!b.createdAt) return -1;
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      });
+
+      setBorrowingRequests(sortedRequests);
+    } catch (error) {
+      console.error('Error fetching borrowing requests:', error);
+      message.error('Failed to load borrowing requests');
+    } finally {
+      setLoading(false);
+    }
+  }, [group, setBorrowingRequests]);
+
+  // Load leader's penalties
+  const loadLeaderPenalties = useCallback(async () => {
+    if (!group?.leaderId) {
+      setLeaderPenalties([]);
+      setLeaderPenaltyDetails({});
+      return;
+    }
+
+    try {
+      console.log('Loading penalties for leader ID:', group.leaderId);
+      // Note: getPenByAccount() gets penalties for current user
+      // We need to load penalties when viewing request details instead
+      // For now, we'll load them on demand in showRequestDetails
+    } catch (error) {
+      console.error('Error loading leader penalties:', error);
+      setLeaderPenalties([]);
+      setLeaderPenaltyDetails({});
+    }
+  }, [group?.leaderId]);
+
+  useEffect(() => {
+    if (group?.leaderId) {
+      fetchBorrowingRequests();
+      loadLeaderPenalties();
+    } else {
+      setBorrowingRequests([]);
+      setLeaderPenalties([]);
+      setLeaderPenaltyDetails({});
+    }
+  }, [group?.leaderId, fetchBorrowingRequests, loadLeaderPenalties]);
+
+  const showRequestDetails = async (request) => {
+    setSelectedRequest(request);
+    setDetailDrawerVisible(true);
+
+    // Reset penalty data first
+    setRelatedPenalty(null);
+    setRelatedPenaltyDetails([]);
+
+    // If request is RETURNED, find related penalty
+    if (request.status === 'RETURNED') {
+      setLoadingPenalty(true);
+      try {
+        // Try to find penalty by request ID - search in all possible penalty sources
+        // First check if penalty is already in the request object
+        let penalty = request.penalty || null;
+
+        // If not found, try to search by request ID in various ways
+        if (!penalty) {
+          // Search in leader penalties if loaded
+          if (leaderPenalties && leaderPenalties.length > 0) {
+            penalty = leaderPenalties.find(p =>
+              (p.borrowRequestId && p.borrowRequestId === request.id) ||
+              (p.request && p.request.id === request.id) ||
+              (p.requestId && p.requestId === request.id)
+            );
+          }
+
+          // If still not found, try member penalties (might have some overlap)
+          if (!penalty && penalties && penalties.length > 0) {
+            penalty = penalties.find(p =>
+              (p.borrowRequestId && p.borrowRequestId === request.id) ||
+              (p.request && p.request.id === request.id) ||
+              (p.requestId && p.requestId === request.id)
+            );
+          }
+        }
+
+        // If still not found, try to load penalty directly by request ID from API
+        if (!penalty) {
+          try {
+            console.log('Loading penalty by request ID from API:', request.id);
+            const penaltyResponse = await penaltiesAPI.getPenaltyByRequestId(request.id);
+            console.log('Penalty API response:', penaltyResponse);
+
+            if (penaltyResponse && penaltyResponse.data) {
+              penalty = penaltyResponse.data;
+              console.log('Found penalty from API:', penalty);
+            } else if (penaltyResponse && !penaltyResponse.data && penaltyResponse.status === 'NOT_FOUND') {
+              console.log('No penalty found for request ID:', request.id);
+            }
+          } catch (error) {
+            console.error('Error loading penalty by request ID:', error);
+          }
+        }
+
+        if (penalty) {
+          console.log('Found related penalty:', penalty);
+          setRelatedPenalty(penalty);
+
+          // Try to load penalty details
+          let detailsData = [];
+
+          // Check leader penalty details first
+          if (leaderPenaltyDetails && leaderPenaltyDetails[penalty.id] && Array.isArray(leaderPenaltyDetails[penalty.id])) {
+            detailsData = leaderPenaltyDetails[penalty.id];
+            console.log('Loaded penalty details from leader penalty details:', detailsData);
+          }
+          // Check member penalty details
+          else if (penaltyDetails && penaltyDetails[penalty.id] && Array.isArray(penaltyDetails[penalty.id])) {
+            detailsData = penaltyDetails[penalty.id];
+            console.log('Loaded penalty details from member penalty details:', detailsData);
+          }
+          // Load from API
+          else {
+            try {
+              console.log('Loading penalty details from API for penalty ID:', penalty.id);
+              const detailsResponse = await penaltyDetailAPI.findByPenaltyId(penalty.id);
+              console.log('Penalty details API response:', detailsResponse);
+
+              if (Array.isArray(detailsResponse)) {
+                detailsData = detailsResponse;
+              } else if (detailsResponse && detailsResponse.data) {
+                if (Array.isArray(detailsResponse.data)) {
+                  detailsData = detailsResponse.data;
+                } else if (detailsResponse.data.id) {
+                  // Single object
+                  detailsData = [detailsResponse.data];
+                }
+              } else if (detailsResponse && detailsResponse.id) {
+                // Direct object
+                detailsData = [detailsResponse];
+              }
+              console.log('Parsed penalty details:', detailsData);
+            } catch (error) {
+              console.error('Error loading penalty details:', error);
+              detailsData = [];
+            }
+          }
+
+          setRelatedPenaltyDetails(detailsData);
+          console.log('Final penalty details to display:', detailsData);
+        } else {
+          console.log('No penalty found for request:', request.id);
+          setRelatedPenalty(null);
+          setRelatedPenaltyDetails([]);
+        }
+      } catch (error) {
+        console.error('Error finding related penalty:', error);
+        setRelatedPenalty(null);
+        setRelatedPenaltyDetails([]);
+      } finally {
+        setLoadingPenalty(false);
+      }
+    }
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'PENDING':
+        return 'orange';
+      case 'APPROVED':
+        return 'green';
+      case 'REJECTED':
+        return 'red';
+      case 'BORROWED':
+        return 'blue';
+      case 'RETURNED':
+        return 'default';
+      default:
+        return 'default';
+    }
+  };
+
+  const columns = [
+    {
+      title: 'Request ID',
+      dataIndex: 'id',
+      key: 'id',
+      render: (id) => <Text code>{id?.substring(0, 8)}...</Text>
+    },
+    {
+      title: 'Kit Name',
+      dataIndex: ['kit', 'kitName'],
+      key: 'kitName',
+      render: (kitName) => kitName || 'N/A'
+    },
+    {
+      title: 'Request Type',
+      dataIndex: 'requestType',
+      key: 'requestType',
+      render: (type) => (
+        <Tag color={type === 'BORROW_KIT' ? 'blue' : 'purple'}>
+          {type}
+        </Tag>
+      )
+    },
+    {
+      title: 'Expected Return Date',
+      dataIndex: 'expectReturnDate',
+      key: 'expectReturnDate',
+      render: (date) => date ? new Date(date).toLocaleDateString() : 'N/A'
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status) => (
+        <Tag color={getStatusColor(status)}>
+          {status}
+        </Tag>
+      )
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_, record) => (
+        <Space>
+          <Button
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => showRequestDetails(record)}
+          >
+            View Details
+          </Button>
+        </Space>
+      )
+    }
+  ];
+
+  return (
+    <div>
+      <motion.div
+        variants={cardVariants}
+        initial="hidden"
+        animate="visible"
+        whileHover="hover"
+      >
+        <Card
+          title="Borrow Tracking (Leader's Requests)"
+          extra={
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={fetchBorrowingRequests}
+              loading={loading}
+              disabled={!group?.leaderId}
+            >
+              Refresh
+            </Button>
+          }
+          style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+        >
+          {!group?.leaderId ? (
+            <Empty
+              description="No leader found in your group"
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+            />
+          ) : (
+            <Table
+              columns={columns}
+              dataSource={borrowingRequests}
+              rowKey="id"
+              loading={loading}
+              pagination={{ pageSize: 10 }}
+              locale={{ emptyText: 'No borrowing requests found' }}
+            />
+          )}
+        </Card>
+      </motion.div>
+
+      {/* Request Details Drawer */}
+      <Drawer
+        title="Request Details"
+        placement="right"
+        width={600}
+        onClose={() => {
+          setDetailDrawerVisible(false);
+          setRelatedPenalty(null);
+          setRelatedPenaltyDetails([]);
+        }}
+        open={detailDrawerVisible}
+      >
+        {selectedRequest && (
+          <div>
+            <Descriptions column={1} bordered>
+              <Descriptions.Item label="Request ID">
+                <Text code>{selectedRequest.id}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Kit Name">
+                <Text strong>{selectedRequest.kit?.kitName || 'N/A'}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Request Type">
+                <Tag color={selectedRequest.requestType === 'BORROW_KIT' ? 'blue' : 'purple'}>
+                  {selectedRequest.requestType}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="Status">
+                <Tag color={getStatusColor(selectedRequest.status)}>
+                  {selectedRequest.status}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="Reason">
+                {selectedRequest.reason || 'N/A'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Expected Return Date">
+                {selectedRequest.expectReturnDate ? new Date(selectedRequest.expectReturnDate).toLocaleString() : 'N/A'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Deposit Amount">
+                {selectedRequest.depositAmount ? `${selectedRequest.depositAmount.toLocaleString()} VND` : 'N/A'}
+              </Descriptions.Item>
+            </Descriptions>
+
+            {/* Penalty Payment Section - Only show for RETURNED requests */}
+            {selectedRequest.status === 'RETURNED' && (
+              <div style={{ marginTop: '24px' }}>
+                <Divider orientation="left">
+                  <Space>
+                    <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />
+                    <span>Penalty Payment</span>
+                  </Space>
+                </Divider>
+                <Spin spinning={loadingPenalty}>
+                  {relatedPenalty ? (
+                    <Card
+                      size="small"
+                      style={{
+                        marginTop: '16px',
+                        border: relatedPenalty.resolved ? '1px solid #52c41a' : '1px solid #fa8c16'
+                      }}
+                    >
+                      <Descriptions column={1} size="small">
+                        <Descriptions.Item label="Penalty Status">
+                          <Tag color={relatedPenalty.resolved ? 'success' : 'warning'}>
+                            {relatedPenalty.resolved ? 'Resolved' : 'Unresolved'}
+                          </Tag>
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Penalty Amount">
+                          <Text strong style={{ color: '#ff4d4f', fontSize: '16px' }}>
+                            {relatedPenalty.totalAmount ? relatedPenalty.totalAmount.toLocaleString() : 0} VND
+                          </Text>
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Penalty Note">
+                          {relatedPenalty.note || 'N/A'}
+                        </Descriptions.Item>
+                        {relatedPenalty.takeEffectDate && (
+                          <Descriptions.Item label="Take Effect Date">
+                            {new Date(relatedPenalty.takeEffectDate).toLocaleString('vi-VN')}
+                          </Descriptions.Item>
+                        )}
+                        {relatedPenaltyDetails && relatedPenaltyDetails.length > 0 && (
+                          <Descriptions.Item label="Penalty Details">
+                            <List
+                              size="small"
+                              dataSource={relatedPenaltyDetails}
+                              renderItem={(detail, idx) => (
+                                <List.Item>
+                                  <Text type="secondary" style={{ fontSize: '12px' }}>
+                                    • {detail.policyName || detail.description || 'Penalty Detail'}: {detail.amount ? detail.amount.toLocaleString() : 0} VND
+                                  </Text>
+                                </List.Item>
+                              )}
+                            />
+                          </Descriptions.Item>
+                        )}
+                        {relatedPenaltyDetails && relatedPenaltyDetails.length === 0 && relatedPenalty && (
+                          <Descriptions.Item label="Penalty Details">
+                            <Text type="secondary" style={{ fontSize: '12px' }}>
+                              No detailed breakdown available
+                            </Text>
+                          </Descriptions.Item>
+                        )}
+                        {!relatedPenalty.resolved && (
+                          <Descriptions.Item>
+                            <Button
+                              type="primary"
+                              danger
+                              icon={<DollarOutlined />}
+                              onClick={() => {
+                                navigate('/penalty-payment', {
+                                  state: { penaltyId: relatedPenalty.id }
+                                });
+                              }}
+                              block
+                            >
+                              Pay Penalty
+                            </Button>
+                          </Descriptions.Item>
+                        )}
+                      </Descriptions>
+                    </Card>
+                  ) : (
+                    <Card size="small" style={{ marginTop: '16px' }}>
+                      <Empty
+                        description="No penalty found for this request"
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        style={{ padding: '20px 0' }}
+                      />
+                    </Card>
+                  )}
+                </Spin>
+              </div>
+            )}
+
+            {selectedRequest.qrCode && (
+              <div style={{ marginTop: '24px', textAlign: 'center' }}>
+                <Title level={4}>QR Code</Title>
+                <img
+                  src={`data:image/png;base64,${selectedRequest.qrCode}`}
+                  alt="QR Code"
+                  style={{ maxWidth: '100%', border: '1px solid #d9d9d9', borderRadius: '8px' }}
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 };
