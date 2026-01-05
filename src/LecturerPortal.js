@@ -1204,8 +1204,8 @@ function LecturerPortal({ user, onLogout }) {
       const statusText = activeKitRequest.status === 'APPROVED'
         ? 'approved'
         : activeKitRequest.status === 'BORROWED'
-        ? 'borrowed'
-        : 'pending';
+          ? 'borrowed'
+          : 'pending';
       message.warning(`You already have an active kit rental request (status: ${statusText}). Please wait for the current request to be completed or rejected before renting a new one.`);
       return;
     }
@@ -2055,9 +2055,9 @@ function LecturerPortal({ user, onLogout }) {
                                       <Tag
                                         color={
                                           component.status === 'AVAILABLE' ? 'green' :
-                                          component.status === 'IN_USE' ? 'orange' :
-                                          component.status === 'MAINTENANCE' ? 'blue' :
-                                          component.status === 'DAMAGED' ? 'red' : 'default'
+                                            component.status === 'IN_USE' ? 'orange' :
+                                              component.status === 'MAINTENANCE' ? 'blue' :
+                                                component.status === 'DAMAGED' ? 'red' : 'default'
                                         }
                                         style={{
                                           fontSize: '12px',
@@ -2484,23 +2484,23 @@ function LecturerPortal({ user, onLogout }) {
                             )
                           ]}
                         >
-                        <List.Item.Meta
+                          <List.Item.Meta
                             avatar={
                               <Avatar style={{ backgroundColor: isLeader ? '#1890ff' : '#52c41a' }}>
                                 {isLeader ? 'L' : 'M'}
                               </Avatar>
                             }
-                          title={
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            title={
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <span>{member.accountName || member.accountEmail}</span>
                                 <Tag color={isLeader ? 'gold' : 'blue'} size="small">
                                   {member.roles}
-                              </Tag>
-                            </div>
-                          }
+                                </Tag>
+                              </div>
+                            }
                             description={`Email: ${member.accountEmail}`}
-                        />
-                      </List.Item>
+                          />
+                        </List.Item>
                       );
                     }}
                   />
@@ -2666,9 +2666,9 @@ const DashboardContent = ({ lecturerGroups, wallet, kits, penalties, penaltyDeta
                         title={
                           <Tag color={
                             item.type === 'TOP_UP' ? 'success' :
-                            item.type === 'RENTAL_FEE' ? 'processing' :
-                            item.type === 'PENALTY_PAYMENT' ? 'error' :
-                            item.type === 'REFUND' ? 'purple' : 'default'
+                              item.type === 'RENTAL_FEE' ? 'processing' :
+                                item.type === 'PENALTY_PAYMENT' ? 'error' :
+                                  item.type === 'REFUND' ? 'purple' : 'default'
                           }>
                             {item.type?.replace(/_/g, ' ') || 'Transaction'}
                           </Tag>
@@ -3000,90 +3000,90 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
           {filteredGroups.length > 0 ? (
             <Row gutter={[24, 24]}>
               {filteredGroups.map((group) => (
-              <Col xs={24} md={12} lg={8} key={group.id}>
-                <motion.div
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                >
-                  <Card
-                    title={group.name}
-                    size="small"
-                    hoverable
-                    onClick={() => onViewGroupDetails(group)}
-                    style={{ cursor: 'pointer' }}
-                    extra={
-                      <Button
-                        type="link"
-                        size="small"
-                        icon={<EyeOutlined />}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onViewGroupDetails(group);
-                        }}
-                      >
-                        View Details
-                      </Button>
-                    }
+                <Col xs={24} md={12} lg={8} key={group.id}>
+                  <motion.div
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
                   >
-                    <Descriptions column={1} size="small">
-                      <Descriptions.Item label="Class Name">
-                        <Tag color="cyan">{group.className || 'N/A'}</Tag>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Semester">
-                        <Tag color="purple">{group.semester || 'N/A'}</Tag>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Class Assignments">
-                        <Badge
-                          count={group.classAssignments?.length || 0}
-                          showZero
-                          color="#1890ff"
-                          title={`${group.classAssignments?.length || 0} class assignments`}
-                        />
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Leader">
-                        <Tag color="gold">{group.members.find(m => m.role === 'LEADER')?.email || 'N/A'}</Tag>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Total Members">
-                        <Badge count={group.members?.length || 0} showZero color="#52c41a" />
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Members">
-                        <div style={{ maxHeight: '60px', overflow: 'hidden' }}>
-                          {group.members.filter(m => m.role === 'MEMBER').length > 0 ? (
-                            group.members.filter(m => m.role === 'MEMBER').map((member, index) => (
-                              <Tag key={index} color="blue" style={{ marginBottom: '4px' }}>
-                                {member.name || member.email}
-                              </Tag>
-                            ))
-                          ) : (
-                            <Text type="secondary">No members yet</Text>
-                          )}
-                        </div>
-                      </Descriptions.Item>
-                      {(group.members?.length || 0) < 4 && group.classId && (
-                        <Descriptions.Item>
-                          <Button
-                            type="primary"
-                            icon={<PlusOutlined />}
-                            size="small"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenAddStudentModal(group);
-                            }}
-                            style={{
-                              width: '100%',
-                              marginTop: 8,
-                              background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-                              border: 'none'
-                            }}
-                          >
-                            Add Student
-                          </Button>
+                    <Card
+                      title={group.name}
+                      size="small"
+                      hoverable
+                      onClick={() => onViewGroupDetails(group)}
+                      style={{ cursor: 'pointer' }}
+                      extra={
+                        <Button
+                          type="link"
+                          size="small"
+                          icon={<EyeOutlined />}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onViewGroupDetails(group);
+                          }}
+                        >
+                          View Details
+                        </Button>
+                      }
+                    >
+                      <Descriptions column={1} size="small">
+                        <Descriptions.Item label="Class Name">
+                          <Tag color="cyan">{group.className || 'N/A'}</Tag>
                         </Descriptions.Item>
-                      )}
-                    </Descriptions>
-                  </Card>
-                </motion.div>
-              </Col>
+                        <Descriptions.Item label="Semester">
+                          <Tag color="purple">{group.semester || 'N/A'}</Tag>
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Class Assignments">
+                          <Badge
+                            count={group.classAssignments?.length || 0}
+                            showZero
+                            color="#1890ff"
+                            title={`${group.classAssignments?.length || 0} class assignments`}
+                          />
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Leader">
+                          <Tag color="gold">{group.members.find(m => m.role === 'LEADER')?.email || 'N/A'}</Tag>
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Total Members">
+                          <Badge count={group.members?.length || 0} showZero color="#52c41a" />
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Members">
+                          <div style={{ maxHeight: '60px', overflow: 'hidden' }}>
+                            {group.members.filter(m => m.role === 'MEMBER').length > 0 ? (
+                              group.members.filter(m => m.role === 'MEMBER').map((member, index) => (
+                                <Tag key={index} color="blue" style={{ marginBottom: '4px' }}>
+                                  {member.name || member.email}
+                                </Tag>
+                              ))
+                            ) : (
+                              <Text type="secondary">No members yet</Text>
+                            )}
+                          </div>
+                        </Descriptions.Item>
+                        {(group.members?.length || 0) < 4 && group.classId && (
+                          <Descriptions.Item>
+                            <Button
+                              type="primary"
+                              icon={<PlusOutlined />}
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenAddStudentModal(group);
+                              }}
+                              style={{
+                                width: '100%',
+                                marginTop: 8,
+                                background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+                                border: 'none'
+                              }}
+                            >
+                              Add Student
+                            </Button>
+                          </Descriptions.Item>
+                        )}
+                      </Descriptions>
+                    </Card>
+                  </motion.div>
+                </Col>
               ))}
             </Row>
           ) : (
@@ -3181,59 +3181,59 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
                 <Spin spinning={loadingStudents}>
                   {filteredStudents.length > 0 ? (
                     <Table
-                  rowSelection={{
-                    type: 'checkbox',
-                    selectedRowKeys: selectedStudentIds,
-                    onChange: (selectedRowKeys) => {
-                      const remainingSlots = 4 - (selectedGroup.members?.length || 0);
-                      if (selectedRowKeys.length > remainingSlots) {
-                        message.warning(`You can only select up to ${remainingSlots} student(s)`);
-                        return;
-                      }
-                      setSelectedStudentIds(selectedRowKeys);
-                    },
-                    getCheckboxProps: (record) => ({
-                      disabled: false,
-                    }),
-                  }}
-                  columns={[
-                    {
-                      title: 'Student Code',
-                      dataIndex: 'studentCode',
-                      key: 'studentCode',
-                      render: (text) => <Text code>{text || 'N/A'}</Text>
-                    },
-                    {
-                      title: 'Full Name',
-                      dataIndex: 'fullName',
-                      key: 'fullName',
-                      render: (text) => <Text strong>{text || 'N/A'}</Text>
-                    },
-                    {
-                      title: 'Email',
-                      dataIndex: 'email',
-                      key: 'email',
-                    },
-                    {
-                      title: 'Status',
-                      dataIndex: 'status',
-                      key: 'status',
-                      render: (status) => (
-                        <Tag color={status === 'ACTIVE' ? 'success' : 'default'}>
-                          {status || 'N/A'}
-                        </Tag>
-                      )
-                    }
-                  ]}
-                  dataSource={filteredStudents}
-                  rowKey="id"
-                  pagination={{
-                    pageSize: 10,
-                    showSizeChanger: true,
-                    showTotal: (total) => `Total ${total} students available`
-                  }}
-                  locale={{ emptyText: 'No students available in this class' }}
-                />
+                      rowSelection={{
+                        type: 'checkbox',
+                        selectedRowKeys: selectedStudentIds,
+                        onChange: (selectedRowKeys) => {
+                          const remainingSlots = 4 - (selectedGroup.members?.length || 0);
+                          if (selectedRowKeys.length > remainingSlots) {
+                            message.warning(`You can only select up to ${remainingSlots} student(s)`);
+                            return;
+                          }
+                          setSelectedStudentIds(selectedRowKeys);
+                        },
+                        getCheckboxProps: (record) => ({
+                          disabled: false,
+                        }),
+                      }}
+                      columns={[
+                        {
+                          title: 'Student Code',
+                          dataIndex: 'studentCode',
+                          key: 'studentCode',
+                          render: (text) => <Text code>{text || 'N/A'}</Text>
+                        },
+                        {
+                          title: 'Full Name',
+                          dataIndex: 'fullName',
+                          key: 'fullName',
+                          render: (text) => <Text strong>{text || 'N/A'}</Text>
+                        },
+                        {
+                          title: 'Email',
+                          dataIndex: 'email',
+                          key: 'email',
+                        },
+                        {
+                          title: 'Status',
+                          dataIndex: 'status',
+                          key: 'status',
+                          render: (status) => (
+                            <Tag color={status === 'ACTIVE' ? 'success' : 'default'}>
+                              {status || 'N/A'}
+                            </Tag>
+                          )
+                        }
+                      ]}
+                      dataSource={filteredStudents}
+                      rowKey="id"
+                      pagination={{
+                        pageSize: 10,
+                        showSizeChanger: true,
+                        showTotal: (total) => `Total ${total} students available`
+                      }}
+                      locale={{ emptyText: 'No students available in this class' }}
+                    />
                   ) : !loadingStudents ? (
                     <Empty
                       description={
@@ -3951,22 +3951,22 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
                           border: '1.5px solid #e0e0e0',
                           text: '#333'
                         };
-                        switch ((type||'').toUpperCase()) {
+                        switch ((type || '').toUpperCase()) {
                           case 'TOP_UP':
                           case 'TOPUP':
-                            config = { label: 'Nạp tiền', color: 'success', icon: <DollarOutlined />, bg: '#e8f8ee', border: '1.5px solid #52c41a', text:'#2a8731'}; break;
+                            config = { label: 'Nạp tiền', color: 'success', icon: <DollarOutlined />, bg: '#e8f8ee', border: '1.5px solid #52c41a', text: '#2a8731' }; break;
                           case 'RENTAL_FEE':
-                            config = { label: 'Thuê kit', color: 'geekblue', icon: <ShoppingOutlined />, bg: '#e6f7ff', border: '1.5px solid #177ddc', text:'#177ddc' }; break;
+                            config = { label: 'Thuê kit', color: 'geekblue', icon: <ShoppingOutlined />, bg: '#e6f7ff', border: '1.5px solid #177ddc', text: '#177ddc' }; break;
                           case 'PENALTY_PAYMENT':
                           case 'PENALTY':
                           case 'FINE':
-                            config = { label: 'Phí phạt', color: 'error', icon: <ExclamationCircleOutlined />, bg: '#fff1f0', border:'1.5px solid #ff4d4f', text:'#d4001a'}; break;
+                            config = { label: 'Phí phạt', color: 'error', icon: <ExclamationCircleOutlined />, bg: '#fff1f0', border: '1.5px solid #ff4d4f', text: '#d4001a' }; break;
                           case 'REFUND':
-                            config = { label: 'Hoàn tiền', color:'purple', icon: <RollbackOutlined />, bg:'#f9f0ff', border:'1.5px solid #722ed1', text:'#722ed1' }; break;
+                            config = { label: 'Hoàn tiền', color: 'purple', icon: <RollbackOutlined />, bg: '#f9f0ff', border: '1.5px solid #722ed1', text: '#722ed1' }; break;
                           default:
-                            config = { label: type || 'Khác', color:'default', icon:<InfoCircleOutlined/>, bg:'#fafafa', border:'1.5px solid #bfbfbf', text:'#595959'};
+                            config = { label: type || 'Khác', color: 'default', icon: <InfoCircleOutlined />, bg: '#fafafa', border: '1.5px solid #bfbfbf', text: '#595959' };
                         }
-                        return <Tag color={config.color} style={{background: config.bg, border:config.border, color:config.text,fontWeight:'bold', display:'flex', alignItems:'center', gap:4, fontSize:13, letterSpacing:1}}>
+                        return <Tag color={config.color} style={{ background: config.bg, border: config.border, color: config.text, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, letterSpacing: 1 }}>
                           {config.icon} <span>{config.label}</span>
                         </Tag>;
                       }
@@ -4048,8 +4048,8 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
                       width: 120,
                       render: (status) => {
                         const statusColor = status === 'COMPLETED' || status === 'SUCCESS' ? 'success' :
-                                          status === 'PENDING' ? 'processing' :
-                                          status === 'FAILED' ? 'error' : 'default';
+                          status === 'PENDING' ? 'processing' :
+                            status === 'FAILED' ? 'error' : 'default';
                         return (
                           <Tag color={statusColor}>
                             {status || 'N/A'}
@@ -4170,8 +4170,8 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
               {(() => {
                 const status = selectedTransaction.status || selectedTransaction.transactionStatus || 'N/A';
                 const statusColor = status === 'COMPLETED' || status === 'SUCCESS' ? 'success' :
-                                  status === 'PENDING' ? 'warning' :
-                                  status === 'FAILED' ? 'error' : 'default';
+                  status === 'PENDING' ? 'warning' :
+                    status === 'FAILED' ? 'error' : 'default';
                 return (
                   <Tag color={statusColor}>
                     {status}
@@ -4184,7 +4184,7 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
             </Descriptions.Item>
             <Descriptions.Item label="Transaction Date">
               {selectedTransaction.transactionDate ? formatDateTime(selectedTransaction.transactionDate) :
-               selectedTransaction.createdAt ? formatDateTime(selectedTransaction.createdAt) : 'N/A'}
+                selectedTransaction.createdAt ? formatDateTime(selectedTransaction.createdAt) : 'N/A'}
             </Descriptions.Item>
           </Descriptions>
         )}

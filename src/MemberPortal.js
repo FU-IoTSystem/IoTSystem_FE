@@ -200,7 +200,7 @@ function MemberPortal({ user, onLogout }) {
         // Navigate to penalty payment page
         // Check if penaltyId is in message or extract from notification
         const penaltyIdMatch = notificationItem.message?.match(/penalty[:\s]+([a-f0-9-]+)/i) ||
-                               notificationItem.message?.match(/phạt[:\s]+([a-f0-9-]+)/i);
+          notificationItem.message?.match(/phạt[:\s]+([a-f0-9-]+)/i);
         if (penaltyIdMatch && penaltyIdMatch[1]) {
           navigate(`/penalty-payment?penaltyId=${penaltyIdMatch[1]}`);
         } else {
@@ -1054,16 +1054,16 @@ function MemberPortal({ user, onLogout }) {
                 variants={pageVariants}
                 transition={pageTransition}
               >
-                                 {selectedKey === 'dashboard' && <DashboardContent group={group} wallet={wallet} />}
-                 {selectedKey === 'group' && <GroupInfo
-                   group={group}
-                   onCreateGroup={() => setCreateGroupModalVisible(true)}
-                   onJoinGroup={() => setJoinGroupModalVisible(true)}
-                   availableGroups={availableGroups}
-                 />}
-                 {selectedKey === 'wallet' && <WalletManagement wallet={wallet} setWallet={setWallet} loadData={loadData} />}
-                 {selectedKey === 'borrow-tracking' && <BorrowTracking borrowingRequests={borrowingRequests} setBorrowingRequests={setBorrowingRequests} user={user} group={group} penalties={penalties} penaltyDetails={penaltyDetails} />}
-                 {selectedKey === 'profile' && <ProfileManagement profile={profile} setProfile={setProfile} loading={profileLoading} setLoading={setProfileLoading} user={user} />}
+                {selectedKey === 'dashboard' && <DashboardContent group={group} wallet={wallet} />}
+                {selectedKey === 'group' && <GroupInfo
+                  group={group}
+                  onCreateGroup={() => setCreateGroupModalVisible(true)}
+                  onJoinGroup={() => setJoinGroupModalVisible(true)}
+                  availableGroups={availableGroups}
+                />}
+                {selectedKey === 'wallet' && <WalletManagement wallet={wallet} setWallet={setWallet} loadData={loadData} />}
+                {selectedKey === 'borrow-tracking' && <BorrowTracking borrowingRequests={borrowingRequests} setBorrowingRequests={setBorrowingRequests} user={user} group={group} penalties={penalties} penaltyDetails={penaltyDetails} />}
+                {selectedKey === 'profile' && <ProfileManagement profile={profile} setProfile={setProfile} loading={profileLoading} setLoading={setProfileLoading} user={user} />}
               </motion.div>
             </AnimatePresence>
           </Spin>
@@ -1362,9 +1362,9 @@ const DashboardContent = ({ group, wallet }) => (
                         title={
                           <Tag color={
                             item.type === 'TOP_UP' ? 'success' :
-                            item.type === 'RENTAL_FEE' ? 'processing' :
-                            item.type === 'PENALTY_PAYMENT' ? 'error' :
-                            item.type === 'REFUND' ? 'purple' : 'default'
+                              item.type === 'RENTAL_FEE' ? 'processing' :
+                                item.type === 'PENALTY_PAYMENT' ? 'error' :
+                                  item.type === 'REFUND' ? 'purple' : 'default'
                           }>
                             {item.type?.replace(/_/g, ' ') || 'Transaction'}
                           </Tag>
@@ -1396,81 +1396,81 @@ const GroupInfo = ({ group, onCreateGroup, onJoinGroup, availableGroups }) => (
   <div>
     <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
       <Card title="Group Information" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            {group ? (
-              <Row gutter={[24, 24]}>
-                <Col xs={24} md={12}>
-                  <Card title="Basic Info" size="small">
-                    <Descriptions column={1} bordered>
-                      <Descriptions.Item label="Group Name">
-                        <Text strong>{group.name}</Text>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Leader">
-                        <Tag color="gold">{group.leader}</Tag>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Total Members">
-                        <Badge count={(group.members?.length || 0) + 1} showZero color="#52c41a" />
-                      </Descriptions.Item>
-                      {group.lecturer && (
-                        <Descriptions.Item label="Lecturer">
-                          <Tag color="purple">{group.lecturer}</Tag>
-                        </Descriptions.Item>
-                      )}
-                      {group.classCode && (
-                        <Descriptions.Item label="Class Code">
-                          <Text code>{group.classCode}</Text>
-                        </Descriptions.Item>
-                      )}
-                      <Descriptions.Item label="Status">
-                        <Tag color={group.status === 'active' ? 'success' : 'error'}>
-                          {group.status || 'inactive'}
-                        </Tag>
-                      </Descriptions.Item>
-                    </Descriptions>
-                  </Card>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Card title="Members" size="small">
-                    <List
-                      size="small"
-                      dataSource={[
-                        ...(group.members || []),
-                        ...(group.leader ? [{ name: group.leader, email: group.leaderEmail, role: 'LEADER' }] : [])
-                      ]}
-                      renderItem={(member) => {
-                        const memberName = typeof member === 'string' ? member : (member.name || member.email);
-                        const memberEmail = typeof member === 'string' ? member : member.email;
-                        const memberRole = typeof member === 'string' ? 'MEMBER' : (member.role || 'MEMBER');
-                        const isLeader = memberRole === 'LEADER';
+        {group ? (
+          <Row gutter={[24, 24]}>
+            <Col xs={24} md={12}>
+              <Card title="Basic Info" size="small">
+                <Descriptions column={1} bordered>
+                  <Descriptions.Item label="Group Name">
+                    <Text strong>{group.name}</Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Leader">
+                    <Tag color="gold">{group.leader}</Tag>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Total Members">
+                    <Badge count={(group.members?.length || 0) + 1} showZero color="#52c41a" />
+                  </Descriptions.Item>
+                  {group.lecturer && (
+                    <Descriptions.Item label="Lecturer">
+                      <Tag color="purple">{group.lecturer}</Tag>
+                    </Descriptions.Item>
+                  )}
+                  {group.classCode && (
+                    <Descriptions.Item label="Class Code">
+                      <Text code>{group.classCode}</Text>
+                    </Descriptions.Item>
+                  )}
+                  <Descriptions.Item label="Status">
+                    <Tag color={group.status === 'active' ? 'success' : 'error'}>
+                      {group.status || 'inactive'}
+                    </Tag>
+                  </Descriptions.Item>
+                </Descriptions>
+              </Card>
+            </Col>
+            <Col xs={24} md={12}>
+              <Card title="Members" size="small">
+                <List
+                  size="small"
+                  dataSource={[
+                    ...(group.members || []),
+                    ...(group.leader ? [{ name: group.leader, email: group.leaderEmail, role: 'LEADER' }] : [])
+                  ]}
+                  renderItem={(member) => {
+                    const memberName = typeof member === 'string' ? member : (member.name || member.email);
+                    const memberEmail = typeof member === 'string' ? member : member.email;
+                    const memberRole = typeof member === 'string' ? 'MEMBER' : (member.role || 'MEMBER');
+                    const isLeader = memberRole === 'LEADER';
 
-                        return (
-                          <List.Item>
-                            <List.Item.Meta
-                              avatar={
-                                <Avatar
-                                  icon={<UserOutlined />}
-                                  style={{ backgroundColor: isLeader ? '#faad14' : '#52c41a' }}
-                                >
-                                  {isLeader ? 'L' : 'M'}
-                                </Avatar>
-                              }
-                              title={
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <span>{memberName}</span>
-                                  <Tag color={isLeader ? 'gold' : 'blue'} size="small">
-                                    {memberRole}
-                                  </Tag>
-                                </div>
-                              }
-                              description={memberEmail || 'Group Member'}
-                            />
-                          </List.Item>
-                        );
-                      }}
-                    />
-                  </Card>
-                </Col>
-              </Row>
-            ) : (
+                    return (
+                      <List.Item>
+                        <List.Item.Meta
+                          avatar={
+                            <Avatar
+                              icon={<UserOutlined />}
+                              style={{ backgroundColor: isLeader ? '#faad14' : '#52c41a' }}
+                            >
+                              {isLeader ? 'L' : 'M'}
+                            </Avatar>
+                          }
+                          title={
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span>{memberName}</span>
+                              <Tag color={isLeader ? 'gold' : 'blue'} size="small">
+                                {memberRole}
+                              </Tag>
+                            </div>
+                          }
+                          description={memberEmail || 'Group Member'}
+                        />
+                      </List.Item>
+                    );
+                  }}
+                />
+              </Card>
+            </Col>
+          </Row>
+        ) : (
           <div>
             <Alert
               message="No Group Found"
@@ -1943,25 +1943,25 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
   };
 
   return (
-  <div>
-    <Row gutter={[24, 24]}>
-      <Col xs={24} md={8}>
-        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-          <Card
-            style={{
-              borderRadius: '16px',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              color: 'white'
-            }}
-          >
-            <Statistic
-              title="Current Balance"
+    <div>
+      <Row gutter={[24, 24]}>
+        <Col xs={24} md={8}>
+          <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+            <Card
+              style={{
+                borderRadius: '16px',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                color: 'white'
+              }}
+            >
+              <Statistic
+                title="Current Balance"
                 value={wallet.balance || 0}
-              prefix={<DollarOutlined />}
-              suffix="VND"
-              valueStyle={{ color: 'white', fontWeight: 'bold' }}
-            />
+                prefix={<DollarOutlined />}
+                suffix="VND"
+                valueStyle={{ color: 'white', fontWeight: 'bold' }}
+              />
               <Space direction="vertical" style={{ width: '100%', marginTop: '16px' }}>
                 <Button
                   type="primary"
@@ -1986,12 +1986,12 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
                   Pay Penalties
                 </Button>
               </Space>
-          </Card>
-        </motion.div>
-      </Col>
+            </Card>
+          </motion.div>
+        </Col>
 
-      <Col xs={24} md={16}>
-        <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
+        <Col xs={24} md={16}>
+          <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
             <Card
               title="Transaction History"
               extra={
@@ -2006,15 +2006,15 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
               style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
             >
               <Spin spinning={transactionsLoading}>
-            <Table
+                <Table
                   dataSource={transactions}
                   scroll={{ x: 'max-content' }}
-              columns={[
-                {
-                  title: 'Type',
-                  dataIndex: 'type',
-                  key: 'type',
-                  width: 150,
+                  columns={[
+                    {
+                      title: 'Type',
+                      dataIndex: 'type',
+                      key: 'type',
+                      width: 150,
                       render: (type) => {
                         const config = getTransactionTypeConfig(type);
                         return (
@@ -2036,28 +2036,28 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
                           </Tag>
                         );
                       }
-                },
-                {
-                  title: 'Previous Balance',
-                  dataIndex: 'previousBalance',
-                  key: 'previousBalance',
-                  width: 150,
-                  render: (previousBalance) => {
-                    if (previousBalance === null || previousBalance === undefined) {
-                      return <Text type="secondary">N/A</Text>;
-                    }
-                    return (
-                      <Text type="secondary">
-                        {previousBalance.toLocaleString()} VND
-                      </Text>
-                    );
-                  },
-                },
-                {
-                  title: 'Amount',
-                  dataIndex: 'amount',
-                  key: 'amount',
-                  width: 150,
+                    },
+                    {
+                      title: 'Previous Balance',
+                      dataIndex: 'previousBalance',
+                      key: 'previousBalance',
+                      width: 150,
+                      render: (previousBalance) => {
+                        if (previousBalance === null || previousBalance === undefined) {
+                          return <Text type="secondary">N/A</Text>;
+                        }
+                        return (
+                          <Text type="secondary">
+                            {previousBalance.toLocaleString()} VND
+                          </Text>
+                        );
+                      },
+                    },
+                    {
+                      title: 'Amount',
+                      dataIndex: 'amount',
+                      key: 'amount',
+                      width: 150,
                       render: (amount, record) => {
                         // Determine color based on transaction type
                         const typeUpper = (record.type || '').toUpperCase();
@@ -2114,8 +2114,8 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
                       width: 120,
                       render: (status) => {
                         const statusColor = status === 'COMPLETED' || status === 'SUCCESS' ? 'success' :
-                                          status === 'PENDING' ? 'processing' :
-                                          status === 'FAILED' ? 'error' : 'default';
+                          status === 'PENDING' ? 'processing' :
+                            status === 'FAILED' ? 'error' : 'default';
                         return (
                           <Tag color={statusColor}>
                             {status || 'N/A'}
@@ -2154,10 +2154,10 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
                   locale={{ emptyText: 'No transactions found' }}
                 />
               </Spin>
-          </Card>
-        </motion.div>
-      </Col>
-    </Row>
+            </Card>
+          </motion.div>
+        </Col>
+      </Row>
 
       {/* Top Up Modal */}
       <Modal
@@ -2439,8 +2439,8 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
               {(() => {
                 const status = selectedTransaction.status || selectedTransaction.transactionStatus || 'N/A';
                 const statusColor = status === 'COMPLETED' || status === 'SUCCESS' ? 'success' :
-                                  status === 'PENDING' ? 'warning' :
-                                  status === 'FAILED' ? 'error' : 'default';
+                  status === 'PENDING' ? 'warning' :
+                    status === 'FAILED' ? 'error' : 'default';
                 return (
                   <Tag color={statusColor}>
                     {status}
@@ -2453,13 +2453,13 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
             </Descriptions.Item>
             <Descriptions.Item label="Transaction Date">
               {selectedTransaction.transactionDate ? formatDateTime(selectedTransaction.transactionDate) :
-               selectedTransaction.createdAt ? formatDateTime(selectedTransaction.createdAt) : 'N/A'}
+                selectedTransaction.createdAt ? formatDateTime(selectedTransaction.createdAt) : 'N/A'}
             </Descriptions.Item>
           </Descriptions>
         )}
       </Modal>
-  </div>
-);
+    </div>
+  );
 };
 
 
