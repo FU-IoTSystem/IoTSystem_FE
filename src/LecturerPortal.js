@@ -1194,9 +1194,9 @@ function LecturerPortal({ user, onLogout }) {
       const status = (request.status || '').toUpperCase();
       const isKitRequest = requestType === 'BORROW_KIT';
       const isActiveStatus = status === 'APPROVED' ||
-        status === 'PENDING' ||
-        status === 'WAITING_APPROVAL' ||
-        status === 'BORROWED';
+                             status === 'PENDING' ||
+                             status === 'WAITING_APPROVAL' ||
+                             status === 'BORROWED';
       return isKitRequest && isActiveStatus;
     });
 
