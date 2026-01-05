@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { penaltiesAPI, penaltyDetailAPI, walletAPI, borrowingRequestAPI, penaltyPoliciesAPI } from './api';
+import { penaltiesAPI, penaltyDetailAPI, walletAPI, borrowingRequestAPI, penaltyPoliciesAPI, damageReportAPI } from './api';
 import {
   Card,
   Row,
@@ -17,7 +17,8 @@ import {
   Tag,
   Avatar,
   Modal,
-  Empty
+  Empty,
+  Table
 } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -77,6 +78,8 @@ function PenaltyPaymentPage({ user, onLogout }) {
   const [paymentResult, setPaymentResult] = useState(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [currentStep, setCurrentStep] = useState(0); // 0: select penalty, 1: confirm, 2: result
+  const [damagedComponents, setDamagedComponents] = useState([]);
+  const [damageReports, setDamageReports] = useState([]);
 
   // Get penalty ID from URL params or location state
   const penaltyId = new URLSearchParams(location.search).get('penaltyId') || location.state?.penaltyId;
@@ -187,8 +190,16 @@ function PenaltyPaymentPage({ user, onLogout }) {
           })
         );
         setPenaltyDetails(detailsWithPolicies);
+
+        // Extract damaged components after penalty details are loaded
+        if (damageReports.length > 0) {
+          extractDamagedComponents(damageReports, detailsWithPolicies);
+        }
       } else {
         setPenaltyDetails(filteredDetails);
+        if (damageReports.length > 0) {
+          extractDamagedComponents(damageReports, filteredDetails);
+        }
       }
     } catch (error) {
       console.error('=== Error loading penalty details:', error);
@@ -200,6 +211,8 @@ function PenaltyPaymentPage({ user, onLogout }) {
   const loadBorrowRequest = async (borrowRequestId) => {
     if (!borrowRequestId || borrowRequestId === 'N/A') {
       setBorrowRequest(null);
+      setDamagedComponents([]);
+      setDamageReports([]);
       return;
     }
 
@@ -217,11 +230,113 @@ function PenaltyPaymentPage({ user, onLogout }) {
       }
 
       setBorrowRequest(requestData);
+
+      // Load damage reports for this borrow request
+      try {
+        const damageReportsResponse = await damageReportAPI.getByBorrowRequestId(borrowRequestId);
+        let reportsData = [];
+        if (Array.isArray(damageReportsResponse)) {
+          reportsData = damageReportsResponse;
+        } else if (damageReportsResponse?.data && Array.isArray(damageReportsResponse.data)) {
+          reportsData = damageReportsResponse.data;
+        }
+        setDamageReports(reportsData);
+
+        // Extract damaged components from damage reports and penalty details
+        extractDamagedComponents(reportsData);
+      } catch (damageError) {
+        console.error('Error loading damage reports:', damageError);
+        setDamageReports([]);
+        setDamagedComponents([]);
+      }
     } catch (error) {
       console.error('Error loading borrow request:', error);
       setBorrowRequest(null);
+      setDamagedComponents([]);
+      setDamageReports([]);
     }
   };
+
+  // Extract damaged components from damage reports and penalty details
+  const extractDamagedComponents = useCallback((reports = [], penaltyDetailsData = null) => {
+    const components = [];
+    const detailsToUse = penaltyDetailsData || penaltyDetails;
+
+    // Extract from penalty details (they often contain component damage info)
+    if (detailsToUse && detailsToUse.length > 0) {
+      detailsToUse.forEach((detail) => {
+        const description = detail.description || '';
+        // Check if description mentions component damage
+        if (description && (description.toLowerCase().includes('damage') ||
+          description.toLowerCase().includes('component') ||
+          description.toLowerCase().includes('hư hỏng'))) {
+          // Try to extract component name and amount from description
+          const componentName = detail.policy?.policyName ||
+            description.split('to')[1]?.trim() ||
+            description.split('cho')[1]?.trim() ||
+            'Unknown Component';
+
+          components.push({
+            id: detail.id || `detail-${components.length}`,
+            componentName: componentName,
+            description: description,
+            damageAmount: detail.amount || 0,
+            policyName: detail.policy?.policyName || 'N/A',
+            createdAt: detail.createdAt
+          });
+        }
+      });
+    }
+
+    // Extract from damage reports
+    if (reports && reports.length > 0) {
+      reports.forEach((report) => {
+        if (report.description) {
+          // Parse description to extract component information
+          // Format might be: "Damage to ComponentName: Amount VND"
+          const desc = report.description;
+          const damageValue = report.totalDamageValue || 0;
+
+          // Try to extract component name from description
+          let componentName = 'Unknown Component';
+          if (desc.includes('to')) {
+            componentName = desc.split('to')[1]?.split(':')[0]?.trim() || 'Unknown Component';
+          } else if (desc.includes('cho')) {
+            componentName = desc.split('cho')[1]?.split(':')[0]?.trim() || 'Unknown Component';
+          } else {
+            // Try to find component name in description
+            const matches = desc.match(/([A-Z][a-zA-Z\s]+)/);
+            if (matches && matches[1]) {
+              componentName = matches[1].trim();
+            }
+          }
+
+          components.push({
+            id: report.id || `report-${components.length}`,
+            componentName: componentName,
+            description: desc,
+            damageAmount: damageValue,
+            status: report.status || 'PENDING',
+            createdAt: report.createdAt || report.created_at
+          });
+        }
+      });
+    }
+
+    // Remove duplicates based on component name
+    const uniqueComponents = components.reduce((acc, current) => {
+      const existing = acc.find(item => item.componentName === current.componentName);
+      if (!existing) {
+        acc.push(current);
+      } else {
+        // Merge amounts if duplicate
+        existing.damageAmount = (existing.damageAmount || 0) + (current.damageAmount || 0);
+      }
+      return acc;
+    }, []);
+
+    setDamagedComponents(uniqueComponents);
+  }, [penaltyDetails]);
 
   const loadPenalties = useCallback(async () => {
     try {
@@ -378,25 +493,29 @@ function PenaltyPaymentPage({ user, onLogout }) {
     setLoading(true);
     setShowConfirmation(false);
     try {
-      // Kiểm tra số dư ví trước khi tiếp tục
-      if (!isBalanceSufficient()) {
-        message.error('Số dư ví không đủ để thanh toán penalty! Vui lòng nạp thêm tiền.');
-        handleBackToPortal();
-        return;
-      }
-
       // Get current penalty from penalties list to have full data
       const currentPenalty = penalties.find(p => p.id === selectedPenalty.id || p.penaltyId === selectedPenalty.id);
       if (!currentPenalty) {
         throw new Error('Penalty not found');
       }
 
+      // Save wallet balance before payment
+      const balanceBeforePayment = walletBalance;
+      const rentalAmount = borrowRequest?.depositAmount || 0;
+
       // Gọi đúng endpoint confirm-payment BE
       await penaltiesAPI.confirmPenaltyPayment(selectedPenalty.id);
-      await loadWalletBalance();
+
+      // Sau khi BE xử lý (trừ tiền phạt + hoàn deposit nếu có), load lại số dư ví mới
+      const walletResponse = await walletAPI.getMyWallet();
+      const walletData = walletResponse?.data || walletResponse || {};
+      const updatedBalance = walletData.balance || 0;
+      setWalletBalance(updatedBalance);
+
+      // Reload lại danh sách penalties
       await loadPenalties();
-      // Set payment result
-      const newWalletBalance = walletBalance - selectedPenalty.amount;
+
+      // Set payment result với số dư ví thực tế sau khi BE xử lý
       setPaymentResult({
         success: true,
         paymentId: `PAY-${Date.now()}`,
@@ -404,7 +523,10 @@ function PenaltyPaymentPage({ user, onLogout }) {
         amount: selectedPenalty.amount,
         timestamp: new Date().toISOString(),
         status: 'completed',
-        remainingBalance: Math.max(0, newWalletBalance)
+        // remainingBalance = số dư ví mới (đã bao gồm: số dư cũ + tiền refund từ deposit - tiền phạt)
+        remainingBalance: updatedBalance,
+        balanceBeforePayment: balanceBeforePayment,
+        rentalAmount: rentalAmount
       });
       message.success('Thanh toán penalty thành công!');
       setCurrentStep(2);
@@ -813,10 +935,120 @@ function PenaltyPaymentPage({ user, onLogout }) {
               </Col>
             )}
 
+            {/* Damaged Kit Components Table */}
+            {damagedComponents && damagedComponents.length > 0 && (
+              <Col span={24}>
+                <Card
+                  title={
+                    <Space>
+                      <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
+                      <span>Damaged Kit Components</span>
+                      <Tag color="error">{damagedComponents.length} component(s)</Tag>
+                    </Space>
+                  }
+                  size="small"
+                  style={{ background: '#fff1f0', border: '1px solid #ffccc7' }}
+                >
+                  <Table
+                    dataSource={damagedComponents}
+                    rowKey={(record) => record.id || `component-${record.componentName}`}
+                    pagination={false}
+                    size="small"
+                    columns={[
+                      {
+                        title: 'Component Name',
+                        dataIndex: 'componentName',
+                        key: 'componentName',
+                        render: (text) => (
+                          <Text strong style={{ color: '#ff4d4f' }}>{text || 'Unknown Component'}</Text>
+                        )
+                      },
+                      {
+                        title: 'Description',
+                        dataIndex: 'description',
+                        key: 'description',
+                        render: (text) => (
+                          <Text type="secondary" style={{ fontSize: '12px' }}>
+                            {text || 'No description available'}
+                          </Text>
+                        )
+                      },
+                      {
+                        title: 'Damage Amount',
+                        dataIndex: 'damageAmount',
+                        key: 'damageAmount',
+                        align: 'right',
+                        render: (amount) => (
+                          <Text strong style={{ color: '#ff4d4f', fontSize: '14px' }}>
+                            {amount ? amount.toLocaleString() : 0} VND
+                          </Text>
+                        )
+                      },
+                      {
+                        title: 'Status',
+                        dataIndex: 'status',
+                        key: 'status',
+                        render: (status) => {
+                          if (!status) return <Tag color="default">N/A</Tag>;
+                          const statusLower = (status || '').toLowerCase();
+                          if (statusLower === 'approved' || statusLower === 'completed') {
+                            return <Tag color="success">{status}</Tag>;
+                          } else if (statusLower === 'pending') {
+                            return <Tag color="warning">{status}</Tag>;
+                          } else if (statusLower === 'rejected') {
+                            return <Tag color="error">{status}</Tag>;
+                          }
+                          return <Tag color="default">{status}</Tag>;
+                        }
+                      },
+                      {
+                        title: 'Reported Date',
+                        dataIndex: 'createdAt',
+                        key: 'createdAt',
+                        render: (date) => {
+                          if (!date) return <Text type="secondary">N/A</Text>;
+                          try {
+                            return (
+                              <Text type="secondary" style={{ fontSize: '12px' }}>
+                                {new Date(date).toLocaleString('vi-VN')}
+                              </Text>
+                            );
+                          } catch {
+                            return <Text type="secondary">N/A</Text>;
+                          }
+                        }
+                      }
+                    ]}
+                    summary={(pageData) => {
+                      const total = pageData.reduce((sum, record) => {
+                        return sum + (Number(record.damageAmount) || 0);
+                      }, 0);
+
+                      return (
+                        <Table.Summary fixed>
+                          <Table.Summary.Row>
+                            <Table.Summary.Cell index={0} colSpan={2}>
+                              <Text strong style={{ fontSize: '14px' }}>Total Damage Amount:</Text>
+                            </Table.Summary.Cell>
+                            <Table.Summary.Cell index={2} align="right">
+                              <Text strong style={{ color: '#ff4d4f', fontSize: '16px' }}>
+                                {total.toLocaleString()} VND
+                              </Text>
+                            </Table.Summary.Cell>
+                            <Table.Summary.Cell index={3} colSpan={2} />
+                          </Table.Summary.Row>
+                        </Table.Summary>
+                      );
+                    }}
+                  />
+                </Card>
+              </Col>
+            )}
+
             <Col span={24}>
               <Card size="small" style={{
-                background: isBalanceSufficient() ? '#f0f9ff' : '#fff2f0',
-                border: `1px solid ${isBalanceSufficient() ? '#91d5ff' : '#ffccc7'}`
+                background: '#f0f9ff',
+                border: '1px solid #91d5ff'
               }}>
                 <Row gutter={[16, 16]} align="middle">
                   <Col>
@@ -824,7 +1056,7 @@ function PenaltyPaymentPage({ user, onLogout }) {
                       size={48}
                       icon={<WalletOutlined />}
                       style={{
-                        background: isBalanceSufficient() ? '#1890ff' : '#ff4d4f'
+                        background: '#1890ff'
                       }}
                     />
                   </Col>
@@ -836,51 +1068,21 @@ function PenaltyPaymentPage({ user, onLogout }) {
                       <br />
                       <Text strong style={{
                         fontSize: '18px',
-                        color: isBalanceSufficient() ? '#1890ff' : '#ff4d4f'
+                        color: '#1890ff'
                       }}>
                         {walletBalance.toLocaleString()} VND
                       </Text>
                     </div>
                   </Col>
                   <Col>
-                    {isBalanceSufficient() ? (
-                      <Tag color="green" style={{ fontSize: '14px' }}>
-                        Sufficient Balance
-                      </Tag>
-                    ) : (
-                      <Tag color="red" style={{ fontSize: '14px' }}>
-                        Insufficient Balance
-                      </Tag>
-                    )}
+                    <Tag color="blue" style={{ fontSize: '14px' }}>
+                      Wallet Balance
+                    </Tag>
                   </Col>
                 </Row>
               </Card>
             </Col>
 
-            {!isBalanceSufficient() && (
-              <Col span={24}>
-                <Alert
-                  message="Insufficient Balance"
-                  description={`You need ${(selectedPenalty.amount - walletBalance).toLocaleString()} VND more to pay this penalty. Please top up your wallet first.`}
-                  type="error"
-                  showIcon
-                  icon={<WarningOutlined />}
-                  action={
-                    <Button
-                      size="small"
-                      onClick={() => navigate('/top-up')}
-                      style={{
-                        background: '#ff4d4f',
-                        border: 'none',
-                        color: 'white'
-                      }}
-                    >
-                      Top Up Wallet
-                    </Button>
-                  }
-                />
-              </Col>
-            )}
           </Row>
 
           <div style={{ textAlign: 'center', marginTop: '32px' }}>
@@ -900,12 +1102,9 @@ function PenaltyPaymentPage({ user, onLogout }) {
                 type="primary"
                 size="large"
                 onClick={handleConfirmPayment}
-                disabled={!isBalanceSufficient()}
                 style={{
                   borderRadius: '12px',
-                  background: isBalanceSufficient() ?
-                    'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)' :
-                    '#d9d9d9',
+                  background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
                   border: 'none',
                   height: 48,
                   padding: '0 32px',
@@ -950,34 +1149,102 @@ function PenaltyPaymentPage({ user, onLogout }) {
           </Button>
         ]}
       >
-        <div style={{ textAlign: 'left', maxWidth: '400px', margin: '0 auto' }}>
-          <Card size="small" style={{ background: '#f6ffed', border: '1px solid #b7eb8f' }}>
-            <Row gutter={[16, 8]}>
-              <Col span={8}>
-                <Text type="secondary">Payment ID:</Text>
-              </Col>
-              <Col span={16}>
-                <Text strong>{paymentResult?.paymentId}</Text>
-              </Col>
-              <Col span={8}>
-                <Text type="secondary">Amount Paid:</Text>
-              </Col>
-              <Col span={16}>
-                <Text strong>{paymentResult?.amount?.toLocaleString()} VND</Text>
-              </Col>
-              <Col span={8}>
-                <Text type="secondary">Remaining Balance:</Text>
-              </Col>
-              <Col span={16}>
-                <Text strong>{paymentResult?.remainingBalance?.toLocaleString()} VND</Text>
-              </Col>
-              <Col span={8}>
-                <Text type="secondary">Status:</Text>
-              </Col>
-              <Col span={16}>
-                <Tag color="green">Completed</Tag>
-              </Col>
-            </Row>
+        <div style={{ textAlign: 'left', maxWidth: '500px', margin: '0 auto' }}>
+          <Card
+            size="small"
+            style={{
+              background: '#f6ffed',
+              border: '1px solid #b7eb8f',
+              borderRadius: '12px'
+            }}
+          >
+            <Space direction="vertical" size="large" style={{ width: '100%' }}>
+              {/* Payment ID */}
+              <Row gutter={[16, 8]} align="middle">
+                <Col span={8}>
+                  <Text type="secondary">Payment ID:</Text>
+                </Col>
+                <Col span={16}>
+                  <Text strong style={{ color: '#000' }}>{paymentResult?.paymentId}</Text>
+                </Col>
+              </Row>
+
+              <Divider style={{ margin: '12px 0' }} />
+
+              {/* Total Amount Before Paid Penalty - Black */}
+              <Row gutter={[16, 8]} align="middle">
+                <Col span={12}>
+                  <Text strong style={{ fontSize: '14px' }}>Total Amount Before Paid Penalty:</Text>
+                </Col>
+                <Col span={12} style={{ textAlign: 'right' }}>
+                  <Text strong style={{ fontSize: '16px', color: '#000' }}>
+                    {(paymentResult?.balanceBeforePayment || 0).toLocaleString()} VND
+                  </Text>
+                </Col>
+              </Row>
+
+              {/* Rental Amount - Black */}
+              <Row gutter={[16, 8]} align="middle">
+                <Col span={12}>
+                  <Text style={{ fontSize: '14px' }}>Rental Amount:</Text>
+                </Col>
+                <Col span={12} style={{ textAlign: 'right' }}>
+                  <Text strong style={{ fontSize: '16px', color: '#000' }}>
+                    {(paymentResult?.rentalAmount || 0).toLocaleString()} VND
+                  </Text>
+                </Col>
+              </Row>
+
+              {/* Penalty Amount - Red */}
+              <Row gutter={[16, 8]} align="middle">
+                <Col span={12}>
+                  <Text style={{ fontSize: '14px' }}>Penalty Amount:</Text>
+                </Col>
+                <Col span={12} style={{ textAlign: 'right' }}>
+                  <Text strong style={{ fontSize: '16px', color: '#ff4d4f' }}>
+                    -{(paymentResult?.amount || 0).toLocaleString()} VND
+                  </Text>
+                </Col>
+              </Row>
+
+              <Divider style={{ margin: '12px 0', borderColor: '#d9d9d9' }} />
+
+              {/* Total Balance After Paid - Green */}
+              <Row gutter={[16, 8]} align="middle">
+                <Col span={12}>
+                  <Text strong style={{ fontSize: '15px' }}>Total Balance After Paid:</Text>
+                </Col>
+                <Col span={12} style={{ textAlign: 'right' }}>
+                  <Text strong style={{ fontSize: '18px', color: '#52c41a' }}>
+                    {(paymentResult?.remainingBalance || 0).toLocaleString()} VND
+                  </Text>
+                </Col>
+              </Row>
+
+              {/* Total Balance in Wallet - Black */}
+              <Row gutter={[16, 8]} align="middle">
+                <Col span={12}>
+                  <Text style={{ fontSize: '14px' }}>Total Balance in Wallet:</Text>
+                </Col>
+                <Col span={12} style={{ textAlign: 'right' }}>
+                  <Text strong style={{ fontSize: '16px', color: '#000' }}>
+                    {(paymentResult?.remainingBalance || 0).toLocaleString()} VND
+                  </Text>
+                </Col>
+              </Row>
+
+              <Divider style={{ margin: '12px 0' }} />
+
+              {/* Status */}
+              <Row gutter={[16, 8]} align="middle">
+                <Col span={8}>
+                  <Text type="secondary">Status:</Text>
+                </Col>
+                <Col span={16}>
+                  <Tag color="green" style={{ fontSize: '13px', padding: '4px 12px' }}>Completed</Tag>
+                </Col>
+              </Row>
+            </Space>
           </Card>
         </div>
       </Result>
