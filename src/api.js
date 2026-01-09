@@ -294,10 +294,12 @@ export const userAPI = {
       username: lecturerData.email,  // username is email in RegisterRequest
       password: lecturerData.password || '1',
       studentCode: lecturerData.studentCode || '',
+      lecturerCode: lecturerData.lecturerCode || '', // Add lecturerCode for creating lecturer
       roles: 'LECTURER',
       phoneNumber: lecturerData.phoneNumber,
       fullName: lecturerData.name,
-      classCode: lecturerData.classCode || null
+      classCode: lecturerData.classCode || null,
+      semester: lecturerData.semester || null, // Optional semester for class creation/assignment
     };
 
     console.log('Request data:', requestData);
@@ -320,6 +322,7 @@ export const userAPI = {
       username: lecturerData.email,  // username is email in RegisterRequest
       password: lecturerData.password || '1',  // Password may not be changed, but required by API
       studentCode: lecturerData.studentCode || '',
+      lecturerCode: lecturerData.lecturerCode || '',  // Add lecturerCode field
       roles: 'LECTURER',
       phoneNumber: lecturerData.phoneNumber || '',
       fullName: lecturerData.name,
@@ -632,7 +635,11 @@ export const kitComponentAPI = {
   importComponents: async (file, kitId, sheetName = null) => {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('kitId', kitId);
+    // Only append kitId when it is provided; when kitId is null/undefined,
+    // backend should treat it as "no kit" instead of trying to parse "null" as UUID
+    if (kitId) {
+      formData.append('kitId', kitId);
+    }
     if (sheetName) {
       formData.append('sheetName', sheetName);
     }
@@ -657,6 +664,22 @@ export const kitComponentAPI = {
     }
 
     return await handleResponse(response);
+  }
+};
+
+// Kit Component History API
+export const kitComponentHistoryAPI = {
+  getByKit: async (kitId) => {
+    return apiRequest(`/api/kit-component-history/kit/${kitId}`);
+  },
+  getByComponent: async (componentId) => {
+    return apiRequest(`/api/kit-component-history/component/${componentId}`);
+  },
+  create: async (payload) => {
+    return apiRequest('/api/kit-component-history', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   }
 };
 
@@ -700,6 +723,17 @@ export const walletTransactionAPI = {
   getHistory: async () => {
     const response = await apiRequest('/api/wallet-transactions/history');
     return response.data || [];
+  },
+
+  transfer: async (recipientEmail, amount, description) => {
+    return apiRequest('/api/wallet-transactions/transfer', {
+      method: 'POST',
+      body: JSON.stringify({
+        recipientEmail: recipientEmail,
+        amount: amount,
+        description: description
+      }),
+    });
   }
 };
 
@@ -873,6 +907,33 @@ export const penaltyDetailAPI = {
 
   findByPoliciesId: async (policiesId) => {
     return apiRequest(`/api/penalty-details/policies/${policiesId}`);
+  },
+
+  uploadImage: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const url = `${API_BASE_URL}/api/penalty-details/upload-image`;
+    const token = getAuthToken();
+
+    const headers = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    // Don't set Content-Type for FormData - browser will set it with boundary
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || 'Upload failed');
+    }
+
+    return await handleResponse(response);
   }
 };
 
@@ -1044,6 +1105,11 @@ export const studentGroupAPI = {
 export const borrowingGroupAPI = {
   getAll: async () => {
     return apiRequest('/api/borrowing-groups');
+  },
+  removeMember: async (studentGroupId, accountId) => {
+    return apiRequest(`/api/borrowing-groups/student-group/${studentGroupId}/account/${accountId}`, {
+      method: 'DELETE',
+    });
   },
 
   getById: async (id) => {

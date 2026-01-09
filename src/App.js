@@ -20,7 +20,7 @@ import Box from '@mui/material/Box';
 import Container from '@mui/material/Container';
 import TextField from '@mui/material/TextField';
 import Alert from '@mui/material/Alert';
-import { authAPI, borrowingGroupAPI } from './api';
+import { authAPI, borrowingGroupAPI, studentGroupAPI } from './api';
 
 // Helper function to construct user object from profile (shared between login and restore)
 const constructUserFromProfile = async (userProfile) => {
@@ -46,18 +46,49 @@ const constructUserFromProfile = async (userProfile) => {
       console.log('User borrowing groups:', borrowingGroups);
 
       if (borrowingGroups && borrowingGroups.length > 0) {
-        // Find if user has LEADER role
-        const leaderGroup = borrowingGroups.find(bg => bg.roles === 'LEADER');
-        if (leaderGroup) {
-          finalRole = 'leader';
-          borrowingGroupInfo = {
-            groupId: leaderGroup.studentGroupId,
-            role: 'LEADER'
-          };
-          console.log('User is a LEADER in group:', borrowingGroupInfo);
+        // Find if user has LEADER role with active group
+        const leaderGroup = borrowingGroups.find(bg => bg.roles === 'LEADER' && bg.isActive !== false);
+
+        if (leaderGroup && leaderGroup.studentGroupId) {
+          // Check if the student group is active
+          try {
+            const studentGroup = await studentGroupAPI.getById(leaderGroup.studentGroupId);
+            console.log('Student group for leader:', studentGroup);
+
+            // Only set as leader if group is active and BorrowingGroup isActive is true
+            if (studentGroup && studentGroup.status === true && leaderGroup.isActive !== false) {
+              finalRole = 'leader';
+              borrowingGroupInfo = {
+                groupId: leaderGroup.studentGroupId,
+                role: 'LEADER'
+              };
+              console.log('User is a LEADER in active group:', borrowingGroupInfo);
+            } else {
+              // Group is inactive, user should be member
+              console.log('Leader group is inactive, user will be treated as member');
+              const memberGroup = borrowingGroups.find(bg => bg.roles === 'MEMBER' && bg.isActive !== false);
+              if (memberGroup) {
+                borrowingGroupInfo = {
+                  groupId: memberGroup.studentGroupId,
+                  role: 'MEMBER'
+                };
+                console.log('User is a MEMBER in group:', borrowingGroupInfo);
+              }
+            }
+          } catch (groupError) {
+            console.error('Error checking student group status:', groupError);
+            // If error checking group, treat as member
+            const memberGroup = borrowingGroups.find(bg => bg.roles === 'MEMBER' && bg.isActive !== false);
+            if (memberGroup) {
+              borrowingGroupInfo = {
+                groupId: memberGroup.studentGroupId,
+                role: 'MEMBER'
+              };
+            }
+          }
         } else {
-          // User is a member
-          const memberGroup = borrowingGroups.find(bg => bg.roles === 'MEMBER');
+          // User is a member (no active leader group)
+          const memberGroup = borrowingGroups.find(bg => bg.roles === 'MEMBER' && bg.isActive !== false);
           if (memberGroup) {
             borrowingGroupInfo = {
               groupId: memberGroup.studentGroupId,
