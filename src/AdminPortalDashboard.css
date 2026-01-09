@@ -195,3 +195,22 @@
   text-align: right;
 }
 
+.kit-history-card {
+  border-radius: 16px;
+}
+
+.kit-history-space {
+  width: 100%;
+}
+
+.kit-history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  width: 100%;
+}
+
+.kit-history-select {
+  min-width: 220px;
+}
+
