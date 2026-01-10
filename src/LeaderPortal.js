@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { kitAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, borrowingRequestAPI, walletTransactionAPI, penaltiesAPI, penaltyDetailAPI, notificationAPI, authAPI, paymentAPI, classesAPI } from './api';
+import { kitAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, borrowingRequestAPI, walletTransactionAPI, penaltiesAPI, penaltyDetailAPI, notificationAPI, authAPI, paymentAPI, classesAPI, kitComponentAPI } from './api';
 import webSocketService from './utils/websocket';
 import dayjs from 'dayjs';
 import {
@@ -10,9 +10,11 @@ import {
   Table,
   Button,
   Input,
+  InputNumber,
   Select,
   Modal,
   Form,
+  Alert,
   message,
   Tag,
   Row,
@@ -24,7 +26,6 @@ import {
   Badge,
   Divider,
   List,
-  Switch,
   DatePicker,
   Drawer,
   Descriptions,
@@ -133,6 +134,7 @@ function LeaderPortal({ user, onLogout }) {
   const [selectedKey, setSelectedKey] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   const [kits, setKits] = useState([]);
+  const [components, setComponents] = useState([]);
   const [group, setGroup] = useState(null);
   const [wallet, setWallet] = useState(defaultWallet);
   const [borrowingRequests, setBorrowingRequests] = useState([]);
@@ -144,6 +146,7 @@ function LeaderPortal({ user, onLogout }) {
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [kitDetailLoading, setKitDetailLoading] = useState(false);
 
   // Modal states
 
@@ -216,6 +219,18 @@ function LeaderPortal({ user, onLogout }) {
       } catch (error) {
         console.error('Error loading kits:', error);
         setKits([]);
+      }
+
+      // Load kit components for rental (global component list)
+      try {
+        const componentsResponse = await kitComponentAPI.getAllComponents();
+        const componentsData = Array.isArray(componentsResponse)
+          ? componentsResponse
+          : (componentsResponse?.data || []);
+        setComponents(componentsData || []);
+      } catch (error) {
+        console.error('Error loading kit components for rental:', error);
+        setComponents([]);
       }
 
       // Load wallet
@@ -343,11 +358,27 @@ function LeaderPortal({ user, onLogout }) {
           console.log('Student group response:', studentGroup);
 
           if (studentGroup) {
+            // Check if group is inactive or user's BorrowingGroup is inactive
+            const userBorrowingGroup = borrowingGroups.find(bg => bg.accountId === user.id);
+            const isGroupInactive = !studentGroup.status;
+            const isUserBorrowingGroupInactive = userBorrowingGroup && userBorrowingGroup.isActive === false;
+
+            // If group is inactive or user's BorrowingGroup is inactive, redirect to member portal
+            if (isGroupInactive || isUserBorrowingGroupInactive) {
+              console.log('Group is inactive or user BorrowingGroup is inactive, redirecting to member portal');
+              message.warning('Nhóm của bạn đã bị vô hiệu hóa. Vui lòng tham gia nhóm mới để tiếp tục sử dụng dịch vụ.');
+              setTimeout(() => {
+                navigate('/member');
+              }, 2000);
+              return;
+            }
+
             // Map borrowing groups to members
             const members = borrowingGroups.map(bg => ({
               name: bg.accountName || bg.accountEmail,
               email: bg.accountEmail,
-              role: bg.roles
+              role: bg.roles,
+              isActive: bg.isActive !== undefined ? bg.isActive : true
             }));
 
             // Find leader
@@ -379,10 +410,22 @@ function LeaderPortal({ user, onLogout }) {
 
             console.log('Processed group data:', groupData);
             setGroup(groupData);
+          } else {
+            // No group found, redirect to member
+            console.warn('No group found for user, redirecting to member portal');
+            message.warning('Bạn chưa có nhóm. Vui lòng tham gia nhóm mới.');
+            setTimeout(() => {
+              navigate('/member');
+            }, 2000);
           }
         } else {
           console.warn('No group found for user');
           setGroup(null);
+          // Redirect to member if no group
+          message.warning('Bạn chưa có nhóm. Vui lòng tham gia nhóm mới.');
+          setTimeout(() => {
+            navigate('/member');
+          }, 2000);
         }
       } catch (error) {
         console.error('Error loading group info:', error);
@@ -416,6 +459,7 @@ function LeaderPortal({ user, onLogout }) {
     }
   }, [user]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const handlePayPalReturn = useCallback(async (paymentId, payerId) => {
     try {
       // Check if this payment has already been processed successfully
@@ -655,6 +699,7 @@ function LeaderPortal({ user, onLogout }) {
     window.history.replaceState({}, document.title, window.location.pathname);
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const handleRentKit = useCallback(async (kit) => {
     if (!kit?.id) {
       message.error('Không thể xác định kit để thuê.');
@@ -1133,10 +1178,43 @@ function LeaderPortal({ user, onLogout }) {
     setSelectedKey(key);
   };
 
-  const handleViewKitDetail = (kit, modalType = 'kit-rental') => {
-    setSelectedKitDetail(kit);
+  const handleViewKitDetail = async (kit, modalType = 'kit-rental') => {
     setKitDetailModalType(modalType);
     setKitDetailModalVisible(true);
+    setSelectedKitDetail(kit);
+
+    if (!kit || !kit.id) {
+      return;
+    }
+
+    try {
+      setKitDetailLoading(true);
+      const response = await kitAPI.getKitById(kit.id);
+      const data = response?.data || response;
+
+      if (data) {
+        // Map backend kit data to modal-friendly structure
+        const mappedKit = {
+          id: data.id,
+          name: data.kitName || data.name,
+          type: data.type,
+          status: data.status,
+          description: data.description,
+          imageUrl: data.imageUrl,
+          quantityTotal: data.quantityTotal,
+          quantityAvailable: data.quantityAvailable,
+          amount: data.amount ?? kit.amount ?? 0,
+          components: Array.isArray(data.components) ? data.components : (kit.components || [])
+        };
+
+        setSelectedKitDetail(mappedKit);
+      }
+    } catch (error) {
+      console.error('Error loading kit details:', error);
+      message.error('Failed to load kit details');
+    } finally {
+      setKitDetailLoading(false);
+    }
   };
 
   const handleComponentQuantityChange = (componentId, quantity) => {
@@ -1493,7 +1571,13 @@ function LeaderPortal({ user, onLogout }) {
                     checkingKitId={kitCheckInProgress}
                   />
                 )}
-                {selectedKey === 'kit-component-rental' && <KitComponentRental kits={kits} user={user} onViewKitDetail={(kit) => handleViewKitDetail(kit, 'component-rental')} onRentComponent={handleRentComponent} />}
+                {selectedKey === 'kit-component-rental' && (
+                  <KitComponentRental
+                    components={components}
+                    user={user}
+                    onRentComponent={handleRentComponent}
+                  />
+                )}
                 {selectedKey === 'borrow-tracking' && <BorrowTracking borrowingRequests={borrowingRequests} setBorrowingRequests={setBorrowingRequests} user={user} penalties={penalties} penaltyDetails={penaltyDetails} />}
                 {selectedKey === 'wallet' && <WalletManagement wallet={wallet} setWallet={setWallet} />}
                 {selectedKey === 'profile' && <ProfileManagement profile={profile} setProfile={setProfile} loading={profileLoading} setLoading={setProfileLoading} user={user} />}
@@ -1580,148 +1664,150 @@ function LeaderPortal({ user, onLogout }) {
         ]}
         width={800}
       >
-        {selectedKitDetail && (
-          <div>
-            <Descriptions bordered column={2} style={{ marginBottom: 24 }}>
-              <Descriptions.Item label="Kit Name" span={2}>
-                <Text strong style={{ fontSize: '18px' }}>{selectedKitDetail.name}</Text>
-              </Descriptions.Item>
-              <Descriptions.Item label="Type">
-                <Tag color="blue">{selectedKitDetail.type || 'N/A'}</Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="Status">
-                <Tag color={getStatusColor(selectedKitDetail.status)}>
-                  {selectedKitDetail.status || 'N/A'}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="Available">
-                {selectedKitDetail.quantityAvailable || 0} / {selectedKitDetail.quantityTotal || 0}
-              </Descriptions.Item>
-              <Descriptions.Item label="Amount">
-                <Text strong style={{ color: '#1890ff', fontSize: '16px' }}>
-                  {selectedKitDetail.amount?.toLocaleString() || '0'} VND
-                </Text>
-              </Descriptions.Item>
-              <Descriptions.Item label="Description" span={2}>
-                {selectedKitDetail.description || 'No description'}
-              </Descriptions.Item>
-            </Descriptions>
+        <Spin spinning={kitDetailLoading}>
+          {selectedKitDetail && (
+            <div>
+              <Descriptions bordered column={2} style={{ marginBottom: 24 }}>
+                <Descriptions.Item label="Kit Name" span={2}>
+                  <Text strong style={{ fontSize: '18px' }}>{selectedKitDetail.name}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="Type">
+                  <Tag color="blue">{selectedKitDetail.type || 'N/A'}</Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="Status">
+                  <Tag color={getStatusColor(selectedKitDetail.status)}>
+                    {selectedKitDetail.status || 'N/A'}
+                  </Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="Available">
+                  {selectedKitDetail.quantityAvailable || 0} / {selectedKitDetail.quantityTotal || 0}
+                </Descriptions.Item>
+                <Descriptions.Item label="Amount">
+                  <Text strong style={{ color: '#1890ff', fontSize: '16px' }}>
+                    {selectedKitDetail.amount?.toLocaleString() || '0'} VND
+                  </Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="Description" span={2}>
+                  {selectedKitDetail.description || 'No description'}
+                </Descriptions.Item>
+              </Descriptions>
 
-            <Divider orientation="left">Kit Components</Divider>
+              <Divider orientation="left">Kit Components</Divider>
 
-            {selectedKitDetail.components && selectedKitDetail.components.length > 0 ? (
-              <Table
-                dataSource={selectedKitDetail.components}
-                columns={[
-                  {
-                    title: 'Component Name',
-                    dataIndex: 'componentName',
-                    key: 'componentName',
-                  },
-                  {
-                    title: 'Amount',
-                    dataIndex: 'pricePerCom',
-                    key: 'pricePerCom',
-                    render: (pricePerCom) => (
-                      <Text strong style={{ color: '#1890ff' }}>
-                        {pricePerCom ? pricePerCom.toLocaleString() : '0'} VND
-                      </Text>
-                    )
-                  },
-                  {
-                    title: 'Type',
-                    dataIndex: 'componentType',
-                    key: 'componentType',
-                    render: (type) => <Tag color="purple">{type || 'N/A'}</Tag>
-                  },
-                  // Show quantity column based on modal type
-                  ...(kitDetailModalType === 'component-rental' ? [
+              {selectedKitDetail.components && selectedKitDetail.components.length > 0 ? (
+                <Table
+                  dataSource={selectedKitDetail.components}
+                  columns={[
                     {
-                      title: 'Available',
-                      dataIndex: 'quantityAvailable',
-                      key: 'quantityAvailable',
-                    }
-                  ] : [
-                    {
-                      title: 'Quantity',
-                      dataIndex: 'quantityTotal',
-                      key: 'quantityTotal',
-                      render: (quantityTotal) => quantityTotal || 0
-                    }
-                  ]),
-                  {
-                    title: 'Description',
-                    dataIndex: 'description',
-                    key: 'description',
-                    ellipsis: true,
-                  },
-                  // Only show Quantity input and Actions column for component-rental modal type
-                  ...(kitDetailModalType === 'component-rental' ? [
-                    {
-                      title: 'Rent Quantity',
-                      key: 'rentQuantity',
-                      render: (_, record) => (
-                        <Input
-                          type="number"
-                          min={1}
-                          max={record.quantityAvailable || 0}
-                          value={componentQuantities[record.id] || 1}
-                          onChange={(e) => {
-                            const qty = parseInt(e.target.value) || 1;
-                            // Validate: ensure quantity doesn't exceed available
-                            const validQty = Math.min(qty, record.quantityAvailable || 0);
-                            handleComponentQuantityChange(record.id, validQty > 0 ? validQty : 1);
-                          }}
-                          onBlur={(e) => {
-                            const qty = parseInt(e.target.value) || 1;
-                            const available = record.quantityAvailable || 0;
-                            if (qty > available) {
-                              message.warning(`Quantity cannot exceed available amount (${available})`);
-                              handleComponentQuantityChange(record.id, available);
-                            }
-                          }}
-                          style={{ width: 80 }}
-                        />
-                      ),
+                      title: 'Component Name',
+                      dataIndex: 'componentName',
+                      key: 'componentName',
                     },
                     {
-                      title: 'Actions',
-                      key: 'actions',
-                      render: (_, record) => {
-                        const qty = componentQuantities[record.id] || 1;
-                        const available = record.quantityAvailable || 0;
-                        const exceedsAvailable = qty > available;
-                        const isSoldOut = available === 0;
-                        return (
-                          <Button
-                            size="small"
-                            type="primary"
-                            onClick={() => {
-                              if (qty > available) {
-                                message.error(`Cannot rent ${qty} items. Only ${available} available.`);
-                                return;
-                              }
-                              const componentWithQty = { ...record, rentQuantity: qty };
-                              handleRentComponent(componentWithQty);
+                      title: 'Amount',
+                      dataIndex: 'pricePerCom',
+                      key: 'pricePerCom',
+                      render: (pricePerCom) => (
+                        <Text strong style={{ color: '#1890ff' }}>
+                          {pricePerCom ? pricePerCom.toLocaleString() : '0'} VND
+                        </Text>
+                      )
+                    },
+                    {
+                      title: 'Type',
+                      dataIndex: 'componentType',
+                      key: 'componentType',
+                      render: (type) => <Tag color="purple">{type || 'N/A'}</Tag>
+                    },
+                    // Show quantity column based on modal type
+                    ...(kitDetailModalType === 'component-rental' ? [
+                      {
+                        title: 'Available',
+                        dataIndex: 'quantityAvailable',
+                        key: 'quantityAvailable',
+                      }
+                    ] : [
+                      {
+                        title: 'Quantity',
+                        dataIndex: 'quantityTotal',
+                        key: 'quantityTotal',
+                        render: (quantityTotal) => quantityTotal || 0
+                      }
+                    ]),
+                    {
+                      title: 'Description',
+                      dataIndex: 'description',
+                      key: 'description',
+                      ellipsis: true,
+                    },
+                    // Only show Quantity input and Actions column for component-rental modal type
+                    ...(kitDetailModalType === 'component-rental' ? [
+                      {
+                        title: 'Rent Quantity',
+                        key: 'rentQuantity',
+                        render: (_, record) => (
+                          <Input
+                            type="number"
+                            min={1}
+                            max={record.quantityAvailable || 0}
+                            value={componentQuantities[record.id] || 1}
+                            onChange={(e) => {
+                              const qty = parseInt(e.target.value) || 1;
+                              // Validate: ensure quantity doesn't exceed available
+                              const validQty = Math.min(qty, record.quantityAvailable || 0);
+                              handleComponentQuantityChange(record.id, validQty > 0 ? validQty : 1);
                             }}
-                            disabled={!available || available === 0 || exceedsAvailable}
-                          >
-                            {isSoldOut ? 'Sold out' : 'Rent'}
-                          </Button>
-                        );
+                            onBlur={(e) => {
+                              const qty = parseInt(e.target.value) || 1;
+                              const available = record.quantityAvailable || 0;
+                              if (qty > available) {
+                                message.warning(`Quantity cannot exceed available amount (${available})`);
+                                handleComponentQuantityChange(record.id, available);
+                              }
+                            }}
+                            style={{ width: 80 }}
+                          />
+                        ),
                       },
-                    }
-                  ] : []),
-                ]}
-                rowKey={(record, index) => record.id || index}
-                pagination={false}
-                size="small"
-              />
-            ) : (
-              <Empty description="No components available" />
-            )}
-          </div>
-        )}
+                      {
+                        title: 'Actions',
+                        key: 'actions',
+                        render: (_, record) => {
+                          const qty = componentQuantities[record.id] || 1;
+                          const available = record.quantityAvailable || 0;
+                          const exceedsAvailable = qty > available;
+                          const isSoldOut = available === 0;
+                          return (
+                            <Button
+                              size="small"
+                              type="primary"
+                              onClick={() => {
+                                if (qty > available) {
+                                  message.error(`Cannot rent ${qty} items. Only ${available} available.`);
+                                  return;
+                                }
+                                const componentWithQty = { ...record, rentQuantity: qty };
+                                handleRentComponent(componentWithQty);
+                              }}
+                              disabled={!available || available === 0 || exceedsAvailable}
+                            >
+                              {isSoldOut ? 'Sold out' : 'Rent'}
+                            </Button>
+                          );
+                        },
+                      }
+                    ] : []),
+                  ]}
+                  rowKey={(record, index) => record.id || index}
+                  pagination={false}
+                  size="small"
+                />
+              ) : (
+                <Empty description="No components available" />
+              )}
+            </div>
+          )}
+        </Spin>
       </Modal>
     </Layout>
   );
@@ -2416,40 +2502,57 @@ const KitRental = ({ kits, onViewKitDetail, onRentKit, checkingKitId }) => {
 };
 
 // Kit Component Rental Component
-const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) => {
+const KitComponentRental = ({ components, user, onRentComponent }) => {
   const [searchText, setSearchText] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterType, setFilterType] = useState('all');
 
   const { Option } = Select;
 
-  // Filter kits
-  const filteredKits = kits.filter(kit => {
-    // Filter by available quantity
-    if (kit.quantityAvailable <= 0) return false;
+  // Build dynamic filter options
+  const uniqueStatuses = Array.from(
+    new Set(
+      (components || [])
+        .map((c) => c.status)
+        .filter((value) => value && value !== '')
+    )
+  );
 
-    // Filter by search text
+  const uniqueTypes = Array.from(
+    new Set(
+      (components || [])
+        .map((c) => c.componentType)
+        .filter((value) => value && value !== '')
+    )
+  );
+
+  // Filter components (only global components with no kitId)
+  const filteredComponents = (components || []).filter((component) => {
+    // Only keep components that are not linked to any kit
+    if (component.kitId) return false;
+
+    if ((component.quantityAvailable || 0) <= 0) return false;
+
     if (searchText && searchText.trim() !== '') {
       const searchLower = searchText.toLowerCase();
-      const kitName = (kit.name || kit.kitName || '').toLowerCase();
-      const kitId = (kit.id || '').toString().toLowerCase();
-      if (!kitName.includes(searchLower) && !kitId.includes(searchLower)) {
+      const name = (component.componentName || component.name || '').toLowerCase();
+      const id = (component.id || '').toString().toLowerCase();
+      const kitId = component.kitId ? component.kitId.toString().toLowerCase() : '';
+      if (
+        !name.includes(searchLower) &&
+        !id.includes(searchLower) &&
+        (!kitId || !kitId.includes(searchLower))
+      ) {
         return false;
       }
     }
 
-    // Filter by status
-    if (filterStatus !== 'all') {
-      if (kit.status !== filterStatus) {
-        return false;
-      }
+    if (filterStatus !== 'all' && component.status !== filterStatus) {
+      return false;
     }
 
-    // Filter by type
-    if (filterType !== 'all') {
-      if (kit.type !== filterType) {
-        return false;
-      }
+    if (filterType !== 'all' && component.componentType !== filterType) {
+      return false;
     }
 
     return true;
@@ -2484,7 +2587,7 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8}>
                 <Input
-                  placeholder="Search by name or ID..."
+                  placeholder="Search by component name, ID or Kit ID..."
                   prefix={<SearchOutlined />}
                   value={searchText}
                   onChange={(e) => setSearchText(e.target.value)}
@@ -2503,9 +2606,11 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
                   style={{ width: '100%', borderRadius: '8px' }}
                 >
                   <Option value="all">All Status</Option>
-                  <Option value="AVAILABLE">Available</Option>
-                  <Option value="BORROWED">Borrowed</Option>
-                  <Option value="MAINTENANCE">Maintenance</Option>
+                  {uniqueStatuses.map((status) => (
+                    <Option key={status} value={status}>
+                      {status}
+                    </Option>
+                  ))}
                 </Select>
               </Col>
               <Col xs={24} sm={12} md={8}>
@@ -2516,23 +2621,26 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
                   style={{ width: '100%', borderRadius: '8px' }}
                 >
                   <Option value="all">All Types</Option>
-                  <Option value="STUDENT_KIT">Student Kit</Option>
-                  <Option value="LECTURER_KIT">Lecturer Kit</Option>
+                  {uniqueTypes.map((type) => (
+                    <Option key={type} value={type}>
+                      {type}
+                    </Option>
+                  ))}
                 </Select>
               </Col>
             </Row>
           </div>
 
-          {/* Kit Catalog Grid */}
-          {filteredKits.length === 0 ? (
+          {/* Component Catalog Grid */}
+          {filteredComponents.length === 0 ? (
             <Empty
-              description="No kits available for component rental"
+              description="No components available for rental"
               style={{ padding: '60px 0' }}
             />
           ) : (
             <Row gutter={[24, 24]}>
-              {filteredKits.map((kit) => (
-                <Col xs={24} sm={12} md={8} lg={6} key={kit.id}>
+              {filteredComponents.map((component) => (
+                <Col xs={24} sm={12} md={8} lg={6} key={component.id}>
                   <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -2554,8 +2662,8 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
                         <div
                           style={{
                             height: 200,
-                            background: kit.imageUrl
-                              ? `url(${kit.imageUrl}) center/cover`
+                            background: component.imageUrl
+                              ? `url(${component.imageUrl}) center/cover`
                               : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                             display: 'flex',
                             alignItems: 'center',
@@ -2563,16 +2671,22 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
                             position: 'relative'
                           }}
                         >
-                          {!kit.imageUrl && (
+                          {!component.imageUrl && (
                             <BuildOutlined style={{ fontSize: 64, color: '#fff', opacity: 0.8 }} />
                           )}
-                          <div style={{
-                            position: 'absolute',
-                            top: 12,
-                            right: 12
-                          }}>
+                          <div
+                            style={{
+                              position: 'absolute',
+                              top: 12,
+                              right: 12,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'flex-end',
+                              gap: 8
+                            }}
+                          >
                             <Tag
-                              color={kit.status === 'AVAILABLE' ? 'green' : kit.status === 'BORROWED' ? 'orange' : 'red'}
+                              color={component.status === 'AVAILABLE' ? 'green' : component.status === 'BORROWED' ? 'orange' : component.status === 'MAINTENANCE' ? 'blue' : 'red'}
                               style={{
                                 fontSize: '12px',
                                 padding: '4px 12px',
@@ -2580,34 +2694,21 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
                                 fontWeight: 'bold'
                               }}
                             >
-                              {kit.status}
+                              {component.status}
+                            </Tag>
+                            <Tag
+                              color={component.kitId ? 'geekblue' : 'default'}
+                              style={{
+                                fontSize: '11px',
+                                padding: '2px 10px',
+                                borderRadius: '12px'
+                              }}
+                            >
+                              {component.kitId ? `Kit ID: ${component.kitId}` : 'Global Component'}
                             </Tag>
                           </div>
                         </div>
                       }
-                      actions={[
-                        <motion.div
-                          key="view"
-                          whileHover={{ scale: 1.1 }}
-                          whileTap={{ scale: 0.9 }}
-                        >
-                          <Button
-                            type="primary"
-                            icon={<EyeOutlined />}
-                            onClick={() => onViewKitDetail(kit)}
-                            style={{
-                              color: '#fff',
-                              width: '100%',
-                              borderRadius: '8px',
-                              background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-                              border: 'none',
-                              fontWeight: 'bold'
-                            }}
-                          >
-                            View Components
-                          </Button>
-                        </motion.div>
-                      ]}
                     >
                       <Card.Meta
                         title={
@@ -2615,50 +2716,67 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
                             strong
                             style={{
                               fontSize: '18px',
-                              cursor: 'pointer',
                               color: '#2c3e50'
                             }}
-                            onClick={() => onViewKitDetail(kit)}
                           >
-                            {kit.name || kit.kitName || 'Unnamed Kit'}
+                            {component.componentName || component.name || 'Unnamed Component'}
                           </Text>
                         }
                         description={
                           <div style={{ marginTop: 12 }}>
                             <Space direction="vertical" size="small" style={{ width: '100%' }}>
                               <div>
-                                <Tag
-                                  color={kit.type === 'LECTURER_KIT' ? 'red' : 'blue'}
-                                  style={{
-                                    fontSize: '12px',
-                                    padding: '4px 12px',
-                                    borderRadius: '12px',
-                                    marginBottom: 8
-                                  }}
-                                >
-                                  {kit.type === 'LECTURER_KIT' ? 'Lecturer Kit' : 'Student Kit'}
-                                </Tag>
+                                {component.componentType && (
+                                  <Tag
+                                    color="purple"
+                                    style={{
+                                      fontSize: '12px',
+                                      padding: '4px 12px',
+                                      borderRadius: '12px',
+                                      marginBottom: 8
+                                    }}
+                                  >
+                                    {component.componentType}
+                                  </Tag>
+                                )}
                               </div>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <Text type="secondary" style={{ fontSize: '13px' }}>
-                                  <strong>Total:</strong> {kit.quantityTotal || 0}
+                                  <strong>Available:</strong> {component.quantityAvailable || 0}
                                 </Text>
                                 <Text type="secondary" style={{ fontSize: '13px' }}>
-                                  <strong>Available:</strong> {kit.quantityAvailable || 0}
+                                  <strong>Total:</strong> {component.quantityTotal || 0}
                                 </Text>
                               </div>
                               <div style={{ marginTop: 8 }}>
-                                <Text type="secondary" style={{ fontSize: '13px' }}>
-                                  <strong>Components:</strong> {kit.components?.length || 0}
+                                <Text strong style={{ fontSize: '14px', color: '#1890ff' }}>
+                                  {component.pricePerCom ? `${Number(component.pricePerCom).toLocaleString()} VND` : '0 VND'}
                                 </Text>
                               </div>
-                              {kit.description && (
+                              {component.description && (
                                 <div style={{ marginTop: 8 }}>
                                   <Text type="secondary" style={{ fontSize: '12px' }} ellipsis>
-                                    {kit.description}
+                                    {component.description}
                                   </Text>
                                 </div>
                               )}
+                              <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+                                <Button
+                                  type="primary"
+                                  icon={<ShoppingOutlined />}
+                                  onClick={() => onRentComponent(component)}
+                                  disabled={(component.quantityAvailable || 0) <= 0}
+                                  style={{
+                                    color: '#fff',
+                                    borderRadius: '8px',
+                                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                                    border: 'none',
+                                    fontWeight: 'bold'
+                                  }}
+                                >
+                                  Rent
+                                </Button>
+                              </div>
                             </Space>
                           </div>
                         }
@@ -2671,10 +2789,10 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
           )}
 
           {/* Pagination Info */}
-          {filteredKits.length > 0 && (
+          {filteredComponents.length > 0 && (
             <div style={{ marginTop: 24, textAlign: 'center' }}>
               <Text type="secondary">
-                Showing {filteredKits.length} of {kits.filter(k => k.quantityAvailable > 0).length} available kit(s)
+                Showing {filteredComponents.length} component(s) available for rental
               </Text>
             </div>
           )}
@@ -2839,6 +2957,9 @@ const WalletManagement = ({ wallet, setWallet }) => {
   const navigate = useNavigate();
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [transferModalVisible, setTransferModalVisible] = useState(false);
+  const [transferForm] = Form.useForm();
+  const [transferLoading, setTransferLoading] = useState(false);
   const [detailsModalVisible, setDetailsModalVisible] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState(null);
 
@@ -2876,6 +2997,45 @@ const WalletManagement = ({ wallet, setWallet }) => {
 
   const handlePayPenalties = () => {
     navigate('/penalty-payment');
+  };
+
+  const handleTransfer = async () => {
+    try {
+      const values = await transferForm.validateFields();
+      const { recipientEmail, amount, description } = values;
+
+      // Validate amount
+      if (amount < 10000) {
+        message.error('Số tiền chuyển tối thiểu là 10,000 VND');
+        return;
+      }
+
+      // Check wallet balance
+      if (wallet.balance < amount) {
+        message.error('Số dư ví không đủ để chuyển tiền! Vui lòng nạp thêm tiền.');
+        return;
+      }
+
+      setTransferLoading(true);
+      await walletTransactionAPI.transfer(recipientEmail, amount, description || 'Transfer money');
+      message.success('Chuyển tiền thành công!');
+      setTransferModalVisible(false);
+      transferForm.resetFields();
+
+      // Reload wallet and transactions
+      const walletResponse = await walletAPI.getMyWallet();
+      const walletData = walletResponse?.data || walletResponse || {};
+      setWallet({
+        balance: walletData.balance || 0,
+        transactions: transactions
+      });
+      await loadTransactionHistory();
+    } catch (error) {
+      console.error('Error transferring money:', error);
+      message.error(error.message || 'Chuyển tiền thất bại. Vui lòng thử lại.');
+    } finally {
+      setTransferLoading(false);
+    }
   };
 
   const handleShowDetails = (transaction) => {
@@ -2938,6 +3098,17 @@ const WalletManagement = ({ wallet, setWallet }) => {
                   Top Up
                 </Button>
                 <Button
+                  onClick={() => setTransferModalVisible(true)}
+                  style={{
+                    width: '100%',
+                    background: 'rgba(255,255,255,0.15)',
+                    border: '1px solid rgba(255,255,255,0.3)',
+                    color: 'white'
+                  }}
+                >
+                  Transfer Money
+                </Button>
+                <Button
                   onClick={handlePayPenalties}
                   style={{
                     width: '100%',
@@ -2986,7 +3157,7 @@ const WalletManagement = ({ wallet, setWallet }) => {
                       render: (type) => {
                         // Mapping type sang thông tin theme
                         let config = {
-                          label: type || 'Khác',
+                          label: type || 'Other',
                           color: 'default',
                           icon: null,
                           bg: '#f6f6f6',
@@ -2996,17 +3167,17 @@ const WalletManagement = ({ wallet, setWallet }) => {
                         switch ((type || '').toUpperCase()) {
                           case 'TOP_UP':
                           case 'TOPUP':
-                            config = { label: 'Nạp tiền', color: 'success', icon: <DollarOutlined />, bg: '#e8f8ee', border: '1.5px solid #52c41a', text: '#2a8731' }; break;
+                            config = { label: 'Top Up', color: 'success', icon: <DollarOutlined />, bg: '#e8f8ee', border: '1.5px solid #52c41a', text: '#2a8731' }; break;
                           case 'RENTAL_FEE':
-                            config = { label: 'Thuê kit', color: 'geekblue', icon: <ShoppingOutlined />, bg: '#e6f7ff', border: '1.5px solid #177ddc', text: '#177ddc' }; break;
+                            config = { label: 'Rental Fee', color: 'geekblue', icon: <ShoppingOutlined />, bg: '#e6f7ff', border: '1.5px solid #177ddc', text: '#177ddc' }; break;
                           case 'PENALTY_PAYMENT':
                           case 'PENALTY':
                           case 'FINE':
-                            config = { label: 'Phí phạt', color: 'error', icon: <ExclamationCircleOutlined />, bg: '#fff1f0', border: '1.5px solid #ff4d4f', text: '#d4001a' }; break;
+                            config = { label: 'Penalty', color: 'error', icon: <ExclamationCircleOutlined />, bg: '#fff1f0', border: '1.5px solid #ff4d4f', text: '#d4001a' }; break;
                           case 'REFUND':
-                            config = { label: 'Hoàn tiền', color: 'purple', icon: <RollbackOutlined />, bg: '#f9f0ff', border: '1.5px solid #722ed1', text: '#722ed1' }; break;
+                            config = { label: 'Refund', color: 'purple', icon: <RollbackOutlined />, bg: '#f9f0ff', border: '1.5px solid #722ed1', text: '#722ed1' }; break;
                           default:
-                            config = { label: type || 'Khác', color: 'default', icon: <InfoCircleOutlined />, bg: '#fafafa', border: '1.5px solid #bfbfbf', text: '#595959' };
+                            config = { label: type || 'Other', color: 'default', icon: <InfoCircleOutlined />, bg: '#fafafa', border: '1.5px solid #bfbfbf', text: '#595959' };
                         }
                         return <Tag color={config.color} style={{ background: config.bg, border: config.border, color: config.text, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, letterSpacing: 1 }}>
                           {config.icon} <span>{config.label}</span>
@@ -3135,6 +3306,111 @@ const WalletManagement = ({ wallet, setWallet }) => {
         </Col>
       </Row>
 
+      {/* Transfer Money Modal */}
+      <Modal
+        title="Transfer Money"
+        open={transferModalVisible}
+        onCancel={() => {
+          setTransferModalVisible(false);
+          transferForm.resetFields();
+        }}
+        footer={null}
+        width={500}
+      >
+        <Alert
+          message="Transfer Money"
+          description="Chuyển tiền từ ví của bạn đến người nhận bằng email."
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+
+        <Form
+          form={transferForm}
+          layout="vertical"
+          onFinish={handleTransfer}
+        >
+          <Form.Item
+            label="Recipient Email"
+            name="recipientEmail"
+            rules={[
+              { required: true, message: 'Please enter recipient email' },
+              { type: 'email', message: 'Please enter a valid email address' }
+            ]}
+          >
+            <Input
+              placeholder="Enter recipient email address"
+              type="email"
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="Amount (VND)"
+            name="amount"
+            rules={[
+              { required: true, message: 'Please enter amount' },
+              { type: 'number', min: 10000, message: 'Minimum amount is 10,000 VND' }
+            ]}
+          >
+            <InputNumber
+              style={{ width: '100%' }}
+              placeholder="Enter amount (minimum 10,000 VND)"
+              formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+              parser={value => value.replace(/\$\s?|(,*)/g, '')}
+              min={10000}
+              step={10000}
+            />
+          </Form.Item>
+
+          <Form.Item shouldUpdate={(prevValues, currentValues) => prevValues.amount !== currentValues.amount}>
+            {({ getFieldValue }) => {
+              const amount = getFieldValue('amount');
+              if (amount) {
+                const balance = wallet.balance || 0;
+                const remaining = balance - amount;
+                return (
+                  <Alert
+                    message={`Current Balance: ${balance.toLocaleString()} VND`}
+                    description={`Balance after transfer: ${remaining.toLocaleString()} VND`}
+                    type={remaining < 0 ? 'error' : remaining < 50000 ? 'warning' : 'info'}
+                    style={{ marginBottom: 16 }}
+                  />
+                );
+              }
+              return null;
+            }}
+          </Form.Item>
+
+          <Form.Item
+            label="Description (Optional)"
+            name="description"
+          >
+            <Input.TextArea
+              placeholder="Enter description for this transfer"
+              rows={3}
+            />
+          </Form.Item>
+
+          <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
+            <Space>
+              <Button onClick={() => {
+                setTransferModalVisible(false);
+                transferForm.resetFields();
+              }}>
+                Cancel
+              </Button>
+              <Button
+                type="primary"
+                htmlType="submit"
+                loading={transferLoading}
+              >
+                Transfer
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
       {/* Transaction Details Modal */}
       <Modal
         title="Transaction Details"
@@ -3245,6 +3521,7 @@ const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user, penalti
   const [relatedPenaltyDetails, setRelatedPenaltyDetails] = useState([]);
   const [loadingPenalty, setLoadingPenalty] = useState(false);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const fetchBorrowingRequests = useCallback(async () => {
     setLoading(true);
     try {
@@ -3378,6 +3655,19 @@ const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user, penalti
       dataIndex: 'expectReturnDate',
       key: 'expectReturnDate',
       render: (date) => date ? new Date(date).toLocaleDateString() : 'N/A'
+    },
+    {
+      title: 'Created Date',
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      sorter: (a, b) => {
+        if (!a.createdAt && !b.createdAt) return 0;
+        if (!a.createdAt) return 1;
+        if (!b.createdAt) return -1;
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      },
+      defaultSortOrder: 'descend',
+      render: (date) => date ? new Date(date).toLocaleString('vi-VN') : 'N/A'
     },
     {
       title: 'Status',

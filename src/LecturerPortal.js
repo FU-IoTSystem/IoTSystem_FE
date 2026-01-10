@@ -6,7 +6,9 @@ import {
   Table,
   Button,
   Input,
+  InputNumber,
   Form,
+  Alert,
   message,
   Tag,
   Row,
@@ -24,7 +26,6 @@ import {
   notification,
   Modal,
   DatePicker,
-  Switch,
   Divider,
   Select,
   Pagination
@@ -55,11 +56,10 @@ import {
   CheckCircleOutlined,
   UploadOutlined,
   SearchOutlined,
-  FilterOutlined,
-  PlusOutlined
+  FilterOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { kitAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, walletTransactionAPI, borrowingRequestAPI, penaltiesAPI, penaltyDetailAPI, notificationAPI, authAPI, classAssignmentAPI, paymentAPI, classesAPI, userAPI } from './api';
+import { kitAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, walletTransactionAPI, borrowingRequestAPI, penaltiesAPI, penaltyDetailAPI, notificationAPI, authAPI, classAssignmentAPI, paymentAPI, classesAPI, userAPI, kitComponentAPI } from './api';
 import webSocketService from './utils/websocket';
 import dayjs from 'dayjs';
 
@@ -120,6 +120,7 @@ function LecturerPortal({ user, onLogout }) {
   const [selectedKey, setSelectedKey] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   const [kits, setKits] = useState([]);
+  const [components, setComponents] = useState([]);
   const [lecturerGroups, setLecturerGroups] = useState([]);
   const [wallet, setWallet] = useState(defaultWallet);
   const [selectedGroupMembers, setSelectedGroupMembers] = useState([]);
@@ -136,7 +137,6 @@ function LecturerPortal({ user, onLogout }) {
   const [groupBorrowStatus, setGroupBorrowStatus] = useState(null);
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
-  const [initialDataLoaded, setInitialDataLoaded] = useState(false);
 
   // State for detail modal
   const [detailModalVisible, setDetailModalVisible] = useState(false);
@@ -204,6 +204,18 @@ function LecturerPortal({ user, onLogout }) {
       } catch (error) {
         console.error('Error loading kits:', error);
         setKits([]);
+      }
+
+      // Load global kit components (kitId = null) for component rental
+      try {
+        const componentsResponse = await kitComponentAPI.getAllComponents();
+        const componentsData = Array.isArray(componentsResponse)
+          ? componentsResponse
+          : (componentsResponse?.data || []);
+        setComponents(componentsData || []);
+      } catch (error) {
+        console.error('Error loading kit components for lecturer:', error);
+        setComponents([]);
       }
 
       // Load penalties
@@ -338,7 +350,8 @@ function LecturerPortal({ user, onLogout }) {
               name: bg.accountName,
               email: bg.accountEmail,
               role: bg.roles,
-              studentCode: bg.studentCode || null
+              studentCode: bg.studentCode || null,
+              isActive: bg.isActive !== undefined ? bg.isActive : true
             }));
 
             const leaderMember = members.find(member => (member.role || '').toUpperCase() === 'LEADER');
@@ -461,11 +474,9 @@ function LecturerPortal({ user, onLogout }) {
       // borrowStatus is already set from API above
 
       console.log('Lecturer data loaded successfully');
-      setInitialDataLoaded(true);
     } catch (error) {
       console.error('Error loading data:', error);
       message.error('Failed to load data');
-      setInitialDataLoaded(true); // Set to true even on error to allow PayPal processing
     } finally {
       setLoading(false);
     }
@@ -773,8 +784,6 @@ function LecturerPortal({ user, onLogout }) {
   useEffect(() => {
     console.log('===== LecturerPortal useEffect triggered =====');
     console.log('User:', user);
-    // Reset initial data loaded flag when user changes
-    setInitialDataLoaded(false);
     payPalReturnProcessedRef.current = false;
     if (user) {
       loadData();
@@ -1572,13 +1581,6 @@ function LecturerPortal({ user, onLogout }) {
     }
   };
 
-  const handleAddStudents = (group) => {
-    setSelectedGroup(group);
-    setGroupDetailModal(false); // Close group detail modal if open
-    // The modal will be opened in GroupsManagement component
-  };
-
-
   return (
     <Layout style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
       {/* Sidebar */}
@@ -1797,8 +1799,20 @@ function LecturerPortal({ user, onLogout }) {
               >
                 {selectedKey === 'dashboard' && <DashboardContent lecturerGroups={lecturerGroups} wallet={wallet} kits={kits} penalties={penalties} penaltyDetails={penaltyDetails} />}
                 {selectedKey === 'groups' && <GroupsManagement lecturerGroups={lecturerGroups} onViewGroupDetails={handleViewGroupDetails} loadData={loadData} />}
-                {selectedKey === 'kits' && <KitRental kits={kits} user={user} onRent={handleRent} onViewKitDetail={(kit) => handleViewKitDetail(kit, 'kit-rental')} />}
-                {selectedKey === 'kit-component-rental' && <KitComponentRental kits={kits} user={user} onViewKitDetail={(kit) => handleViewKitDetail(kit, 'component-rental')} onRentComponent={handleRentComponent} />}
+                {selectedKey === 'kits' && (
+                  <KitRental
+                    kits={kits}
+                    user={user}
+                    onRent={handleRent}
+                    onViewKitDetail={(kit) => handleViewKitDetail(kit, 'kit-rental')}
+                  />
+                )}
+                {selectedKey === 'kit-component-rental' && (
+                  <KitComponentRental
+                    components={components}
+                    onRentComponent={handleRentComponent}
+                  />
+                )}
                 {selectedKey === 'borrow-status' && <BorrowStatus borrowStatus={borrowStatus} onViewDetail={handleViewDetail} />}
                 {selectedKey === 'wallet' && <WalletManagement wallet={wallet} setWallet={setWallet} onTopUp={handleTopUp} onPayPenalties={handlePayPenalties} />}
                 {selectedKey === 'profile' && <ProfileManagement profile={profile} setProfile={setProfile} loading={profileLoading} setLoading={setProfileLoading} user={user} />}
@@ -2788,13 +2802,6 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
   const [searchText, setSearchText] = useState('');
   const [selectedClassCode, setSelectedClassCode] = useState(null);
   const [studentCodeSearch, setStudentCodeSearch] = useState('');
-  const [addStudentModalVisible, setAddStudentModalVisible] = useState(false);
-  const [selectedGroup, setSelectedGroup] = useState(null);
-  const [availableStudents, setAvailableStudents] = useState([]);
-  const [loadingStudents, setLoadingStudents] = useState(false);
-  const [selectedStudentIds, setSelectedStudentIds] = useState([]);
-  const [submitting, setSubmitting] = useState(false);
-  const [searchStudentText, setSearchStudentText] = useState('');
 
   // Get unique class codes from groups
   const classCodes = [...new Set(lecturerGroups
@@ -2835,129 +2842,6 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
 
     return true;
   });
-
-  const handleOpenAddStudentModal = async (group) => {
-    if (!group.classId) {
-      message.error('This group does not have a class assigned. Cannot add students.');
-      return;
-    }
-
-    if (group.members?.length >= 4) {
-      message.warning('Group already has 4 members. Cannot add more students.');
-      return;
-    }
-
-    setSelectedGroup(group);
-    setSelectedStudentIds([]);
-    setAddStudentModalVisible(true);
-    await loadStudentsForClass(group);
-  };
-
-  const loadStudentsForClass = async (group) => {
-    if (!group.classId) {
-      setAvailableStudents([]);
-      return;
-    }
-
-    setLoadingStudents(true);
-    try {
-      // Get all students
-      const allStudents = await userAPI.getStudents();
-
-      // Get all class assignments
-      const allAssignments = await classAssignmentAPI.getAll();
-
-      // Filter assignments for this class and role STUDENT
-      const classAssignments = allAssignments.filter(assignment => {
-        const assignmentClassId = assignment.classId || assignment.clazz?.id;
-        const roleName = assignment.roleName || assignment.role?.name || '';
-        return assignmentClassId === group.classId && roleName === 'STUDENT';
-      });
-
-      // Get account IDs of students in this class
-      const studentAccountIds = classAssignments.map(assignment =>
-        assignment.accountId || assignment.account?.id
-      ).filter(id => id);
-
-      // Get students that are in this class
-      const studentsInClass = allStudents.filter(student =>
-        studentAccountIds.includes(student.id)
-      );
-
-      // Get member IDs of ALL groups with the same classId (not just current group)
-      const memberIdsInSameClassGroups = lecturerGroups
-        .filter(g => g.classId === group.classId)
-        .flatMap(g => g.members || [])
-        .map(m => m.id || m.accountId)
-        .filter(id => id);
-
-      const uniqueMemberIdsInSameClassGroups = Array.from(new Set(memberIdsInSameClassGroups));
-
-      // Filter out students who are already in ANY group of the same class
-      const availableStudentsList = studentsInClass.filter(student =>
-        !uniqueMemberIdsInSameClassGroups.includes(student.id)
-      );
-
-      setAvailableStudents(availableStudentsList);
-    } catch (error) {
-      console.error('Error loading students for class:', error);
-      message.error('Failed to load students');
-      setAvailableStudents([]);
-    } finally {
-      setLoadingStudents(false);
-    }
-  };
-
-  const handleAddStudentsSubmit = async () => {
-    if (!selectedGroup || selectedStudentIds.length === 0) {
-      message.warning('Please select at least one student to add');
-      return;
-    }
-
-    const remainingSlots = 4 - (selectedGroup.members?.length || 0);
-    if (selectedStudentIds.length > remainingSlots) {
-      message.warning(`You can only add ${remainingSlots} more student(s) to this group`);
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      // Add each selected student to the group
-      const addPromises = selectedStudentIds.map(async (studentId) => {
-        const requestData = {
-          studentGroupId: selectedGroup.id,
-          accountId: studentId,
-          roles: 'MEMBER'
-        };
-        return await borrowingGroupAPI.addMemberToGroup(requestData);
-      });
-
-      await Promise.all(addPromises);
-
-      message.success(`Successfully added ${selectedStudentIds.length} student(s) to the group`);
-      setAddStudentModalVisible(false);
-      setSelectedGroup(null);
-      setSelectedStudentIds([]);
-
-      // Reload data to refresh the groups list
-      if (loadData) {
-        await loadData();
-      }
-    } catch (error) {
-      console.error('Error adding students to group:', error);
-      message.error('Failed to add students: ' + (error.message || 'Unknown error'));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleCloseAddStudentModal = () => {
-    setAddStudentModalVisible(false);
-    setSelectedGroup(null);
-    setSelectedStudentIds([]);
-    setAvailableStudents([]);
-    setSearchStudentText('');
-  };
 
   return (
     <div>
@@ -3068,27 +2952,6 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
                             )}
                           </div>
                         </Descriptions.Item>
-                        {(group.members?.length || 0) < 4 && group.classId && (
-                          <Descriptions.Item>
-                            <Button
-                              type="primary"
-                              icon={<PlusOutlined />}
-                              size="small"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleOpenAddStudentModal(group);
-                              }}
-                              style={{
-                                width: '100%',
-                                marginTop: 8,
-                                background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-                                border: 'none'
-                              }}
-                            >
-                              Add Student
-                            </Button>
-                          </Descriptions.Item>
-                        )}
                       </Descriptions>
                     </Card>
                   </motion.div>
@@ -3106,159 +2969,6 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
           )}
         </Card>
       </motion.div>
-
-      {/* Add Student Modal */}
-      <Modal
-        title={
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <PlusOutlined style={{ color: '#52c41a', fontSize: '20px' }} />
-            <span style={{ fontSize: '18px', fontWeight: 'bold' }}>
-              Add Students to {selectedGroup?.name || 'Group'}
-            </span>
-          </div>
-        }
-        open={addStudentModalVisible}
-        onCancel={handleCloseAddStudentModal}
-        footer={[
-          <Button key="cancel" onClick={handleCloseAddStudentModal}>
-            Cancel
-          </Button>,
-          <Button
-            key="submit"
-            type="primary"
-            onClick={handleAddStudentsSubmit}
-            loading={submitting}
-            disabled={selectedStudentIds.length === 0}
-            style={{
-              background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-              border: 'none'
-            }}
-          >
-            Add Selected Students ({selectedStudentIds.length})
-          </Button>
-        ]}
-        width={800}
-        centered
-        destroyOnClose
-      >
-        {selectedGroup && (
-          <div>
-            <Descriptions column={2} bordered size="small" style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="Group Name">
-                <Text strong>{selectedGroup.name}</Text>
-              </Descriptions.Item>
-              <Descriptions.Item label="Class Code">
-                <Tag color="cyan">{selectedGroup.className || 'N/A'}</Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="Current Members">
-                <Badge count={selectedGroup.members?.length || 0} showZero color="#52c41a" />
-              </Descriptions.Item>
-              <Descriptions.Item label="Remaining Slots">
-                <Badge count={4 - (selectedGroup.members?.length || 0)} showZero color="#faad14" />
-              </Descriptions.Item>
-            </Descriptions>
-
-            <Divider orientation="left">
-              <Text strong>Available Students in {selectedGroup.className || 'Class'}</Text>
-            </Divider>
-
-            {/* Search Input */}
-            <div style={{ marginBottom: 16 }}>
-              <Input
-                placeholder="Search by Student Code or Email"
-                prefix={<SearchOutlined />}
-                value={searchStudentText}
-                onChange={(e) => setSearchStudentText(e.target.value)}
-                allowClear
-                style={{ width: '100%' }}
-              />
-            </div>
-
-            {/* Filter students based on search text */}
-            {(() => {
-              const filteredStudents = availableStudents.filter(student => {
-                if (!searchStudentText || searchStudentText.trim() === '') {
-                  return true;
-                }
-                const searchLower = searchStudentText.toLowerCase();
-                const studentCode = (student.studentCode || '').toLowerCase();
-                const email = (student.email || '').toLowerCase();
-                return studentCode.includes(searchLower) || email.includes(searchLower);
-              });
-
-              return (
-                <Spin spinning={loadingStudents}>
-                  {filteredStudents.length > 0 ? (
-                    <Table
-                      rowSelection={{
-                        type: 'checkbox',
-                        selectedRowKeys: selectedStudentIds,
-                        onChange: (selectedRowKeys) => {
-                          const remainingSlots = 4 - (selectedGroup.members?.length || 0);
-                          if (selectedRowKeys.length > remainingSlots) {
-                            message.warning(`You can only select up to ${remainingSlots} student(s)`);
-                            return;
-                          }
-                          setSelectedStudentIds(selectedRowKeys);
-                        },
-                        getCheckboxProps: (record) => ({
-                          disabled: false,
-                        }),
-                      }}
-                      columns={[
-                        {
-                          title: 'Student Code',
-                          dataIndex: 'studentCode',
-                          key: 'studentCode',
-                          render: (text) => <Text code>{text || 'N/A'}</Text>
-                        },
-                        {
-                          title: 'Full Name',
-                          dataIndex: 'fullName',
-                          key: 'fullName',
-                          render: (text) => <Text strong>{text || 'N/A'}</Text>
-                        },
-                        {
-                          title: 'Email',
-                          dataIndex: 'email',
-                          key: 'email',
-                        },
-                        {
-                          title: 'Status',
-                          dataIndex: 'status',
-                          key: 'status',
-                          render: (status) => (
-                            <Tag color={status === 'ACTIVE' ? 'success' : 'default'}>
-                              {status || 'N/A'}
-                            </Tag>
-                          )
-                        }
-                      ]}
-                      dataSource={filteredStudents}
-                      rowKey="id"
-                      pagination={{
-                        pageSize: 10,
-                        showSizeChanger: true,
-                        showTotal: (total) => `Total ${total} students available`
-                      }}
-                      locale={{ emptyText: 'No students available in this class' }}
-                    />
-                  ) : !loadingStudents ? (
-                    <Empty
-                      description={
-                        availableStudents.length === 0
-                          ? "No students available to add. All students in this class are already in the group or the class has no students."
-                          : "No students found matching your search criteria."
-                      }
-                      image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    />
-                  ) : null}
-                </Spin>
-              );
-            })()}
-          </div>
-        )}
-      </Modal>
     </div>
   );
 };
@@ -3547,41 +3257,52 @@ const KitRental = ({ kits, user, onRent, onViewKitDetail }) => {
   );
 };
 
-// Kit Component Rental Component
-const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) => {
+// Kit Component Rental Component (global components with kitId = null)
+const KitComponentRental = ({ components, onRentComponent }) => {
   const [searchText, setSearchText] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterType, setFilterType] = useState('all');
 
   const { Option } = Select;
 
-  // Filter kits
-  const filteredKits = kits.filter(kit => {
-    // Filter by available quantity
-    if (kit.quantityAvailable <= 0) return false;
+  // Only global components (no kitId)
+  const globalComponents = (components || []).filter((component) => !component.kitId);
 
-    // Filter by search text
+  const uniqueStatuses = Array.from(
+    new Set(
+      globalComponents
+        .map((c) => c.status)
+        .filter((value) => value && value !== '')
+    )
+  );
+
+  const uniqueTypes = Array.from(
+    new Set(
+      globalComponents
+        .map((c) => c.componentType)
+        .filter((value) => value && value !== '')
+    )
+  );
+
+  // Filter components
+  const filteredComponents = globalComponents.filter((component) => {
+    if ((component.quantityAvailable || 0) <= 0) return false;
+
     if (searchText && searchText.trim() !== '') {
       const searchLower = searchText.toLowerCase();
-      const kitName = (kit.name || kit.kitName || '').toLowerCase();
-      const kitId = (kit.id || '').toString().toLowerCase();
-      if (!kitName.includes(searchLower) && !kitId.includes(searchLower)) {
+      const name = (component.componentName || component.name || '').toLowerCase();
+      const id = (component.id || '').toString().toLowerCase();
+      if (!name.includes(searchLower) && !id.includes(searchLower)) {
         return false;
       }
     }
 
-    // Filter by status
-    if (filterStatus !== 'all') {
-      if (kit.status !== filterStatus) {
-        return false;
-      }
+    if (filterStatus !== 'all' && component.status !== filterStatus) {
+      return false;
     }
 
-    // Filter by type
-    if (filterType !== 'all') {
-      if (kit.type !== filterType) {
-        return false;
-      }
+    if (filterType !== 'all' && component.componentType !== filterType) {
+      return false;
     }
 
     return true;
@@ -3616,7 +3337,7 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8}>
                 <Input
-                  placeholder="Search by name or ID..."
+                  placeholder="Search by component name or ID..."
                   prefix={<SearchOutlined />}
                   value={searchText}
                   onChange={(e) => setSearchText(e.target.value)}
@@ -3635,9 +3356,11 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
                   style={{ width: '100%', borderRadius: '8px' }}
                 >
                   <Option value="all">All Status</Option>
-                  <Option value="AVAILABLE">Available</Option>
-                  <Option value="BORROWED">Borrowed</Option>
-                  <Option value="MAINTENANCE">Maintenance</Option>
+                  {uniqueStatuses.map((status) => (
+                    <Option key={status} value={status}>
+                      {status}
+                    </Option>
+                  ))}
                 </Select>
               </Col>
               <Col xs={24} sm={12} md={8}>
@@ -3648,23 +3371,26 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
                   style={{ width: '100%', borderRadius: '8px' }}
                 >
                   <Option value="all">All Types</Option>
-                  <Option value="STUDENT_KIT">Student Kit</Option>
-                  <Option value="LECTURER_KIT">Lecturer Kit</Option>
+                  {uniqueTypes.map((type) => (
+                    <Option key={type} value={type}>
+                      {type}
+                    </Option>
+                  ))}
                 </Select>
               </Col>
             </Row>
           </div>
 
-          {/* Kit Catalog Grid */}
-          {filteredKits.length === 0 ? (
+          {/* Component Catalog Grid */}
+          {filteredComponents.length === 0 ? (
             <Empty
-              description="No kits available for component rental"
+              description="No components available for rental"
               style={{ padding: '60px 0' }}
             />
           ) : (
             <Row gutter={[24, 24]}>
-              {filteredKits.map((kit) => (
-                <Col xs={24} sm={12} md={8} lg={6} key={kit.id}>
+              {filteredComponents.map((component) => (
+                <Col xs={24} sm={12} md={8} lg={6} key={component.id}>
                   <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -3686,8 +3412,8 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
                         <div
                           style={{
                             height: 200,
-                            background: kit.imageUrl
-                              ? `url(${kit.imageUrl}) center/cover`
+                            background: component.imageUrl
+                              ? `url(${component.imageUrl}) center/cover`
                               : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                             display: 'flex',
                             alignItems: 'center',
@@ -3695,7 +3421,7 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
                             position: 'relative'
                           }}
                         >
-                          {!kit.imageUrl && (
+                          {!component.imageUrl && (
                             <BuildOutlined style={{ fontSize: 64, color: '#fff', opacity: 0.8 }} />
                           )}
                           <div style={{
@@ -3704,7 +3430,7 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
                             right: 12
                           }}>
                             <Tag
-                              color={kit.status === 'AVAILABLE' ? 'green' : kit.status === 'BORROWED' ? 'orange' : 'red'}
+                              color={component.status === 'AVAILABLE' ? 'green' : component.status === 'BORROWED' ? 'orange' : component.status === 'MAINTENANCE' ? 'blue' : 'red'}
                               style={{
                                 fontSize: '12px',
                                 padding: '4px 12px',
@@ -3712,34 +3438,11 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
                                 fontWeight: 'bold'
                               }}
                             >
-                              {kit.status}
+                              {component.status}
                             </Tag>
                           </div>
                         </div>
                       }
-                      actions={[
-                        <motion.div
-                          key="view"
-                          whileHover={{ scale: 1.1 }}
-                          whileTap={{ scale: 0.9 }}
-                        >
-                          <Button
-                            type="primary"
-                            icon={<EyeOutlined />}
-                            onClick={() => onViewKitDetail(kit)}
-                            style={{
-                              color: '#fff',
-                              width: '100%',
-                              borderRadius: '8px',
-                              background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-                              border: 'none',
-                              fontWeight: 'bold'
-                            }}
-                          >
-                            View Components
-                          </Button>
-                        </motion.div>
-                      ]}
                     >
                       <Card.Meta
                         title={
@@ -3747,50 +3450,67 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
                             strong
                             style={{
                               fontSize: '18px',
-                              cursor: 'pointer',
                               color: '#2c3e50'
                             }}
-                            onClick={() => onViewKitDetail(kit)}
                           >
-                            {kit.name || kit.kitName || 'Unnamed Kit'}
+                            {component.componentName || component.name || 'Unnamed Component'}
                           </Text>
                         }
                         description={
                           <div style={{ marginTop: 12 }}>
                             <Space direction="vertical" size="small" style={{ width: '100%' }}>
                               <div>
-                                <Tag
-                                  color={kit.type === 'LECTURER_KIT' ? 'red' : 'blue'}
-                                  style={{
-                                    fontSize: '12px',
-                                    padding: '4px 12px',
-                                    borderRadius: '12px',
-                                    marginBottom: 8
-                                  }}
-                                >
-                                  {kit.type === 'LECTURER_KIT' ? 'Lecturer Kit' : 'Student Kit'}
-                                </Tag>
+                                {component.componentType && (
+                                  <Tag
+                                    color="purple"
+                                    style={{
+                                      fontSize: '12px',
+                                      padding: '4px 12px',
+                                      borderRadius: '12px',
+                                      marginBottom: 8
+                                    }}
+                                  >
+                                    {component.componentType}
+                                  </Tag>
+                                )}
                               </div>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <Text type="secondary" style={{ fontSize: '13px' }}>
-                                  <strong>Total:</strong> {kit.quantityTotal || 0}
+                                  <strong>Available:</strong> {component.quantityAvailable || 0}
                                 </Text>
                                 <Text type="secondary" style={{ fontSize: '13px' }}>
-                                  <strong>Available:</strong> {kit.quantityAvailable || 0}
+                                  <strong>Total:</strong> {component.quantityTotal || 0}
                                 </Text>
                               </div>
                               <div style={{ marginTop: 8 }}>
-                                <Text type="secondary" style={{ fontSize: '13px' }}>
-                                  <strong>Components:</strong> {kit.components?.length || 0}
+                                <Text strong style={{ fontSize: '14px', color: '#1890ff' }}>
+                                  {component.pricePerCom ? `${Number(component.pricePerCom).toLocaleString()} VND` : '0 VND'}
                                 </Text>
                               </div>
-                              {kit.description && (
+                              {component.description && (
                                 <div style={{ marginTop: 8 }}>
                                   <Text type="secondary" style={{ fontSize: '12px' }} ellipsis>
-                                    {kit.description}
+                                    {component.description}
                                   </Text>
                                 </div>
                               )}
+                              <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+                                <Button
+                                  type="primary"
+                                  icon={<ShoppingOutlined />}
+                                  onClick={() => onRentComponent(component)}
+                                  disabled={(component.quantityAvailable || 0) <= 0}
+                                  style={{
+                                    color: '#fff',
+                                    borderRadius: '8px',
+                                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                                    border: 'none',
+                                    fontWeight: 'bold'
+                                  }}
+                                >
+                                  Rent
+                                </Button>
+                              </div>
                             </Space>
                           </div>
                         }
@@ -3803,10 +3523,10 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
           )}
 
           {/* Pagination Info */}
-          {filteredKits.length > 0 && (
+          {filteredComponents.length > 0 && (
             <div style={{ marginTop: 24, textAlign: 'center' }}>
               <Text type="secondary">
-                Showing {filteredKits.length} of {kits.filter(k => k.quantityAvailable > 0).length} available kit(s)
+                Showing {filteredComponents.length} component(s) available for rental
               </Text>
             </div>
           )}
@@ -3821,6 +3541,9 @@ const KitComponentRental = ({ kits, user, onViewKitDetail, onRentComponent }) =>
 const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [transferModalVisible, setTransferModalVisible] = useState(false);
+  const [transferForm] = Form.useForm();
+  const [transferLoading, setTransferLoading] = useState(false);
   const [detailsModalVisible, setDetailsModalVisible] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState(null);
 
@@ -3863,6 +3586,45 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
   const handleCloseDetails = () => {
     setDetailsModalVisible(false);
     setSelectedTransaction(null);
+  };
+
+  const handleTransfer = async () => {
+    try {
+      const values = await transferForm.validateFields();
+      const { recipientEmail, amount, description } = values;
+
+      // Validate amount
+      if (amount < 10000) {
+        message.error('Số tiền chuyển tối thiểu là 10,000 VND');
+        return;
+      }
+
+      // Check wallet balance
+      if (wallet.balance < amount) {
+        message.error('Số dư ví không đủ để chuyển tiền! Vui lòng nạp thêm tiền.');
+        return;
+      }
+
+      setTransferLoading(true);
+      await walletTransactionAPI.transfer(recipientEmail, amount, description || 'Transfer money');
+      message.success('Chuyển tiền thành công!');
+      setTransferModalVisible(false);
+      transferForm.resetFields();
+
+      // Reload wallet and transactions
+      const walletResponse = await walletAPI.getMyWallet();
+      const walletData = walletResponse?.data || walletResponse || {};
+      setWallet({
+        balance: walletData.balance || 0,
+        transactions: transactions
+      });
+      await loadTransactionHistory();
+    } catch (error) {
+      console.error('Error transferring money:', error);
+      message.error(error.message || 'Chuyển tiền thất bại. Vui lòng thử lại.');
+    } finally {
+      setTransferLoading(false);
+    }
   };
 
   const formatCurrency = (amount) => {
@@ -3910,6 +3672,17 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
                   Top Up
                 </Button>
                 <Button
+                  onClick={() => setTransferModalVisible(true)}
+                  style={{
+                    width: '100%',
+                    background: 'rgba(255,255,255,0.15)',
+                    border: '1px solid rgba(255,255,255,0.3)',
+                    color: 'white'
+                  }}
+                >
+                  Transfer Money
+                </Button>
+                <Button
                   onClick={onPayPenalties}
                   style={{
                     width: '100%',
@@ -3953,7 +3726,7 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
                       render: (type) => {
                         // Mapping type sang thông tin theme
                         let config = {
-                          label: type || 'Khác',
+                          label: type || 'Other',
                           color: 'default',
                           icon: null,
                           bg: '#f6f6f6',
@@ -3963,17 +3736,17 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
                         switch ((type || '').toUpperCase()) {
                           case 'TOP_UP':
                           case 'TOPUP':
-                            config = { label: 'Nạp tiền', color: 'success', icon: <DollarOutlined />, bg: '#e8f8ee', border: '1.5px solid #52c41a', text: '#2a8731' }; break;
+                            config = { label: 'Top Up', color: 'success', icon: <DollarOutlined />, bg: '#e8f8ee', border: '1.5px solid #52c41a', text: '#2a8731' }; break;
                           case 'RENTAL_FEE':
-                            config = { label: 'Thuê kit', color: 'geekblue', icon: <ShoppingOutlined />, bg: '#e6f7ff', border: '1.5px solid #177ddc', text: '#177ddc' }; break;
+                            config = { label: 'Rental Fee', color: 'geekblue', icon: <ShoppingOutlined />, bg: '#e6f7ff', border: '1.5px solid #177ddc', text: '#177ddc' }; break;
                           case 'PENALTY_PAYMENT':
                           case 'PENALTY':
                           case 'FINE':
-                            config = { label: 'Phí phạt', color: 'error', icon: <ExclamationCircleOutlined />, bg: '#fff1f0', border: '1.5px solid #ff4d4f', text: '#d4001a' }; break;
+                            config = { label: 'Penalty', color: 'error', icon: <ExclamationCircleOutlined />, bg: '#fff1f0', border: '1.5px solid #ff4d4f', text: '#d4001a' }; break;
                           case 'REFUND':
-                            config = { label: 'Hoàn tiền', color: 'purple', icon: <RollbackOutlined />, bg: '#f9f0ff', border: '1.5px solid #722ed1', text: '#722ed1' }; break;
+                            config = { label: 'Refund', color: 'purple', icon: <RollbackOutlined />, bg: '#f9f0ff', border: '1.5px solid #722ed1', text: '#722ed1' }; break;
                           default:
-                            config = { label: type || 'Khác', color: 'default', icon: <InfoCircleOutlined />, bg: '#fafafa', border: '1.5px solid #bfbfbf', text: '#595959' };
+                            config = { label: type || 'Other', color: 'default', icon: <InfoCircleOutlined />, bg: '#fafafa', border: '1.5px solid #bfbfbf', text: '#595959' };
                         }
                         return <Tag color={config.color} style={{ background: config.bg, border: config.border, color: config.text, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, letterSpacing: 1 }}>
                           {config.icon} <span>{config.label}</span>
@@ -4101,6 +3874,111 @@ const WalletManagement = ({ wallet, setWallet, onTopUp, onPayPenalties }) => {
           </motion.div>
         </Col>
       </Row>
+
+      {/* Transfer Money Modal */}
+      <Modal
+        title="Transfer Money"
+        open={transferModalVisible}
+        onCancel={() => {
+          setTransferModalVisible(false);
+          transferForm.resetFields();
+        }}
+        footer={null}
+        width={500}
+      >
+        <Alert
+          message="Transfer Money"
+          description="Chuyển tiền từ ví của bạn đến người nhận bằng email."
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+
+        <Form
+          form={transferForm}
+          layout="vertical"
+          onFinish={handleTransfer}
+        >
+          <Form.Item
+            label="Recipient Email"
+            name="recipientEmail"
+            rules={[
+              { required: true, message: 'Please enter recipient email' },
+              { type: 'email', message: 'Please enter a valid email address' }
+            ]}
+          >
+            <Input
+              placeholder="Enter recipient email address"
+              type="email"
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="Amount (VND)"
+            name="amount"
+            rules={[
+              { required: true, message: 'Please enter amount' },
+              { type: 'number', min: 10000, message: 'Minimum amount is 10,000 VND' }
+            ]}
+          >
+            <InputNumber
+              style={{ width: '100%' }}
+              placeholder="Enter amount (minimum 10,000 VND)"
+              formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+              parser={value => value.replace(/\$\s?|(,*)/g, '')}
+              min={10000}
+              step={10000}
+            />
+          </Form.Item>
+
+          <Form.Item shouldUpdate={(prevValues, currentValues) => prevValues.amount !== currentValues.amount}>
+            {({ getFieldValue }) => {
+              const amount = getFieldValue('amount');
+              if (amount) {
+                const balance = wallet.balance || 0;
+                const remaining = balance - amount;
+                return (
+                  <Alert
+                    message={`Current Balance: ${balance.toLocaleString()} VND`}
+                    description={`Balance after transfer: ${remaining.toLocaleString()} VND`}
+                    type={remaining < 0 ? 'error' : remaining < 50000 ? 'warning' : 'info'}
+                    style={{ marginBottom: 16 }}
+                  />
+                );
+              }
+              return null;
+            }}
+          </Form.Item>
+
+          <Form.Item
+            label="Description (Optional)"
+            name="description"
+          >
+            <Input.TextArea
+              placeholder="Enter description for this transfer"
+              rows={3}
+            />
+          </Form.Item>
+
+          <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
+            <Space>
+              <Button onClick={() => {
+                setTransferModalVisible(false);
+                transferForm.resetFields();
+              }}>
+                Cancel
+              </Button>
+              <Button
+                type="primary"
+                htmlType="submit"
+                loading={transferLoading}
+              >
+                Transfer
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
 
       {/* Transaction Details Modal */}
       <Modal

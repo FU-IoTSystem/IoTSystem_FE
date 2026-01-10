@@ -78,9 +78,10 @@ import {
   RollbackOutlined,
   LoadingOutlined,
   LeftOutlined,
-  RightOutlined
+  RightOutlined,
+  UploadOutlined
 } from '@ant-design/icons';
-import { kitAPI, kitComponentAPI, borrowingRequestAPI, walletTransactionAPI, userAPI, authAPI, classesAPI, studentGroupAPI, borrowingGroupAPI, penaltyPoliciesAPI, penaltiesAPI, penaltyDetailAPI, damageReportAPI, notificationAPI, excelImportAPI, classAssignmentAPI } from './api';
+import { kitAPI, kitComponentAPI, kitComponentHistoryAPI, borrowingRequestAPI, walletTransactionAPI, userAPI, authAPI, classesAPI, studentGroupAPI, borrowingGroupAPI, penaltyPoliciesAPI, penaltiesAPI, penaltyDetailAPI, damageReportAPI, notificationAPI, excelImportAPI, classAssignmentAPI } from './api';
 import webSocketService from './utils/websocket';
 import './AdminPortalDashboard.css';
 
@@ -126,6 +127,10 @@ function AdminPortal({ onLogout }) {
   const [customDateRange, setCustomDateRange] = useState([]);
   const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
   const [notificationLoading, setNotificationLoading] = useState(false);
+  const [kitComponentHistory, setKitComponentHistory] = useState([]);
+  const [kitComponentHistoryLoading, setKitComponentHistoryLoading] = useState(false);
+  const [historySelectedKitId, setHistorySelectedKitId] = useState(null);
+  const [historySelectedComponentId, setHistorySelectedComponentId] = useState(null);
 
   // Form instances
 
@@ -248,6 +253,16 @@ function AdminPortal({ onLogout }) {
       loadAllPenalties();
     }
   }, [selectedKey]);
+
+  useEffect(() => {
+    if (selectedKey === 'kit-component-history') {
+      if (kits.length > 0 && !historySelectedKitId && !historySelectedComponentId) {
+        loadKitComponentHistoryByKit(kits[0].id);
+      } else if (!historySelectedKitId && !historySelectedComponentId) {
+        loadAllKitComponentHistory();
+      }
+    }
+  }, [selectedKey, kits]);
 
   const loadData = async () => {
     setLoading(true);
@@ -643,6 +658,67 @@ function AdminPortal({ onLogout }) {
     }
   };
 
+  const normalizeHistoryResponse = (response) => {
+    const payload = response?.data ?? response;
+    return Array.isArray(payload) ? payload : [];
+  };
+
+  const loadAllKitComponentHistory = async () => {
+    setKitComponentHistoryLoading(true);
+    setHistorySelectedKitId(null);
+    setHistorySelectedComponentId(null);
+    try {
+      const res = await kitComponentHistoryAPI.getAll();
+      const data = normalizeHistoryResponse(res);
+      setKitComponentHistory(data);
+    } catch (error) {
+      console.error('Error loading all kit component history:', error);
+      message.error('Không tải được lịch sử component');
+    } finally {
+      setKitComponentHistoryLoading(false);
+    }
+  };
+
+  const loadKitComponentHistoryByKit = async (kitId) => {
+    if (!kitId) {
+      await loadAllKitComponentHistory();
+      return;
+    }
+    setKitComponentHistoryLoading(true);
+    setHistorySelectedKitId(kitId);
+    setHistorySelectedComponentId(null);
+    try {
+      const res = await kitComponentHistoryAPI.getByKit(kitId);
+      const data = normalizeHistoryResponse(res);
+      setKitComponentHistory(data);
+    } catch (error) {
+      console.error('Error loading kit component history by kit:', error);
+      message.error('Không tải được lịch sử component của kit');
+    } finally {
+      setKitComponentHistoryLoading(false);
+    }
+  };
+
+  const loadKitComponentHistoryByComponent = async (componentId) => {
+    if (!componentId) {
+      await loadAllKitComponentHistory();
+      return;
+    }
+    setKitComponentHistoryLoading(true);
+    setHistorySelectedComponentId(componentId);
+    setHistorySelectedKitId(null);
+    try {
+      const res = await kitComponentHistoryAPI.getByComponent(componentId);
+      const data = normalizeHistoryResponse(res);
+      setKitComponentHistory(data);
+    } catch (error) {
+      console.error('Error loading kit component history by component:', error);
+      message.error('Không tải được lịch sử của component');
+    } finally {
+      setKitComponentHistoryLoading(false);
+    }
+  };
+
   const notificationSubscriptionRef = useRef(null);
 
   useEffect(() => {
@@ -858,16 +934,25 @@ function AdminPortal({ onLogout }) {
 
 
   const handleExportKits = () => {
-    const kitData = kits.map(kit => ({
-      'Kit ID': kit.id,
-      'Name': kit.name,
-      'Category': kit.category,
-      'Quantity': kit.quantity,
-      'Price': kit.price,
-      'Status': kit.status,
-      'Location': kit.location,
-      'Description': kit.description
-    }));
+    // Build export data based on current kit model from API
+    const kitData = (kits || []).map((kit) => {
+      const totalQuantity = kit.quantityTotal ?? 0;
+      const availableQuantity = kit.quantityAvailable ?? 0;
+
+      return {
+        'Kit ID': kit.id,
+        'Kit Name': kit.kitName || kit.name || '',
+        'Type': kit.type || '',
+        'Total Quantity': totalQuantity,
+        'Available Quantity': availableQuantity,
+        'In Use Quantity': totalQuantity - availableQuantity,
+        'Status': kit.status || '',
+        'Components Count': Array.isArray(kit.components) ? kit.components.length : 0,
+        'Description': kit.description || '',
+        'Image URL': kit.imageUrl || '',
+      };
+    });
+
     exportToExcel(kitData, 'kits_list');
     notification.success({
       message: 'Export Successful',
@@ -1131,9 +1216,15 @@ function AdminPortal({ onLogout }) {
         ...prev,
         [componentName]: {
           damaged: isDamaged,
-          value: damageValue
+          value: damageValue,
+          imageUrl: prev[componentName]?.imageUrl || null // Preserve existing image if any
         }
       };
+
+      // If component is not damaged, remove image
+      if (!isDamaged) {
+        delete newAssessment[componentName].imageUrl;
+      }
 
       // Calculate fine amount immediately with new assessment
       let totalFine = 0;
@@ -1157,6 +1248,27 @@ function AdminPortal({ onLogout }) {
 
       return newAssessment;
     });
+  };
+
+  const handleImageUpload = async (componentName, file) => {
+    try {
+      const response = await penaltyDetailAPI.uploadImage(file);
+      if (response && response.data && response.data.imageUrl) {
+        setDamageAssessment(prev => ({
+          ...prev,
+          [componentName]: {
+            ...prev[componentName],
+            imageUrl: response.data.imageUrl
+          }
+        }));
+        message.success('Image uploaded successfully');
+      } else {
+        message.error('Failed to upload image');
+      }
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      message.error(error.message || 'Failed to upload image');
+    }
   };
 
   const calculateFineAmount = () => {
@@ -1231,6 +1343,7 @@ function AdminPortal({ onLogout }) {
             .map(([componentName, assessment]) => ({
               amount: assessment.value || 0,
               description: `Damage to ${componentName}`,
+              imageUrl: assessment.imageUrl || null,
               policiesId: null, // No policy for component damage
               penaltyId: penaltyId
             }));
@@ -1245,6 +1358,48 @@ function AdminPortal({ onLogout }) {
             console.log('Creating penalty details:', allPenaltyDetails);
             const penaltyDetailsResponse = await penaltyDetailAPI.createMultiple(allPenaltyDetails);
             console.log('Penalty details created:', penaltyDetailsResponse);
+
+            // Map component penalty details back to component names to store history
+            const createdDetails = Array.isArray(penaltyDetailsResponse?.data)
+              ? penaltyDetailsResponse.data
+              : (Array.isArray(penaltyDetailsResponse) ? penaltyDetailsResponse : []);
+            const componentPenaltyMap = {};
+            createdDetails.forEach((detail) => {
+              if (detail?.description?.startsWith('Damage to ')) {
+                const compName = detail.description.replace('Damage to ', '').trim();
+                componentPenaltyMap[compName] = detail.id;
+              }
+            });
+
+            // Ghi log lịch sử component khi phát hiện damage
+            const components = selectedKit?.components || [];
+            const historyPayloads = components
+              .map((comp) => {
+                const compName = comp.componentName || comp.name;
+                const assessment = damageAssessment[compName];
+                if (!assessment?.damaged) return null;
+                return {
+                  kitId: selectedKit?.id,
+                  componentId: comp.id,
+                  action: 'DAMAGED',
+                  oldStatus: comp.status || 'UNKNOWN',
+                  newStatus: 'DAMAGED',
+                  note: assessment.imageUrl
+                    ? `Damage recorded during return inspection. Evidence: ${assessment.imageUrl}`
+                    : 'Damage recorded during return inspection.',
+                  penaltyDetailId: componentPenaltyMap[compName] || null,
+                };
+              })
+              .filter(Boolean);
+
+            if (historyPayloads.length > 0) {
+              try {
+                await Promise.all(historyPayloads.map((payload) => kitComponentHistoryAPI.create(payload)));
+                console.log('Kit component history created:', historyPayloads.length);
+              } catch (historyError) {
+                console.error('Error creating kit component history:', historyError);
+              }
+            }
           }
         }
 
@@ -1593,6 +1748,11 @@ function AdminPortal({ onLogout }) {
       label: 'Kit Management',
     },
     {
+      key: 'kit-components',
+      icon: <BuildOutlined />,
+      label: 'Kit Component Management',
+    },
+    {
       key: 'rentals',
       icon: <ShoppingOutlined />,
       label: 'Rental Approvals',
@@ -1601,6 +1761,11 @@ function AdminPortal({ onLogout }) {
       key: 'refunds',
       icon: <RollbackOutlined />,
       label: 'Return Checking',
+    },
+    {
+      key: 'kit-component-history',
+      icon: <BuildOutlined />,
+      label: 'Kit Component History',
     },
     {
       key: 'fines',
@@ -1924,8 +2089,20 @@ function AdminPortal({ onLogout }) {
                   />
                 )}
                 {selectedKey === 'kits' && <KitManagement kits={kits} setKits={setKits} handleExportKits={handleExportKits} handleImportKits={handleImportKits} />}
+                {selectedKey === 'kit-components' && <KitComponentManagement />}
                 {selectedKey === 'rentals' && <RentalApprovals rentalRequests={rentalRequests} setRentalRequests={setRentalRequests} setLogHistory={setLogHistory} setTransactions={setTransactions} setRefundRequests={setRefundRequests} onNavigateToRefunds={() => setSelectedKey('refunds')} />}
                 {selectedKey === 'refunds' && <RefundApprovals refundRequests={refundRequests} setRefundRequests={setRefundRequests} openRefundKitInspection={openRefundKitInspection} setLogHistory={setLogHistory} />}
+                {selectedKey === 'kit-component-history' && (
+                  <KitComponentHistoryTab
+                    kits={kits}
+                    historyData={kitComponentHistory}
+                    loading={kitComponentHistoryLoading}
+                    onSelectKit={loadKitComponentHistoryByKit}
+                    onSelectComponent={loadKitComponentHistoryByComponent}
+                    selectedKitId={historySelectedKitId}
+                    selectedComponentId={historySelectedComponentId}
+                  />
+                )}
                 {selectedKey === 'fines' && <FineManagement fines={fines} setFines={setFines} setLogHistory={setLogHistory} />}
                 {selectedKey === 'transactions' && <TransactionHistory transactions={transactions} setTransactions={setTransactions} />}
                 {selectedKey === 'log-history' && <LogHistory logHistory={logHistory} setLogHistory={setLogHistory} />}
@@ -2152,20 +2329,73 @@ function AdminPortal({ onLogout }) {
                       </Space>
                     </Col>
                     <Col span={12}>
-                      <Space>
-                        <Checkbox
-                          checked={damageAssessment[component.componentName || component.name]?.damaged || false}
-                          onChange={(e) => {
-                            const componentPrice = component.pricePerCom || 0;
-                            handleComponentDamage(component.componentName || component.name, e.target.checked, e.target.checked ? componentPrice : 0);
-                          }}
-                        >
-                          Damaged
-                        </Checkbox>
+                      <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                        <Space>
+                          <Checkbox
+                            checked={damageAssessment[component.componentName || component.name]?.damaged || false}
+                            onChange={(e) => {
+                              const componentPrice = component.pricePerCom || 0;
+                              handleComponentDamage(component.componentName || component.name, e.target.checked, e.target.checked ? componentPrice : 0);
+                            }}
+                          >
+                            Damaged
+                          </Checkbox>
+                          {damageAssessment[component.componentName || component.name]?.damaged && (
+                            <Text type="secondary" style={{ fontSize: '12px', marginLeft: 8 }}>
+                              Fine: {Number(damageAssessment[component.componentName || component.name]?.value || component.pricePerCom || 0).toLocaleString()} VND
+                            </Text>
+                          )}
+                        </Space>
                         {damageAssessment[component.componentName || component.name]?.damaged && (
-                          <Text type="secondary" style={{ fontSize: '12px', marginLeft: 8 }}>
-                            Fine: {Number(damageAssessment[component.componentName || component.name]?.value || component.pricePerCom || 0).toLocaleString()} VND
-                          </Text>
+                          <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                            <Upload
+                              accept="image/*"
+                              showUploadList={false}
+                              beforeUpload={(file) => {
+                                handleImageUpload(component.componentName || component.name, file);
+                                return false; // Prevent auto upload
+                              }}
+                              maxCount={1}
+                            >
+                              <Button
+                                size="small"
+                                icon={<UploadOutlined />}
+                                type={damageAssessment[component.componentName || component.name]?.imageUrl ? 'default' : 'primary'}
+                              >
+                                {damageAssessment[component.componentName || component.name]?.imageUrl ? 'Change Image' : 'Upload Image'}
+                              </Button>
+                            </Upload>
+                            {damageAssessment[component.componentName || component.name]?.imageUrl && (
+                              <div style={{ marginTop: 8 }}>
+                                <img
+                                  src={damageAssessment[component.componentName || component.name]?.imageUrl}
+                                  alt="Damage evidence"
+                                  style={{
+                                    maxWidth: '100%',
+                                    maxHeight: '150px',
+                                    borderRadius: '4px',
+                                    border: '1px solid #d9d9d9'
+                                  }}
+                                />
+                                <Button
+                                  size="small"
+                                  danger
+                                  style={{ marginTop: 4 }}
+                                  onClick={() => {
+                                    setDamageAssessment(prev => ({
+                                      ...prev,
+                                      [component.componentName || component.name]: {
+                                        ...prev[component.componentName || component.name],
+                                        imageUrl: null
+                                      }
+                                    }));
+                                  }}
+                                >
+                                  Remove Image
+                                </Button>
+                              </div>
+                            )}
+                          </Space>
                         )}
                       </Space>
                     </Col>
@@ -3306,9 +3536,6 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
                                       <Text type="secondary" style={{ fontSize: '13px' }}>
                                         <strong>Total:</strong> {component.quantityTotal || component.quantity || 0}
                                       </Text>
-                                      <Text type="secondary" style={{ fontSize: '13px', color: '#52c41a' }}>
-                                        <strong>Available:</strong> {component.quantityAvailable || 0}
-                                      </Text>
                                     </div>
                                     <div style={{ marginTop: 4 }}>
                                       <Text strong style={{ color: '#1890ff', fontSize: '14px' }}>
@@ -4317,6 +4544,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
         </Form>
       </Modal>
 
+      {/* Sheet Selection Modal */}
       {/* Component Management Modal */}
       <Modal
         title={`Manage Components - ${editingKit?.name || 'Kit'}`}
@@ -4646,6 +4874,866 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
   );
 };
 
+// Global Kit Component Management (components with no specific kit)
+const KitComponentManagement = () => {
+  const [components, setComponents] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [editingComponent, setEditingComponent] = useState(null);
+  const [form] = Form.useForm();
+  const [searchText, setSearchText] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterType, setFilterType] = useState('all');
+
+  // Local animation variants for cards
+  const localCardVariants = {
+    hidden: { opacity: 0, y: 20, scale: 0.95 },
+    visible: {
+      opacity: 1,
+      y: 0,
+      scale: 1,
+      transition: {
+        duration: 0.5,
+        ease: "easeOut"
+      }
+    },
+    hover: {
+      y: -5,
+      scale: 1.02,
+      transition: {
+        duration: 0.2,
+        ease: "easeInOut"
+      }
+    }
+  };
+
+  // Load all components (including those with kitId = null)
+  const loadComponents = async () => {
+    setLoading(true);
+    try {
+      const response = await kitComponentAPI.getAllComponents();
+      const data = Array.isArray(response) ? response : (response?.data || []);
+      setComponents(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error loading components:', error);
+      setComponents([]);
+      notification.error({
+        message: 'Error',
+        description: error.message || 'Failed to load components',
+        placement: 'topRight',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadComponents();
+  }, []);
+
+  const handleAddClick = () => {
+    setEditingComponent(null);
+    form.resetFields();
+    setModalVisible(true);
+  };
+
+  const handleEditClick = (component) => {
+    const mapped = {
+      id: component.id,
+      componentName: component.componentName || component.name,
+      componentType: component.componentType || component.type,
+      description: component.description,
+      quantityTotal: component.quantityTotal,
+      quantityAvailable: component.quantityAvailable,
+      pricePerCom: component.pricePerCom,
+      status: component.status,
+      imageUrl: component.imageUrl,
+      link: component.link,
+    };
+    setEditingComponent(mapped);
+    form.setFieldsValue(mapped);
+    setModalVisible(true);
+  };
+
+  const handleDelete = async (id) => {
+    try {
+      await kitComponentAPI.deleteComponent(id);
+      notification.success({
+        message: 'Success',
+        description: 'Component deleted successfully',
+        placement: 'topRight',
+      });
+      await loadComponents();
+    } catch (error) {
+      console.error('Error deleting component:', error);
+      notification.error({
+        message: 'Error',
+        description: error.message || 'Failed to delete component',
+        placement: 'topRight',
+      });
+    }
+  };
+
+  const handleSubmit = async (values) => {
+    setLoading(true);
+    try {
+      const payload = {
+        kitId: null, // Components in this tab are not linked to any kit
+        componentName: values.componentName,
+        componentType: values.componentType,
+        description: values.description || '',
+        quantityTotal: values.quantityAvailable, // use available as total for global components
+        quantityAvailable: values.quantityAvailable,
+        pricePerCom: values.pricePerCom || 0,
+        status: values.status,
+        imageUrl: values.imageUrl || '',
+        link: values.link || '',
+      };
+
+      if (editingComponent && editingComponent.id) {
+        await kitComponentAPI.updateComponent(editingComponent.id, payload);
+        notification.success({
+          message: 'Success',
+          description: 'Component updated successfully',
+          placement: 'topRight',
+        });
+      } else {
+        await kitComponentAPI.createComponent(payload);
+        notification.success({
+          message: 'Success',
+          description: 'Component created successfully',
+          placement: 'topRight',
+        });
+      }
+
+      setModalVisible(false);
+      setEditingComponent(null);
+      form.resetFields();
+      await loadComponents();
+    } catch (error) {
+      console.error('Error saving component:', error);
+      notification.error({
+        message: 'Error',
+        description: error.message || 'Failed to save component',
+        placement: 'topRight',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImportComponents = async (file) => {
+    try {
+      const response = await kitComponentAPI.importComponents(file, null);
+
+      let messageText = 'Import completed';
+      let successCount = 0;
+      let errorCount = 0;
+      let isSuccess = true;
+      let errors = [];
+
+      if (typeof response === 'string') {
+        messageText = response;
+        isSuccess = false;
+      } else if (response) {
+        messageText = response.message || 'Import completed';
+        successCount = response.successCount || 0;
+        errorCount = response.errorCount || 0;
+        isSuccess = response.success !== false;
+        if (Array.isArray(response.errors)) {
+          errors = response.errors;
+        }
+      }
+
+      if (successCount === 0 && errorCount > 0) {
+        isSuccess = false;
+      }
+
+      let errorDetails = '';
+      if (errors.length > 0) {
+        const errorList = errors.slice(0, 5).join('; ');
+        errorDetails =
+          errors.length > 5
+            ? `${errorList}; ... and ${errors.length - 5} more error(s)`
+            : errorList;
+      }
+
+      if (isSuccess && successCount > 0) {
+        notification.success({
+          message: 'Import Successful',
+          description: `Successfully imported ${successCount} component(s). ${errorCount > 0 ? `${errorCount} error(s) occurred.` : ''
+            }`,
+          placement: 'topRight',
+          duration: 5,
+        });
+      } else if (successCount > 0 && errorCount > 0) {
+        notification.warning({
+          message: 'Import Completed with Errors',
+          description: `${messageText}${errorDetails ? ` Errors: ${errorDetails}` : ''}`,
+          placement: 'topRight',
+          duration: 8,
+        });
+      } else {
+        notification.error({
+          message: 'Import Failed',
+          description: `${messageText}${errorDetails ? ` Errors: ${errorDetails}` : ''}`,
+          placement: 'topRight',
+          duration: 8,
+        });
+      }
+
+      await loadComponents();
+    } catch (error) {
+      console.error('Import error:', error);
+      notification.error({
+        message: 'Import Failed',
+        description: error.message || 'Failed to import components. Please check file format.',
+        placement: 'topRight',
+        duration: 5,
+      });
+    }
+  };
+
+  const columns = [
+    {
+      title: 'Image',
+      dataIndex: 'imageUrl',
+      key: 'imageUrl',
+      render: (url) =>
+        url ? (
+          <img
+            src={url}
+            alt="component"
+            style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4 }}
+            onError={(e) => {
+              e.target.style.display = 'none';
+            }}
+          />
+        ) : (
+          <Text type="secondary">No image</Text>
+        ),
+    },
+    {
+      title: 'Component Name',
+      dataIndex: 'componentName',
+      key: 'componentName',
+    },
+    {
+      title: 'Type',
+      dataIndex: 'componentType',
+      key: 'componentType',
+    },
+    {
+      title: 'Kit ID',
+      dataIndex: 'kitId',
+      key: 'kitId',
+      render: (kitId) => (kitId ? kitId : <Text type="secondary">null</Text>),
+    },
+    {
+      title: 'Available Quantity',
+      dataIndex: 'quantityAvailable',
+      key: 'quantityAvailable',
+    },
+    {
+      title: 'Price (VND)',
+      dataIndex: 'pricePerCom',
+      key: 'pricePerCom',
+      render: (price) => (price ? price.toLocaleString() : '0'),
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status) => (
+        <Tag
+          color={
+            status === 'AVAILABLE'
+              ? 'green'
+              : status === 'IN_USE'
+                ? 'orange'
+                : status === 'MAINTENANCE'
+                  ? 'blue'
+                  : 'red'
+          }
+        >
+          {status}
+        </Tag>
+      ),
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_, record) => (
+        <Space>
+          <Button
+            type="default"
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => handleEditClick(record)}
+          >
+            Edit
+          </Button>
+          <Popconfirm
+            title="Are you sure you want to delete this component?"
+            onConfirm={() => handleDelete(record.id)}
+            okText="Yes"
+            cancelText="No"
+          >
+            <Button
+              type="default"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+            >
+              Delete
+            </Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
+  // Build filter options from components (only global components with kitId = null)
+  const globalComponents = components.filter((component) => !component.kitId);
+
+  const uniqueStatuses = Array.from(
+    new Set(
+      globalComponents
+        .map((c) => c.status)
+        .filter((value) => value && value !== '')
+    )
+  );
+
+  const uniqueTypes = Array.from(
+    new Set(
+      globalComponents
+        .map((c) => c.componentType)
+        .filter((value) => value && value !== '')
+    )
+  );
+
+  // Filter components for display
+  const filteredComponents = globalComponents.filter((component) => {
+    if ((component.quantityAvailable || 0) <= 0) {
+      return false;
+    }
+
+    if (searchText && searchText.trim() !== '') {
+      const searchLower = searchText.toLowerCase();
+      const name = (component.componentName || component.name || '').toLowerCase();
+      const id = (component.id || '').toString().toLowerCase();
+      if (!name.includes(searchLower) && !id.includes(searchLower)) {
+        return false;
+      }
+    }
+
+    if (filterStatus !== 'all' && component.status !== filterStatus) {
+      return false;
+    }
+
+    if (filterType !== 'all' && component.componentType !== filterType) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return (
+    <motion.div
+      variants={localCardVariants}
+      initial="hidden"
+      animate="visible"
+      whileHover="hover"
+    >
+      <Card
+        title="Kit Component Management"
+        style={{
+          borderRadius: '20px',
+          background: 'rgba(255, 255, 255, 0.95)',
+          backdropFilter: 'blur(10px)',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
+          border: '1px solid rgba(255,255,255,0.2)',
+          overflow: 'hidden',
+        }}
+        headStyle={{
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+          color: '#fff',
+          borderBottom: 'none',
+          borderRadius: '20px 20px 0 0',
+        }}
+        extra={
+          <Space>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={handleAddClick}
+            >
+              Add Component
+            </Button>
+            <Popover
+              placement="bottomRight"
+              trigger="click"
+              content={
+                <div style={{ maxWidth: 320 }}>
+                  <Text strong>Import Components Guide</Text>
+                  <div style={{ marginTop: 8 }}>
+                    <div>Excel file should contain the following columns (header names):</div>
+                    <ul style={{ paddingLeft: 20, marginBottom: 0 }}>
+                      <li><b>name</b>: component name</li>
+                      <li><b>link</b>: optional URL for the component</li>
+                      <li><b>quantity</b>: total quantity</li>
+                      <li><b>priceperComp</b>: price per component (number)</li>
+                      <li><b>image_url</b>: optional image URL</li>
+                    </ul>
+                    <div style={{ marginTop: 8 }}>
+                      Components imported from this tab will have <b>kitId = null</b> and are not linked to any specific kit.
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <Upload
+                      accept=".xlsx,.xls"
+                      showUploadList={false}
+                      beforeUpload={(file) => {
+                        handleImportComponents(file);
+                        return false;
+                      }}
+                    >
+                      <Button
+                        type="primary"
+                        icon={<ImportOutlined />}
+                        block
+                        style={{ marginTop: 4 }}
+                      >
+                        Choose File & Import
+                      </Button>
+                    </Upload>
+                  </div>
+                </div>
+              }
+            >
+              <Button icon={<ImportOutlined />}>
+                Import Components
+              </Button>
+            </Popover>
+            <Button
+              icon={<DownloadOutlined />}
+              onClick={() => {
+                const templateData = [
+                  {
+                    name: 'Resistor 220Ω',
+                    link: 'https://example.com/resistor-220',
+                    quantity: 100,
+                    priceperComp: 1000,
+                    image_url: 'https://example.com/resistor-220.png',
+                  },
+                ];
+
+                // Local export helper for this component
+                const ws = XLSX.utils.json_to_sheet(templateData);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+                const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                const dataBlob = new Blob([excelBuffer], {
+                  type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                });
+                saveAs(dataBlob, 'kit_components_template.xlsx');
+
+                notification.success({
+                  message: 'Template Downloaded',
+                  description: 'Kit component import template has been downloaded.',
+                  placement: 'topRight',
+                });
+              }}
+            >
+              Download Template
+            </Button>
+          </Space>
+        }
+      >
+        {/* Search & Filter */}
+        <div style={{ marginBottom: 24 }}>
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={8}>
+              <Input
+                placeholder="Search by component name or ID..."
+                prefix={<SearchOutlined />}
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                allowClear
+                style={{
+                  borderRadius: '8px',
+                  height: 40,
+                }}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Select
+                placeholder="Filter by Status"
+                value={filterStatus}
+                onChange={setFilterStatus}
+                style={{ width: '100%', borderRadius: '8px' }}
+              >
+                <Option value="all">All Status</Option>
+                {uniqueStatuses.map((status) => (
+                  <Option key={status} value={status}>
+                    {status}
+                  </Option>
+                ))}
+              </Select>
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Select
+                placeholder="Filter by Type"
+                value={filterType}
+                onChange={setFilterType}
+                style={{ width: '100%', borderRadius: '8px' }}
+              >
+                <Option value="all">All Types</Option>
+                {uniqueTypes.map((type) => (
+                  <Option key={type} value={type}>
+                    {type}
+                  </Option>
+                ))}
+              </Select>
+            </Col>
+          </Row>
+        </div>
+
+        <Spin spinning={loading}>
+          {filteredComponents.length === 0 ? (
+            <Empty
+              description="No global components found"
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              style={{ padding: '60px 0' }}
+            />
+          ) : (
+            <Row gutter={[24, 24]}>
+              {filteredComponents.map((component) => (
+                <Col xs={24} sm={12} md={8} lg={6} key={component.id}>
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3 }}
+                    whileHover={{ y: -8 }}
+                  >
+                    <Card
+                      hoverable
+                      style={{
+                        borderRadius: '16px',
+                        overflow: 'hidden',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                        border: '1px solid rgba(0,0,0,0.06)',
+                        height: '100%',
+                        display: 'flex',
+                        flexDirection: 'column',
+                      }}
+                      cover={
+                        <div
+                          style={{
+                            height: 200,
+                            background: component.imageUrl
+                              ? `url(${component.imageUrl}) center/cover`
+                              : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            position: 'relative',
+                          }}
+                        >
+                          {!component.imageUrl && (
+                            <BuildOutlined
+                              style={{
+                                fontSize: 48,
+                                color: '#fff',
+                                opacity: 0.8,
+                              }}
+                            />
+                          )}
+                          <div
+                            style={{
+                              position: 'absolute',
+                              top: 12,
+                              right: 12,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'flex-end',
+                              gap: 8,
+                            }}
+                          >
+                            <Tag
+                              color={
+                                component.status === 'AVAILABLE'
+                                  ? 'green'
+                                  : component.status === 'IN_USE'
+                                    ? 'orange'
+                                    : component.status === 'MAINTENANCE'
+                                      ? 'blue'
+                                      : 'red'
+                              }
+                              style={{
+                                fontSize: '12px',
+                                padding: '4px 12px',
+                                borderRadius: '12px',
+                                fontWeight: 'bold',
+                              }}
+                            >
+                              {component.status}
+                            </Tag>
+                            <Tag
+                              color="default"
+                              style={{
+                                fontSize: '11px',
+                                padding: '2px 10px',
+                                borderRadius: '12px',
+                              }}
+                            >
+                              Global Component
+                            </Tag>
+                          </div>
+                        </div>
+                      }
+                    >
+                      <Card.Meta
+                        title={
+                          <Text
+                            strong
+                            style={{
+                              fontSize: '16px',
+                              color: '#2c3e50',
+                              display: 'block',
+                              marginBottom: 8,
+                            }}
+                          >
+                            {component.componentName || component.name || 'Unnamed Component'}
+                          </Text>
+                        }
+                        description={
+                          <div style={{ marginTop: 8 }}>
+                            <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                              <div>
+                                {component.componentType && (
+                                  <Tag
+                                    color="purple"
+                                    style={{
+                                      fontSize: '12px',
+                                      padding: '4px 12px',
+                                      borderRadius: '12px',
+                                      marginBottom: 8,
+                                    }}
+                                  >
+                                    {component.componentType || 'N/A'}
+                                  </Tag>
+                                )}
+                              </div>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                }}
+                              >
+                                <Text type="secondary" style={{ fontSize: '13px' }}>
+                                  <strong>Total:</strong>{' '}
+                                  {component.quantityTotal || component.quantity || 0}
+                                </Text>
+                                <Text type="secondary" style={{ fontSize: '13px' }}>
+                                  <strong>Available:</strong>{' '}
+                                  {component.quantityAvailable || 0}
+                                </Text>
+                              </div>
+                              <div style={{ marginTop: 4 }}>
+                                <Text
+                                  strong
+                                  style={{ color: '#1890ff', fontSize: '14px' }}
+                                >
+                                  Price:{' '}
+                                  {component.pricePerCom
+                                    ? Number(component.pricePerCom).toLocaleString()
+                                    : 0}{' '}
+                                  VND
+                                </Text>
+                              </div>
+                              {component.condition && (
+                                <div style={{ marginTop: 4 }}>
+                                  <Tag
+                                    color={
+                                      component.condition === 'New'
+                                        ? 'green'
+                                        : component.condition === 'Used'
+                                          ? 'orange'
+                                          : 'red'
+                                    }
+                                    style={{
+                                      fontSize: '12px',
+                                      padding: '4px 12px',
+                                      borderRadius: '12px',
+                                    }}
+                                  >
+                                    {component.condition}
+                                  </Tag>
+                                </div>
+                              )}
+                              {component.link && (
+                                <div style={{ marginTop: 4 }}>
+                                  <Button
+                                    type="link"
+                                    size="small"
+                                    onClick={() => window.open(component.link, '_blank')}
+                                    style={{ padding: 0, fontSize: '12px' }}
+                                  >
+                                    View Link →
+                                  </Button>
+                                </div>
+                              )}
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'flex-end',
+                                  gap: 8,
+                                  marginTop: 8,
+                                }}
+                              >
+                                <Button
+                                  type="default"
+                                  size="small"
+                                  icon={<EditOutlined />}
+                                  onClick={() => handleEditClick(component)}
+                                >
+                                  Edit
+                                </Button>
+                                <Popconfirm
+                                  title="Are you sure you want to delete this component?"
+                                  onConfirm={() => handleDelete(component.id)}
+                                  okText="Yes"
+                                  cancelText="No"
+                                >
+                                  <Button
+                                    type="default"
+                                    size="small"
+                                    danger
+                                    icon={<DeleteOutlined />}
+                                  >
+                                    Delete
+                                  </Button>
+                                </Popconfirm>
+                              </div>
+                            </Space>
+                          </div>
+                        }
+                      />
+                    </Card>
+                  </motion.div>
+                </Col>
+              ))}
+            </Row>
+          )}
+        </Spin>
+      </Card>
+
+      <Modal
+        title={editingComponent && editingComponent.id ? 'Edit Component' : 'Add Component'}
+        open={modalVisible}
+        onCancel={() => {
+          setModalVisible(false);
+          setEditingComponent(null);
+          form.resetFields();
+        }}
+        footer={null}
+        width={500}
+        centered
+        destroyOnClose
+        maskClosable={false}
+      >
+        <Form
+          layout="vertical"
+          form={form}
+          onFinish={handleSubmit}
+          initialValues={editingComponent || {}}
+        >
+          <Form.Item
+            name="componentName"
+            label="Component Name"
+            rules={[{ required: true, message: 'Please enter component name' }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="componentType"
+            label="Component Type"
+            rules={[{ required: true, message: 'Please select component type' }]}
+          >
+            <Select>
+              <Option value="RED">Red</Option>
+              <Option value="BLACK">Black</Option>
+              <Option value="WHITE">White</Option>
+            </Select>
+          </Form.Item>
+          <Form.Item
+            name="quantityAvailable"
+            label="Available Quantity"
+            rules={[{ required: true, message: 'Please enter available quantity' }]}
+          >
+            <InputNumber min={0} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item
+            name="pricePerCom"
+            label="Price Per Component (VND)"
+          >
+            <InputNumber min={0} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item
+            name="status"
+            label="Status"
+            rules={[{ required: true, message: 'Please select status' }]}
+          >
+            <Select>
+              <Option value="AVAILABLE">Available</Option>
+              <Option value="IN_USE">In Use</Option>
+              <Option value="MAINTENANCE">Maintenance</Option>
+              <Option value="DAMAGED">Damaged</Option>
+            </Select>
+          </Form.Item>
+          <Form.Item
+            name="description"
+            label="Description"
+          >
+            <Input.TextArea />
+          </Form.Item>
+          <Form.Item
+            name="imageUrl"
+            label="Image URL"
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="link"
+            label="Link"
+            help="Optional: Add a link to the component (e.g., product page, documentation)"
+          >
+            <Input placeholder="https://..." />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                {editingComponent ? 'Update' : 'Add'}
+              </Button>
+              <Button
+                onClick={() => {
+                  setModalVisible(false);
+                  setEditingComponent(null);
+                  form.resetFields();
+                }}
+              >
+                Cancel
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+    </motion.div>
+  );
+};
+
 // Rental Approvals Component
 const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, setTransactions, setRefundRequests, onNavigateToRefunds }) => {
   const [selectedStatuses, setSelectedStatuses] = useState({});
@@ -4655,20 +5743,10 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
   const rentalRequestSubscriptionRef = useRef(null);
   const columns = [
     {
-      title: 'Request ID',
-      dataIndex: 'id',
-      key: 'id',
-      render: (id) => id ? `#${id.substring(0, 8)}...` : 'N/A'
-    },
-    {
-      title: 'User',
-      key: 'user',
-      render: (_, record) => (
-        <div>
-          <div>{record.requestedBy?.fullName || 'N/A'}</div>
-          <Text type="secondary">{record.requestedBy?.email || 'N/A'}</Text>
-        </div>
-      )
+      title: 'Email',
+      dataIndex: 'userEmail',
+      key: 'userEmail',
+      render: (email, record) => email || record.requestedBy?.email || 'N/A'
     },
     {
       title: 'Kit',
@@ -5416,15 +6494,9 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
   const [selectedStatuses, setSelectedStatuses] = useState({});
   const columns = [
     {
-      title: 'Request ID',
-      dataIndex: 'id',
-      key: 'id',
-      render: (id) => `#${String(id).substring(0, 8)}...`
-    },
-    {
-      title: 'User',
-      dataIndex: 'userName',
-      key: 'userName'
+      title: 'Email',
+      dataIndex: 'userEmail',
+      key: 'userEmail'
     },
     {
       title: 'Type',
@@ -5714,14 +6786,12 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
 const FineManagement = ({ fines, setFines, setLogHistory }) => {
   const [fineDetailModalVisible, setFineDetailModalVisible] = useState(false);
   const [selectedFine, setSelectedFine] = useState(null);
+  const [finePolicies, setFinePolicies] = useState([]);
+  const [loadingPolicies, setLoadingPolicies] = useState(false);
+  const [penaltyDetails, setPenaltyDetails] = useState([]);
+  const [loadingPenaltyDetails, setLoadingPenaltyDetails] = useState(false);
 
   const columns = [
-    {
-      title: 'Fine ID',
-      dataIndex: 'id',
-      key: 'id',
-      render: (id) => `#${id}`
-    },
     {
       title: 'Student',
       dataIndex: 'studentName',
@@ -5765,6 +6835,12 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
       )
     },
     {
+      title: 'Created At',
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      render: (date) => (date ? new Date(date).toLocaleString('vi-VN') : 'N/A')
+    },
+    {
       title: 'Due Date',
       dataIndex: 'dueDate',
       key: 'dueDate',
@@ -5793,8 +6869,48 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
     }
   ];
 
+  const loadFinePolicies = async (penaltyId) => {
+    setLoadingPolicies(true);
+    try {
+      const response = await penaltyPoliciesAPI.getAll();
+      const data = Array.isArray(response) ? response : (response?.data || []);
+      const policies = (Array.isArray(data) ? data : []).filter(
+        (policy) =>
+          policy.penaltyId === penaltyId ||
+          policy.penalty?.id === penaltyId
+      );
+      setFinePolicies(policies);
+    } catch (error) {
+      console.error('Error loading fine policies:', error);
+      setFinePolicies([]);
+    } finally {
+      setLoadingPolicies(false);
+    }
+  };
+
+  const loadPenaltyDetails = async (penaltyId) => {
+    setLoadingPenaltyDetails(true);
+    try {
+      const response = await penaltyDetailAPI.findByPenaltyId(penaltyId);
+      const data = Array.isArray(response) ? response : (response?.data || []);
+      setPenaltyDetails(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error loading penalty details:', error);
+      setPenaltyDetails([]);
+    } finally {
+      setLoadingPenaltyDetails(false);
+    }
+  };
+
   const showFineDetails = (fine) => {
     setSelectedFine(fine);
+    if (fine?.id) {
+      loadFinePolicies(fine.id);
+      loadPenaltyDetails(fine.id);
+    } else {
+      setFinePolicies([]);
+      setPenaltyDetails([]);
+    }
     setFineDetailModalVisible(true);
   };
 
@@ -5840,6 +6956,8 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
         onCancel={() => {
           setFineDetailModalVisible(false);
           setSelectedFine(null);
+          setFinePolicies([]);
+          setPenaltyDetails([]);
         }}
         footer={[
           <Button key="close" onClick={() => {
@@ -5861,10 +6979,8 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
                   {selectedFine.status.toUpperCase()}
                 </Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="Student">{selectedFine.studentName}</Descriptions.Item>
-              <Descriptions.Item label="Student Email">{selectedFine.studentEmail}</Descriptions.Item>
-              <Descriptions.Item label="Group Leader">{selectedFine.leaderName}</Descriptions.Item>
-              <Descriptions.Item label="Leader Email">{selectedFine.leaderEmail}</Descriptions.Item>
+              <Descriptions.Item label="Renter">{selectedFine.studentName}</Descriptions.Item>
+              <Descriptions.Item label="Renter Email">{selectedFine.studentEmail}</Descriptions.Item>
               <Descriptions.Item label="Fine Amount">
                 <Text strong style={{ color: '#cf1322' }}>
                   {selectedFine.fineAmount.toLocaleString()} VND
@@ -5874,31 +6990,54 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
               <Descriptions.Item label="Due Date">{new Date(selectedFine.dueDate).toLocaleString()}</Descriptions.Item>
             </Descriptions>
 
-            <Divider>Damage Assessment</Divider>
+            <Divider>Penalty Details</Divider>
 
-            {selectedFine.damageAssessment && Object.keys(selectedFine.damageAssessment).length > 0 ? (
-              Object.entries(selectedFine.damageAssessment).map(([component, assessment]) => (
-                assessment.damaged && (
-                  <Card key={component} size="small" style={{ marginBottom: 8 }}>
-                    <Row justify="space-between" align="middle">
-                      <Col>
-                        <Text strong>{component}</Text>
-                      </Col>
-                      <Col>
-                        <Text type="danger">{assessment.value.toLocaleString()} VND</Text>
-                      </Col>
-                    </Row>
-                  </Card>
-                )
-              ))
-            ) : (
-              <Alert
-                message="No Damage Assessment"
-                description="No damage assessment recorded for this fine."
-                type="info"
-                showIcon
-              />
-            )}
+            <Spin spinning={loadingPenaltyDetails}>
+              {penaltyDetails && penaltyDetails.length > 0 ? (
+                <List
+                  dataSource={penaltyDetails}
+                  rowKey={(item) => item.id}
+                  renderItem={(detail) => (
+                    <List.Item>
+                      <List.Item.Meta
+                        title={
+                          <Space>
+                            <Text strong>{detail.description || 'Penalty Detail'}</Text>
+                            {detail.policiesId && (
+                              <Tag color="blue">
+                                Policy: {detail.policiesId}
+                              </Tag>
+                            )}
+                          </Space>
+                        }
+                        description={
+                          <Space direction="vertical" size={4}>
+                            <Text>
+                              <Text strong>Amount:</Text>{' '}
+                              <Text type="danger">
+                                {detail.amount ? detail.amount.toLocaleString() : '0'} VND
+                              </Text>
+                            </Text>
+                            {detail.imageUrl && (
+                              <Text type="secondary">
+                                Evidence: <a href={detail.imageUrl} target="_blank" rel="noreferrer">View Image</a>
+                              </Text>
+                            )}
+                          </Space>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+              ) : (
+                <Alert
+                  message="No Penalty Details"
+                  description="No penalty detail records found for this fine."
+                  type="info"
+                  showIcon
+                />
+              )}
+            </Spin>
           </div>
         )}
       </Modal>
@@ -5976,7 +7115,8 @@ const GroupManagement = ({ groups, setGroups, adjustGroupMembers, availableStude
               id: bg.accountId,
               name: bg.accountName,
               email: bg.accountEmail,
-              role: bg.roles
+              role: bg.roles,
+              isActive: bg.isActive !== undefined ? bg.isActive : true
             };
           });
 
@@ -7404,6 +8544,195 @@ const UserManagement = ({ users, setUsers }) => {
 
 
 // Transaction History Component
+const KitComponentHistoryTab = ({
+  kits,
+  historyData,
+  loading,
+  onSelectKit,
+  onSelectComponent,
+  selectedKitId,
+  selectedComponentId,
+}) => {
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
+  const [selectedHistory, setSelectedHistory] = useState(null);
+
+  const kitOptions = useMemo(() => (kits || []).map((kit) => ({
+    value: kit.id,
+    label: kit.kitName || kit.name || 'Unknown kit',
+  })), [kits]);
+
+  const componentOptions = useMemo(() => {
+    const allComponents = (kits || []).flatMap((kit) => {
+      return (kit.components || []).map((component) => ({
+        value: component.id,
+        label: component.componentName || component.name || 'Component',
+      }));
+    });
+    // Remove duplicates by id
+    const uniqueMap = new Map();
+    allComponents.forEach((comp) => {
+      if (comp.value && !uniqueMap.has(comp.value)) {
+        uniqueMap.set(comp.value, comp);
+      }
+    });
+    return Array.from(uniqueMap.values());
+  }, [kits]);
+
+  const columns = [
+    {
+      title: 'Time',
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      render: (value) => value ? new Date(value).toLocaleString('vi-VN') : 'N/A',
+    },
+    {
+      title: 'Kit',
+      dataIndex: 'kitName',
+      key: 'kitName',
+      render: (text) => text || 'N/A',
+    },
+    {
+      title: 'Component',
+      dataIndex: 'componentName',
+      key: 'componentName',
+      render: (text) => text || 'N/A',
+    },
+    {
+      title: 'Action',
+      dataIndex: 'action',
+      key: 'action',
+      render: (value) => {
+        if (!value) return <Tag>Unknown</Tag>;
+        const isDamaged = value.toLowerCase().includes('damage');
+        return <Tag color={isDamaged ? 'gold' : 'blue'}>{value}</Tag>;
+      },
+    },
+    {
+      title: 'Old Status',
+      dataIndex: 'oldStatus',
+      key: 'oldStatus',
+      render: (value) => value ? <Tag>{value}</Tag> : '-',
+    },
+    {
+      title: 'New Status',
+      dataIndex: 'newStatus',
+      key: 'newStatus',
+      render: (value) => {
+        if (!value) return '-';
+        const isDamaged = value.toLowerCase().includes('damage');
+        return <Tag color={isDamaged ? 'gold' : 'success'}>{value}</Tag>;
+      },
+    },
+    {
+      title: 'Note',
+      dataIndex: 'note',
+      key: 'note',
+      ellipsis: true,
+      render: (value) => value || '-',
+    },
+    {
+      title: 'Details',
+      key: 'details',
+      render: (_, record) => (
+        <Button
+          type="link"
+          onClick={() => {
+            setSelectedHistory(record);
+            setDetailModalVisible(true);
+          }}
+        >
+          View
+        </Button>
+      ),
+    },
+  ];
+
+  const dataSource = (historyData || []).map((item, index) => ({
+    key: item.id || `${item.componentId || 'component'}-${item.createdAt || index}`,
+    ...item,
+  }));
+
+  return (
+    <Card title="Kit Component History" className="kit-history-card">
+      <Space direction="vertical" size="middle" className="kit-history-space">
+        <div className="kit-history-filters">
+          <Select
+            allowClear
+            showSearch
+            className="kit-history-select"
+            placeholder="Chọn kit"
+            optionFilterProp="label"
+            value={selectedKitId || undefined}
+            options={kitOptions}
+            onChange={onSelectKit}
+          />
+          <Select
+            allowClear
+            showSearch
+            className="kit-history-select"
+            placeholder="Chọn component"
+            optionFilterProp="label"
+            value={selectedComponentId || undefined}
+            options={componentOptions}
+            onChange={onSelectComponent}
+          />
+        </div>
+        <Table
+          columns={columns}
+          dataSource={dataSource}
+          loading={loading}
+          pagination={{ pageSize: 10 }}
+        />
+        <Modal
+          open={detailModalVisible}
+          title="History Details"
+          footer={null}
+          onCancel={() => setDetailModalVisible(false)}
+          destroyOnClose
+        >
+          <Descriptions column={1} bordered size="small">
+            <Descriptions.Item label="Time">
+              {selectedHistory?.createdAt ? new Date(selectedHistory.createdAt).toLocaleString('vi-VN') : 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Kit">
+              {selectedHistory?.kitName || 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Component">
+              {selectedHistory?.componentName || 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Action">
+              {selectedHistory?.action || 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Old Status">
+              {selectedHistory?.oldStatus || 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="New Status">
+              {selectedHistory?.newStatus || 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Note">
+              {selectedHistory?.note || 'N/A'}
+            </Descriptions.Item>
+            {selectedHistory?.penaltyDetailImageUrl && (
+              <Descriptions.Item label="Damage Image">
+                <img
+                  src={selectedHistory.penaltyDetailImageUrl}
+                  alt="Damage evidence"
+                  style={{
+                    maxWidth: '100%',
+                    maxHeight: 240,
+                    borderRadius: 4,
+                    border: '1px solid #d9d9d9',
+                  }}
+                />
+              </Descriptions.Item>
+            )}
+          </Descriptions>
+        </Modal>
+      </Space>
+    </Card>
+  );
+};
+
 const TransactionHistory = ({ transactions, setTransactions }) => {
   const [searchText, setSearchText] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -8731,4 +10060,4 @@ const PenaltyPoliciesManagement = ({ penaltyPolicies, setPenaltyPolicies }) => {
   );
 };
 
-export default AdminPortal; 
+export default AdminPortal;

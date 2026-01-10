@@ -139,6 +139,7 @@ function MemberPortal({ user, onLogout }) {
     duration: 0.4
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (user && user.id) {
       loadData();
@@ -320,6 +321,7 @@ function MemberPortal({ user, onLogout }) {
   };
 
   // Load lecturers and classes for create group form
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (createGroupModalVisible) {
       loadLecturersAndClasses();
@@ -378,7 +380,7 @@ function MemberPortal({ user, onLogout }) {
           : (allClassesResponse?.data || []);
 
         const filteredClasses = classIds.length
-          ? allClasses.filter((cls) => classIds.includes(cls.id))
+          ? allClasses.filter((cls) => classIds.includes(cls.id) && cls.status)
           : [];
 
         classOptions = filteredClasses.map((cls) => ({
@@ -395,7 +397,9 @@ function MemberPortal({ user, onLogout }) {
         // Fallback: if no classes detected from assignments, use all classes
         if (!classOptions.length) {
           const fallbackClassesData = allClasses.length ? allClasses : (await classesAPI.getAllClasses());
-          classOptions = (fallbackClassesData || []).map((cls) => ({
+          const activeFallback = (Array.isArray(fallbackClassesData) ? fallbackClassesData : (fallbackClassesData?.data || []))
+            .filter((cls) => cls.status);
+          classOptions = (activeFallback || []).map((cls) => ({
             value: cls.id,
             label: `${cls.classCode || cls.className || 'Unknown'} - ${cls.semester || 'N/A'}`,
             id: cls.id,
@@ -410,7 +414,8 @@ function MemberPortal({ user, onLogout }) {
         console.error('Error loading classes from assignments:', classError);
         // Hard fallback: keep old behavior – load all classes
         const classesData = await classesAPI.getAllClasses();
-        classOptions = (classesData || []).map((cls) => ({
+        const classesArray = Array.isArray(classesData) ? classesData : (classesData?.data || []);
+        classOptions = (classesArray || []).filter((cls) => cls.status).map((cls) => ({
           value: cls.id,
           label: `${cls.classCode || cls.className || 'Unknown'} - ${cls.semester || 'N/A'}`,
           id: cls.id,
@@ -619,6 +624,23 @@ function MemberPortal({ user, onLogout }) {
     }
   };
 
+  // Leave inactive group
+  const handleLeaveInactiveGroup = async () => {
+    if (!group || !group.id || !user?.id) return;
+    setLoading(true);
+    try {
+      await borrowingGroupAPI.removeMember(group.id, user.id);
+      message.success('Đã rời nhóm cũ. Vui lòng tham gia nhóm mới.');
+      setGroup(null);
+      await loadData();
+    } catch (error) {
+      console.error('Error leaving inactive group:', error);
+      message.error(error.message || 'Không thể rời nhóm. Vui lòng thử lại.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const loadData = async () => {
     if (!user || !user.id) {
       console.warn('User or user.id is missing');
@@ -689,7 +711,8 @@ function MemberPortal({ user, onLogout }) {
               id: bg.accountId,
               name: bg.accountName || bg.accountEmail,
               email: bg.accountEmail,
-              role: bg.roles
+              role: bg.roles,
+              isActive: bg.isActive !== undefined ? bg.isActive : true
             }));
 
             // Find leader
@@ -720,21 +743,37 @@ function MemberPortal({ user, onLogout }) {
         setGroup(null);
       }
 
-      // Load available groups for joining (groups where user is not a member)
+      // Load available groups for joining (groups where user is not a member and same class)
       try {
         const allGroups = await studentGroupAPI.getAll();
         const allGroupsData = Array.isArray(allGroups) ? allGroups : (allGroups?.data || []);
 
+        // Get classIds where this student is assigned
+        let studentClassIds = [];
+        try {
+          const assignments = await classAssignmentAPI.getAll();
+          const assignmentsArray = Array.isArray(assignments) ? assignments : (assignments?.data || []);
+          studentClassIds = assignmentsArray
+            .filter(a => a.accountId === user.id)
+            .map(a => a.classId)
+            .filter(Boolean);
+        } catch (errAssign) {
+          console.error('Error loading class assignments for filtering groups:', errAssign);
+        }
+
         // Filter out groups where user is already a member
         const userBorrowingGroups = await borrowingGroupAPI.getByAccountId(user.id);
-        const userGroupIds = new Set(
-          (userBorrowingGroups || []).map(bg => bg.studentGroupId)
-        );
+        const userGroupIds = new Set((userBorrowingGroups || []).map(bg => bg.studentGroupId));
 
         // Get member counts for each group
         const groupsWithCounts = await Promise.all(
           allGroupsData
             .filter(g => !userGroupIds.has(g.id) && g.status) // Only active groups user is not in
+            .filter(g => {
+              // Only groups whose classId is in student's class assignments
+              if (!g.classId || studentClassIds.length === 0) return false;
+              return studentClassIds.includes(g.classId);
+            })
             .map(async (g) => {
               try {
                 const members = await borrowingGroupAPI.getByStudentGroupId(g.id);
@@ -1059,6 +1098,7 @@ function MemberPortal({ user, onLogout }) {
                   group={group}
                   onCreateGroup={() => setCreateGroupModalVisible(true)}
                   onJoinGroup={() => setJoinGroupModalVisible(true)}
+                  onLeaveInactiveGroup={handleLeaveInactiveGroup}
                   availableGroups={availableGroups}
                 />}
                 {selectedKey === 'wallet' && <WalletManagement wallet={wallet} setWallet={setWallet} loadData={loadData} />}
@@ -1392,7 +1432,7 @@ const DashboardContent = ({ group, wallet }) => (
 );
 
 // Group Info Component
-const GroupInfo = ({ group, onCreateGroup, onJoinGroup, availableGroups }) => (
+const GroupInfo = ({ group, onCreateGroup, onJoinGroup, onLeaveInactiveGroup, availableGroups }) => (
   <div>
     <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
       <Card title="Group Information" style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
@@ -1425,6 +1465,17 @@ const GroupInfo = ({ group, onCreateGroup, onJoinGroup, availableGroups }) => (
                       {group.status || 'inactive'}
                     </Tag>
                   </Descriptions.Item>
+                  {group.status === 'inactive' && (
+                    <Descriptions.Item label="Action">
+                      <Button
+                        danger
+                        icon={<RollbackOutlined />}
+                        onClick={onLeaveInactiveGroup}
+                      >
+                        Rời nhóm cũ
+                      </Button>
+                    </Descriptions.Item>
+                  )}
                 </Descriptions>
               </Card>
             </Col>
@@ -1587,8 +1638,11 @@ const GroupInfo = ({ group, onCreateGroup, onJoinGroup, availableGroups }) => (
 const WalletManagement = ({ wallet, setWallet, loadData }) => {
   const [topUpModalVisible, setTopUpModalVisible] = useState(false);
   const [penaltyModalVisible, setPenaltyModalVisible] = useState(false);
+  const [transferModalVisible, setTransferModalVisible] = useState(false);
   const [topUpForm] = Form.useForm();
+  const [transferForm] = Form.useForm();
   const [topUpLoading, setTopUpLoading] = useState(false);
+  const [transferLoading, setTransferLoading] = useState(false);
   const [penalties, setPenalties] = useState([]);
   const [penaltyLoading, setPenaltyLoading] = useState(false);
   const [selectedPenalty, setSelectedPenalty] = useState(null);
@@ -1687,6 +1741,7 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
     topUpForm.resetFields();
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     loadTransactionHistory();
 
@@ -1901,22 +1956,56 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
     }
   };
 
+  const handleTransfer = async () => {
+    try {
+      const values = await transferForm.validateFields();
+      const { recipientEmail, amount, description } = values;
+
+      // Validate amount
+      if (amount < 10000) {
+        message.error('Số tiền chuyển tối thiểu là 10,000 VND');
+        return;
+      }
+
+      // Check wallet balance
+      if (wallet.balance < amount) {
+        message.error('Số dư ví không đủ để chuyển tiền! Vui lòng nạp thêm tiền.');
+        return;
+      }
+
+      setTransferLoading(true);
+      await walletTransactionAPI.transfer(recipientEmail, amount, description || 'Transfer money');
+      message.success('Chuyển tiền thành công!');
+      setTransferModalVisible(false);
+      transferForm.resetFields();
+
+      // Reload wallet and transactions
+      await loadData();
+      await loadTransactionHistory();
+    } catch (error) {
+      console.error('Error transferring money:', error);
+      message.error(error.message || 'Chuyển tiền thất bại. Vui lòng thử lại.');
+    } finally {
+      setTransferLoading(false);
+    }
+  };
+
   const getTransactionTypeConfig = (type) => {
     const typeUpper = (type || '').toUpperCase();
     switch (typeUpper) {
       case 'TOP_UP':
       case 'TOPUP':
-        return { label: 'Nạp tiền', color: 'success', icon: <DollarOutlined />, bg: '#e8f8ee', border: '1.5px solid #52c41a', text: '#2a8731' };
+        return { label: 'Top Up', color: 'success', icon: <DollarOutlined />, bg: '#e8f8ee', border: '1.5px solid #52c41a', text: '#2a8731' };
       case 'RENTAL_FEE':
-        return { label: 'Thuê kit', color: 'geekblue', icon: <ShoppingOutlined />, bg: '#e6f7ff', border: '1.5px solid #177ddc', text: '#177ddc' };
+        return { label: 'Rental Fee', color: 'geekblue', icon: <ShoppingOutlined />, bg: '#e6f7ff', border: '1.5px solid #177ddc', text: '#177ddc' };
       case 'PENALTY_PAYMENT':
       case 'PENALTY':
       case 'FINE':
-        return { label: 'Phí phạt', color: 'error', icon: <ExclamationCircleOutlined />, bg: '#fff1f0', border: '1.5px solid #ff4d4f', text: '#d4001a' };
+        return { label: 'Penalty', color: 'error', icon: <ExclamationCircleOutlined />, bg: '#fff1f0', border: '1.5px solid #ff4d4f', text: '#d4001a' };
       case 'REFUND':
-        return { label: 'Hoàn tiền', color: 'purple', icon: <RollbackOutlined />, bg: '#f9f0ff', border: '1.5px solid #722ed1', text: '#722ed1' };
+        return { label: 'Refund', color: 'purple', icon: <RollbackOutlined />, bg: '#f9f0ff', border: '1.5px solid #722ed1', text: '#722ed1' };
       default:
-        return { label: type || 'Khác', color: 'default', icon: <InfoCircleOutlined />, bg: '#fafafa', border: '1.5px solid #bfbfbf', text: '#595959' };
+        return { label: type || 'Other', color: 'default', icon: <InfoCircleOutlined />, bg: '#fafafa', border: '1.5px solid #bfbfbf', text: '#595959' };
     }
   };
 
@@ -1973,6 +2062,17 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
                   }}
                 >
                   Top Up
+                </Button>
+                <Button
+                  onClick={() => setTransferModalVisible(true)}
+                  style={{
+                    width: '100%',
+                    background: 'rgba(255,255,255,0.15)',
+                    border: '1px solid rgba(255,255,255,0.3)',
+                    color: 'white'
+                  }}
+                >
+                  Transfer Money
                 </Button>
                 <Button
                   onClick={handleOpenPenaltyModal}
@@ -2382,6 +2482,111 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
         </Spin>
       </Modal>
 
+      {/* Transfer Money Modal */}
+      <Modal
+        title="Transfer Money"
+        open={transferModalVisible}
+        onCancel={() => {
+          setTransferModalVisible(false);
+          transferForm.resetFields();
+        }}
+        footer={null}
+        width={500}
+      >
+        <Alert
+          message="Transfer Money"
+          description="Chuyển tiền từ ví của bạn đến người nhận bằng email."
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+
+        <Form
+          form={transferForm}
+          layout="vertical"
+          onFinish={handleTransfer}
+        >
+          <Form.Item
+            label="Recipient Email"
+            name="recipientEmail"
+            rules={[
+              { required: true, message: 'Please enter recipient email' },
+              { type: 'email', message: 'Please enter a valid email address' }
+            ]}
+          >
+            <Input
+              placeholder="Enter recipient email address"
+              type="email"
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="Amount (VND)"
+            name="amount"
+            rules={[
+              { required: true, message: 'Please enter amount' },
+              { type: 'number', min: 10000, message: 'Minimum amount is 10,000 VND' }
+            ]}
+          >
+            <InputNumber
+              style={{ width: '100%' }}
+              placeholder="Enter amount (minimum 10,000 VND)"
+              formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+              parser={value => value.replace(/\$\s?|(,*)/g, '')}
+              min={10000}
+              step={10000}
+            />
+          </Form.Item>
+
+          <Form.Item shouldUpdate={(prevValues, currentValues) => prevValues.amount !== currentValues.amount}>
+            {({ getFieldValue }) => {
+              const amount = getFieldValue('amount');
+              if (amount) {
+                const balance = wallet.balance || 0;
+                const remaining = balance - amount;
+                return (
+                  <Alert
+                    message={`Current Balance: ${balance.toLocaleString()} VND`}
+                    description={`Balance after transfer: ${remaining.toLocaleString()} VND`}
+                    type={remaining < 0 ? 'error' : remaining < 50000 ? 'warning' : 'info'}
+                    style={{ marginBottom: 16 }}
+                  />
+                );
+              }
+              return null;
+            }}
+          </Form.Item>
+
+          <Form.Item
+            label="Description (Optional)"
+            name="description"
+          >
+            <Input.TextArea
+              placeholder="Enter description for this transfer"
+              rows={3}
+            />
+          </Form.Item>
+
+          <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
+            <Space>
+              <Button onClick={() => {
+                setTransferModalVisible(false);
+                transferForm.resetFields();
+              }}>
+                Cancel
+              </Button>
+              <Button
+                type="primary"
+                htmlType="submit"
+                loading={transferLoading}
+              >
+                Transfer
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
       {/* Transaction Details Modal */}
       <Modal
         title="Transaction Details"
@@ -2470,6 +2675,7 @@ const ProfileManagement = ({ profile, setProfile, loading, setLoading, user }) =
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     loadProfile();
   }, []);

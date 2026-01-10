@@ -51,7 +51,8 @@ import {
   ThunderboltOutlined,
   UserAddOutlined,
   SearchOutlined,
-  SortAscendingOutlined
+  SortAscendingOutlined,
+  DownloadOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { LoadingOutlined } from '@ant-design/icons';
@@ -550,6 +551,59 @@ function AcademicAffairsPortal({ user, onLogout }) {
     });
   };
 
+  // Download template functions
+  const downloadStudentTemplate = () => {
+    const templateData = [
+      {
+        studentCode: 'SV001',
+        StudentName: 'Nguyễn Văn A',
+        email: 'student1@example.com',
+        phone: '0123456789',
+        StudentClass: 'IOT2024'
+      },
+      {
+        studentCode: 'SV002',
+        StudentName: 'Trần Thị B',
+        email: 'student2@example.com',
+        phone: '0987654321',
+        StudentClass: 'CS101'
+      }
+    ];
+    exportToExcel(templateData, 'student_import_template');
+    notification.success({
+      message: 'Template Downloaded',
+      description: 'Student import template downloaded successfully',
+      placement: 'topRight',
+    });
+  };
+
+  const downloadLecturerTemplate = () => {
+    const templateData = [
+      {
+        lecturer_code: 'GV001',
+        email: 'lecturer1@example.com',
+        fullname: 'Nguyễn Văn A',
+        phone: '0123456789',
+        class_code: 'IOT2024',
+        Semester: 'Fall 2024'
+      },
+      {
+        lecturer_code: 'GV002',
+        email: 'lecturer2@example.com',
+        fullname: 'Trần Thị B',
+        phone: '0987654321',
+        class_code: 'CS101',
+        Semester: 'Spring 2024'
+      }
+    ];
+    exportToExcel(templateData, 'lecturer_import_template');
+    notification.success({
+      message: 'Template Downloaded',
+      description: 'Lecturer import template downloaded successfully',
+      placement: 'topRight',
+    });
+  };
+
   // Helper function to read sheet names from Excel file
   const getExcelSheetNames = (file) => {
     return new Promise((resolve, reject) => {
@@ -993,6 +1047,22 @@ function AcademicAffairsPortal({ user, onLogout }) {
       iotSubjectForm.resetFields();
     } catch (error) {
       console.error('Error submitting IOT subject:', error);
+      const errorMessage = error?.message || '';
+
+      // Handle duplicate classCode error from backend
+      if (errorMessage.includes('Class Code already exists')) {
+        // Set field error on classCode
+        iotSubjectForm.setFields([
+          {
+            name: 'classCode',
+            errors: ['Class code already exists. Please use a different class code.'],
+          },
+        ]);
+
+        message.error('Class code already exists. Please choose another class code.');
+        return;
+      }
+
       message.error('Failed to save IOT subject');
     }
   };
@@ -1291,6 +1361,7 @@ function AcademicAffairsPortal({ user, onLogout }) {
 
     // Get current classCode from lecturer's class assignments
     let currentClassCode = null;
+    let currentSemester = null;
     try {
       const allAssignments = await classAssignmentAPI.getAll();
       const assignmentsArray = Array.isArray(allAssignments) ? allAssignments : [];
@@ -1314,6 +1385,16 @@ function AcademicAffairsPortal({ user, onLogout }) {
           const targetClass = classesData.find(cls => cls.id?.toString() === firstAssignment.classId?.toString());
           if (targetClass) {
             currentClassCode = targetClass.classCode;
+            currentSemester = targetClass.semester || null;
+          }
+        }
+
+        // If we only have classCode, try to find semester from availableClasses or classes list
+        if (!currentSemester && currentClassCode) {
+          const sourceClasses = Array.isArray(availableClasses) ? availableClasses : [];
+          const found = sourceClasses.find(c => (c.classCode || c.value) === currentClassCode);
+          if (found && found.semester) {
+            currentSemester = found.semester;
           }
         }
       }
@@ -1325,7 +1406,8 @@ function AcademicAffairsPortal({ user, onLogout }) {
     const formData = {
       ...record,
       hireDate: record.hireDate ? dayjs(record.hireDate) : null,
-      classCode: currentClassCode
+      classCode: currentClassCode,
+      semester: currentSemester
     };
     lecturerForm.setFieldsValue(formData);
     setLecturerModal({ visible: true, data: record });
@@ -1628,7 +1710,8 @@ function AcademicAffairsPortal({ user, onLogout }) {
             email: values.email,
             phoneNumber: values.phoneNumber,
             lecturerCode: values.lecturerCode,
-            classCode: classCodeToUse
+            classCode: classCodeToUse,
+            semester: values.semester
           });
 
           console.log('Lecturer created:', response);
@@ -1917,9 +2000,9 @@ function AcademicAffairsPortal({ user, onLogout }) {
                 transition={pageTransition}
               >
                 {selectedKey === 'dashboard' && <DashboardContent semesters={semesters} students={students} lecturers={lecturers} iotSubjects={iotSubjects} />}
-                {selectedKey === 'student-enrollment' && <StudentEnrollment semesters={semesters} setSemesters={setSemesters} semesterModal={semesterModal} setSemesterModal={setSemesterModal} semesterForm={semesterForm} />}
-                {selectedKey === 'students' && <StudentManagement students={students} setStudents={setStudents} studentModal={studentModal} setStudentModal={setStudentModal} studentForm={studentForm} handleExportStudents={handleExportStudents} handleImportStudents={handleImportStudents} handleAddStudent={handleAddStudent} handleEditStudent={handleEditStudent} handleDeleteStudent={handleDeleteStudent} showSheetSelectionAndImport={showSheetSelectionAndImport} importFormatModal={importFormatModal} setImportFormatModal={setImportFormatModal} />}
-                {selectedKey === 'lecturers' && <LecturerManagement lecturers={lecturers} setLecturers={setLecturers} lecturerModal={lecturerModal} setLecturerModal={setLecturerModal} lecturerForm={lecturerForm} handleExportLecturers={handleExportLecturers} handleImportLecturers={handleImportLecturers} handleAddLecturer={handleAddLecturer} handleEditLecturer={handleEditLecturer} handleDeleteLecturer={handleDeleteLecturer} showSheetSelectionAndImport={showSheetSelectionAndImport} importFormatModal={importFormatModal} setImportFormatModal={setImportFormatModal} />}
+                {selectedKey === 'student-enrollment' && <StudentEnrollment semesters={semesters} setSemesters={setSemesters} semesterModal={semesterModal} setSemesterModal={setSemesterModal} semesterForm={semesterForm} onStudentAdded={loadData} />}
+                {selectedKey === 'students' && <StudentManagement students={students} setStudents={setStudents} studentModal={studentModal} setStudentModal={setStudentModal} studentForm={studentForm} handleExportStudents={handleExportStudents} handleImportStudents={handleImportStudents} handleAddStudent={handleAddStudent} handleEditStudent={handleEditStudent} handleDeleteStudent={handleDeleteStudent} showSheetSelectionAndImport={showSheetSelectionAndImport} importFormatModal={importFormatModal} setImportFormatModal={setImportFormatModal} downloadStudentTemplate={downloadStudentTemplate} />}
+                {selectedKey === 'lecturers' && <LecturerManagement lecturers={lecturers} setLecturers={setLecturers} lecturerModal={lecturerModal} setLecturerModal={setLecturerModal} lecturerForm={lecturerForm} handleExportLecturers={handleExportLecturers} handleImportLecturers={handleImportLecturers} handleAddLecturer={handleAddLecturer} handleEditLecturer={handleEditLecturer} handleDeleteLecturer={handleDeleteLecturer} showSheetSelectionAndImport={showSheetSelectionAndImport} importFormatModal={importFormatModal} setImportFormatModal={setImportFormatModal} downloadLecturerTemplate={downloadLecturerTemplate} />}
                 {selectedKey === 'iot-subjects' && <IotSubjectsManagement iotSubjects={iotSubjects} setIotSubjects={setIotSubjects} selectedSemester={selectedSemester} setSelectedSemester={setSelectedSemester} semesters={semesters} handleAddIotSubject={handleAddIotSubject} handleEditIotSubject={handleEditIotSubject} handleViewIotSubjectStudents={handleViewIotSubjectStudents} handleDeleteIotSubject={handleDeleteIotSubject} handleRemoveStudent={handleRemoveStudentFromClass} />}
               </motion.div>
             </AnimatePresence>
@@ -2115,7 +2198,8 @@ function AcademicAffairsPortal({ user, onLogout }) {
                   placeholder="Select existing class or type to create new"
                   options={Array.isArray(availableClasses) ? availableClasses.map(cls => ({
                     value: cls.classCode || cls.value,
-                    label: cls.classCode ? `${cls.classCode} - ${cls.semester || ''}`.trim() : (cls.label || cls.value || '')
+                    label: cls.classCode ? `${cls.classCode} - ${cls.semester || ''}`.trim() : (cls.label || cls.value || ''),
+                    semester: cls.semester || ''
                   })) : []}
                   filterOption={(inputValue, option) =>
                     (option?.label ?? '').toLowerCase().includes(inputValue.toLowerCase()) ||
@@ -2123,8 +2207,15 @@ function AcademicAffairsPortal({ user, onLogout }) {
                   }
                   allowClear
                   onSelect={(value) => {
-                    // Keep the classCode value when selecting
-                    lecturerForm.setFieldsValue({ classCode: value });
+                    // Update classCode and auto-fill semester when selecting existing class
+                    let selectedSemester = lecturerForm.getFieldValue('semester');
+                    if (Array.isArray(availableClasses)) {
+                      const found = availableClasses.find(cls => (cls.classCode || cls.value) === value);
+                      if (found && found.semester) {
+                        selectedSemester = found.semester;
+                      }
+                    }
+                    lecturerForm.setFieldsValue({ classCode: value, semester: selectedSemester });
                   }}
                   onBlur={(e) => {
                     // When user types and blurs, keep the typed value
@@ -2134,6 +2225,15 @@ function AcademicAffairsPortal({ user, onLogout }) {
                     }
                   }}
                 />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="semester"
+                label="Semester"
+                rules={[{ required: false, message: 'Please enter semester' }]}
+              >
+                <Input placeholder="Enter semester (e.g., Fall 2024)" />
               </Form.Item>
             </Col>
           </Row>
@@ -2641,7 +2741,7 @@ const DashboardContent = ({ semesters, students, lecturers, iotSubjects }) => {
 };
 
 // Student Enrollment Component
-const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemesterModal, semesterForm }) => {
+const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemesterModal, semesterForm, onStudentAdded }) => {
   const [enrollmentModal, setEnrollmentModal] = useState({ visible: false, data: {} });
   const [studentModal, setStudentModal] = useState({ visible: false, data: {} });
   const [detailModal, setDetailModal] = useState({ visible: false, data: {} });
@@ -2664,6 +2764,15 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
   const loadEnrollmentData = async () => {
     setLoading(true);
     try {
+      // Load all classes first to get status information
+      const allClassesData = await classesAPI.getAllClasses();
+
+      // Create a map of classId to class status (active = true, inactive = false)
+      const classStatusMap = {};
+      allClassesData.forEach(cls => {
+        classStatusMap[cls.id?.toString()] = cls.status === true || cls.status === 'ACTIVE' || cls.status === 'Active';
+      });
+
       // Load class assignments - only lecturers for main table
       const allAssignments = await classAssignmentAPI.getAll();
       console.log('ClassAssignments API Response:', allAssignments);
@@ -2672,25 +2781,43 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
       const assignmentsArray = Array.isArray(allAssignments) ? allAssignments : [];
       console.log('Assignments array:', assignmentsArray);
 
-      // Filter only lecturers for main table
+      // Filter only lecturers AND only from active classes for main table
       const lecturerAssignments = assignmentsArray.filter(assignment => {
         const roleName = assignment.roleName || assignment.role || '';
         const roleUpper = roleName.toUpperCase();
         const isLecturer = roleUpper === 'LECTURER' ||
           roleUpper === 'TEACHER' ||
           roleUpper === 'LECTURER_ROLE';
-        console.log(`Assignment ${assignment.id}: roleName=${roleName}, isLecturer=${isLecturer}`);
-        return isLecturer;
+
+        // Check if the class is active
+        const assignmentClassId = assignment.classId?.toString();
+        const isClassActive = classStatusMap[assignmentClassId] === true;
+
+        console.log(`Assignment ${assignment.id}: roleName=${roleName}, isLecturer=${isLecturer}, classId=${assignmentClassId}, isClassActive=${isClassActive}`);
+        return isLecturer && isClassActive;
       });
 
-      console.log('Filtered lecturer assignments:', lecturerAssignments);
+      console.log('Filtered lecturer assignments (active classes only):', lecturerAssignments);
       setClassAssignments(lecturerAssignments);
 
-      // Load unassigned classes (classes without lecturer assignment)
+      // Filter only active classes from allClassesData (already loaded above)
+      const activeClasses = (allClassesData || []).filter(cls =>
+        cls.status === true || cls.status === 'ACTIVE' || cls.status === 'Active'
+      );
+
+      // Load unassigned classes (classes without lecturer assignment) - only active classes
       const unassignedClassesData = await classAssignmentAPI.getUnassignedClasses();
       console.log('Unassigned classes:', unassignedClassesData);
 
-      const unassignedClassOptions = (unassignedClassesData || []).map(cls => ({
+      // Filter only active unassigned classes
+      const activeUnassignedClasses = (unassignedClassesData || []).filter(cls => {
+        const isActive = cls.status === true || cls.status === 'ACTIVE' || cls.status === 'Active';
+        // Also check if it exists in activeClasses to ensure consistency
+        const existsInActive = activeClasses.some(ac => ac.id?.toString() === cls.id?.toString());
+        return isActive && existsInActive;
+      });
+
+      const unassignedClassOptions = activeUnassignedClasses.map(cls => ({
         value: cls.id,
         label: `${cls.classCode} - ${cls.semester}`,
         classCode: cls.classCode,
@@ -2698,9 +2825,8 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
       }));
       setClasses(unassignedClassOptions);
 
-      // Also load all classes for student enrollment (students can be enrolled in any class)
-      const allClassesData = await classesAPI.getAllClasses();
-      const allClassOptions = allClassesData.map(cls => ({
+      // Create options for all active classes for student enrollment
+      const allClassOptions = activeClasses.map(cls => ({
         value: cls.id,
         label: `${cls.classCode} - ${cls.semester}`,
         classCode: cls.classCode,
@@ -2772,6 +2898,11 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
       // Refresh data
       await loadEnrollmentData();
 
+      // Refresh parent component data (Students tab) if callback provided
+      if (onStudentAdded) {
+        await onStudentAdded();
+      }
+
       notification.success({
         message: 'Success',
         description: `Successfully enrolled ${studentIds.length} student(s)`,
@@ -2788,9 +2919,14 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
       await loadEnrollmentData();
     } catch (error) {
       console.error('Error enrolling students:', error);
+      // Show more specific error messages for class-related issues
+      let errorMessage = error.message || 'Failed to enroll students';
+      if (errorMessage.includes('already in an active class')) {
+        errorMessage = 'Một hoặc nhiều sinh viên đang ở trong lớp đang hoạt động. Vui lòng đợi lớp hiện tại trở thành không hoạt động trước khi tham gia lớp mới.';
+      }
       notification.error({
         message: 'Error',
-        description: error.message || 'Failed to enroll students',
+        description: errorMessage,
         placement: 'topRight',
       });
     }
@@ -2807,6 +2943,15 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
       const allAssignments = await classAssignmentAPI.getAll();
       const assignmentsArray = Array.isArray(allAssignments) ? allAssignments : [];
 
+      // Get all classes with status
+      const classesData = await classesAPI.getAllClasses();
+
+      // Create a map of classId to class status (active = true, inactive = false)
+      const classStatusMap = {};
+      classesData.forEach(cls => {
+        classStatusMap[cls.id?.toString()] = cls.status === true || cls.status === 'ACTIVE' || cls.status === 'Active';
+      });
+
       // Get students already enrolled in this class
       const enrolledStudentIds = assignmentsArray
         .filter(assignment => {
@@ -2820,10 +2965,38 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
         })
         .map(assignment => assignment.accountId?.toString());
 
-      // Filter out students already enrolled in this class from allStudents
+      // Get students enrolled in any active class (excluding current class)
+      const studentsInActiveClasses = new Set();
+      assignmentsArray.forEach(assignment => {
+        const roleName = assignment.roleName || assignment.role || '';
+        const roleUpper = roleName.toUpperCase();
+        const isStudent = roleUpper === 'STUDENT' || roleUpper === 'STUDENT_ROLE';
+
+        if (isStudent) {
+          const assignmentClassId = assignment.classId?.toString();
+          const recordClassId = record.classId?.toString();
+          const isCurrentClass = assignmentClassId === recordClassId;
+
+          // Check if the class is active
+          const isClassActive = classStatusMap[assignmentClassId] === true;
+
+          // If student is in an active class that is NOT the current class, add to set
+          if (isClassActive && !isCurrentClass) {
+            studentsInActiveClasses.add(assignment.accountId?.toString());
+          }
+        }
+      });
+
+      // Filter out students:
+      // 1. Already enrolled in this class
+      // 2. Enrolled in any other active class
       const unenrolledStudentOptions = allStudents.filter(student => {
         const studentId = student.value?.toString();
-        return !enrolledStudentIds.includes(studentId);
+        const isEnrolledInCurrentClass = enrolledStudentIds.includes(studentId);
+        const isInActiveClass = studentsInActiveClasses.has(studentId);
+
+        // Only show students who are NOT in current class AND NOT in any other active class
+        return !isEnrolledInCurrentClass && !isInActiveClass;
       });
 
       // Update student options with only unenrolled students
@@ -2887,24 +3060,68 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
         accountId: values.accountId
       };
 
-      await classAssignmentAPI.create(enrollmentData);
+      try {
+        if (enrollmentModal.data.id) {
+          // Update existing assignment
+          await classAssignmentAPI.update(enrollmentModal.data.id, enrollmentData);
+        } else {
+          // Create new assignment
+          await classAssignmentAPI.create(enrollmentData);
+        }
+      } catch (error) {
+        console.error('Error saving assignment:', error);
+        // Show more specific error messages for class-related issues
+        let errorMessage = error.message || 'Failed to save assignment';
+        if (errorMessage.includes('already in an active class')) {
+          errorMessage = 'Sinh viên đang ở trong lớp đang hoạt động. Vui lòng đợi lớp hiện tại trở thành không hoạt động trước khi tham gia lớp mới.';
+        }
+        throw new Error(errorMessage);
+      }
 
       // Refresh data
       await loadEnrollmentData();
 
       notification.success({
         message: 'Success',
-        description: 'Lecturer assigned successfully',
+        description: enrollmentModal.data.id ? 'Assignment updated successfully' : 'Lecturer assigned successfully',
         placement: 'topRight',
       });
 
       setEnrollmentModal({ visible: false, data: {} });
       enrollmentForm.resetFields();
     } catch (error) {
-      console.error('Error enrolling student:', error);
+      console.error('Error saving assignment:', error);
+      // Show more specific error messages for class-related issues
+      let errorMessage = error.message || 'Failed to save assignment';
+      if (errorMessage.includes('already in an active class')) {
+        errorMessage = 'Sinh viên đang ở trong lớp đang hoạt động. Vui lòng đợi lớp hiện tại trở thành không hoạt động trước khi tham gia lớp mới.';
+      }
       notification.error({
         message: 'Error',
-        description: 'Failed to assign lecturer',
+        description: errorMessage,
+        placement: 'topRight',
+      });
+    }
+  };
+
+  const handleEditEnrollment = async (record) => {
+    try {
+      // Reset form first
+      enrollmentForm.resetFields();
+
+      // Set form values with current record data
+      enrollmentForm.setFieldsValue({
+        classId: record.classId,
+        accountId: record.accountId
+      });
+
+      // Open modal with record data
+      setEnrollmentModal({ visible: true, data: record });
+    } catch (error) {
+      console.error('Error loading enrollment data for edit:', error);
+      notification.error({
+        message: 'Error',
+        description: 'Failed to load enrollment data',
         placement: 'topRight',
       });
     }
@@ -3052,6 +3269,9 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
           <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => handleAddStudent(record)}>
             Add Student
           </Button>
+          <Button type="default" size="small" icon={<EditOutlined />} onClick={() => handleEditEnrollment(record)}>
+            Edit
+          </Button>
           <Button type="primary" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDeleteEnrollment(record)}>
             Delete
           </Button>
@@ -3090,7 +3310,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
 
       {/* Assignment Modal */}
       <Modal
-        title="Assign Lecturer to IoT Subject"
+        title={enrollmentModal.data.id ? "Edit Lecturer Assignment" : "Assign Lecturer to IoT Subject"}
         open={enrollmentModal.visible}
         onOk={handleEnrollmentSubmit}
         onCancel={() => {
@@ -3098,15 +3318,15 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
           enrollmentForm.resetFields();
         }}
         width={600}
-        okText="Assign"
+        okText={enrollmentModal.data.id ? "Update" : "Assign"}
         cancelText="Cancel"
       >
         <Form form={enrollmentForm} layout="vertical">
           <Form.Item
             name="classId"
-            label="IoT Subject (Unassigned Only)"
+            label={enrollmentModal.data.id ? "IoT Subject" : "IoT Subject (Unassigned Only)"}
             rules={[{ required: true, message: 'Please select a class' }]}
-            extra="Only classes without assigned lecturers are shown"
+            extra={enrollmentModal.data.id ? "Select the class for this assignment" : "Only classes without assigned lecturers are shown"}
           >
             <Select
               showSearch
@@ -3115,8 +3335,10 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
               filterOption={(input, option) =>
                 (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
               }
-              options={classes}
-              notFoundContent={classes.length === 0 ? "No unassigned classes available" : null}
+              options={enrollmentModal.data.id ? allClasses : classes}
+              notFoundContent={enrollmentModal.data.id
+                ? (allClasses.length === 0 ? "No active classes available" : null)
+                : (classes.length === 0 ? "No unassigned classes available" : null)}
             />
           </Form.Item>
           <Form.Item
@@ -3276,7 +3498,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
 
 
 // Student Management Component
-const StudentManagement = ({ students, setStudents, studentModal, setStudentModal, studentForm, handleExportStudents, handleImportStudents, handleAddStudent, handleEditStudent, handleDeleteStudent, showSheetSelectionAndImport, importFormatModal, setImportFormatModal }) => {
+const StudentManagement = ({ students, setStudents, studentModal, setStudentModal, studentForm, handleExportStudents, handleImportStudents, handleAddStudent, handleEditStudent, handleDeleteStudent, showSheetSelectionAndImport, importFormatModal, setImportFormatModal, downloadStudentTemplate }) => {
   const [searchText, setSearchText] = useState('');
   const [sortOrder, setSortOrder] = useState('none'); // 'none', 'asc', 'desc'
 
@@ -3321,6 +3543,24 @@ const StudentManagement = ({ students, setStudents, studentModal, setStudentModa
           title="Student Management"
           extra={
             <Space>
+              <motion.div
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <Button
+                  icon={<DownloadOutlined />}
+                  onClick={downloadStudentTemplate}
+                  style={{
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #fa8c16 0%, #d46b08 100%)',
+                    border: 'none',
+                    fontWeight: 'bold',
+                    color: '#fff'
+                  }}
+                >
+                  Download Template
+                </Button>
+              </motion.div>
               <motion.div
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
@@ -3722,7 +3962,7 @@ const StudentManagement = ({ students, setStudents, studentModal, setStudentModa
 };
 
 // Lecturer Management Component
-const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecturerModal, lecturerForm, handleExportLecturers, handleImportLecturers, handleAddLecturer, handleEditLecturer, handleDeleteLecturer, showSheetSelectionAndImport, importFormatModal, setImportFormatModal }) => {
+const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecturerModal, lecturerForm, handleExportLecturers, handleImportLecturers, handleAddLecturer, handleEditLecturer, handleDeleteLecturer, showSheetSelectionAndImport, importFormatModal, setImportFormatModal, downloadLecturerTemplate }) => {
   const [searchText, setSearchText] = useState('');
   const [sortOrder, setSortOrder] = useState('none'); // 'none', 'asc', 'desc'
 
@@ -3767,6 +4007,24 @@ const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecture
           title="Lecturer Management"
           extra={
             <Space>
+              <motion.div
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <Button
+                  icon={<DownloadOutlined />}
+                  onClick={downloadLecturerTemplate}
+                  style={{
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #fa8c16 0%, #d46b08 100%)',
+                    border: 'none',
+                    fontWeight: 'bold',
+                    color: '#fff'
+                  }}
+                >
+                  Download Template
+                </Button>
+              </motion.div>
               <motion.div
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
