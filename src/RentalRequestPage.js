@@ -35,7 +35,7 @@ import {
   LogoutOutlined
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { borrowingRequestAPI, walletAPI, kitAPI, notificationAPI } from './api';
+import { borrowingRequestAPI, walletAPI, kitAPI, notificationAPI, classAssignmentAPI, classesAPI } from './api';
 import dayjs from 'dayjs';
 // Mock function - TODO: Replace with real API call
 const mockGenerateQRCode = (rentalData) => ({
@@ -47,7 +47,6 @@ const mockGenerateQRCode = (rentalData) => ({
 
 const { Header, Content } = Layout;
 const { Title, Text } = Typography;
-const { Option } = Select;
 const { TextArea } = Input;
 
 // Animation variants
@@ -101,6 +100,7 @@ function RentalRequestPage() {
   const [wallet, setWallet] = useState({ balance: 0, transactions: [] });
   const [loading, setLoading] = useState(false);
   const [qrCodeData, setQrCodeData] = useState(null);
+  const [classStatusError, setClassStatusError] = useState(null);
 
   const fetchKitDetails = React.useCallback(async () => {
     try {
@@ -167,6 +167,51 @@ function RentalRequestPage() {
     }
   }, []);
 
+  // Check if student is in active class
+  const checkStudentClassStatus = React.useCallback(async () => {
+    // Only check for students
+    if (!user || user.role !== 'STUDENT') {
+      setClassStatusError(null);
+      return;
+    }
+
+    try {
+      // Get all class assignments
+      const assignments = await classAssignmentAPI.getAll();
+      const assignmentsArray = Array.isArray(assignments) ? assignments : [];
+
+      // Find assignments for this student
+      const studentAssignments = assignmentsArray.filter(
+        assignment => assignment.accountId === user.id
+      );
+
+      if (studentAssignments.length === 0) {
+        setClassStatusError('Bạn chưa được gán vào lớp nào. Vui lòng tham gia lớp để sử dụng dịch vụ thuê.');
+        return;
+      }
+
+      // Get all classes to check status
+      const allClasses = await classesAPI.getAllClasses();
+      const classesArray = Array.isArray(allClasses) ? allClasses : (allClasses?.data || []);
+
+      // Check if student has at least one active class
+      const hasActiveClass = studentAssignments.some(assignment => {
+        const classInfo = classesArray.find(cls => cls.id === assignment.classId);
+        return classInfo && classInfo.status === true;
+      });
+
+      if (!hasActiveClass) {
+        setClassStatusError('Bạn đang ở trong lớp không hoạt động. Vui lòng tham gia lớp mới để sử dụng dịch vụ thuê.');
+      } else {
+        setClassStatusError(null);
+      }
+    } catch (error) {
+      console.error('Error checking class status:', error);
+      // Don't block user if there's an error checking, let backend handle it
+      setClassStatusError(null);
+    }
+  }, [user]);
+
   useEffect(() => {
     if (!selectedKitId || !user) {
       navigate('/');
@@ -174,7 +219,8 @@ function RentalRequestPage() {
     }
     fetchKitDetails();
     fetchWallet();
-  }, [selectedKitId, user, navigate, fetchKitDetails]);
+    checkStudentClassStatus();
+  }, [selectedKitId, user, navigate, fetchKitDetails, checkStudentClassStatus]);
 
   // Recalculate total cost when selectedKit changes
   useEffect(() => {
@@ -227,8 +273,17 @@ function RentalRequestPage() {
     }
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (currentStep === 0) {
+      // Check class status first (for students only)
+      if (user && user.role === 'STUDENT') {
+        await checkStudentClassStatus();
+        if (classStatusError) {
+          message.error(classStatusError);
+          return;
+        }
+      }
+
       // Validate rental details
       if (!rentalData.reason || !rentalData.expectReturnDate) {
         message.error('Please fill in all required fields');
@@ -256,6 +311,22 @@ function RentalRequestPage() {
     setLoading(true);
 
     try {
+      // Check class status first (for students only)
+      if (user && user.role === 'STUDENT') {
+        if (classStatusError) {
+          message.error(classStatusError);
+          setLoading(false);
+          return;
+        }
+        // Re-check class status before submitting
+        await checkStudentClassStatus();
+        if (classStatusError) {
+          message.error(classStatusError);
+          setLoading(false);
+          return;
+        }
+      }
+
       // Check if wallet has enough balance for deposit (100% of kit amount)
       const requiredAmount = selectedKit ? selectedKit.amount : 0;
       if (wallet.balance < requiredAmount) {
@@ -264,7 +335,16 @@ function RentalRequestPage() {
         return;
       }
 
-      // Generate QR code data
+      // Submit borrowing request FIRST before generating QR code
+      const borrowingResponse = await borrowingRequestAPI.create({
+        kitId: selectedKit.id,
+        accountID: user.id,
+        reason: rentalData.reason,
+        expectReturnDate: rentalData.expectReturnDate,
+        requestType: rentalData.requestType
+      });
+
+      // Only generate QR code after successful API call
       const qrData = mockGenerateQRCode({
         kitId: selectedKit.id,
         kitName: selectedKit.kitName,
@@ -272,20 +352,12 @@ function RentalRequestPage() {
         userEmail: user.email,
         startDate: rentalData.startDate,
         endDate: rentalData.endDate,
-        totalCost: rentalData.totalCost
+        totalCost: rentalData.totalCost,
+        requestId: borrowingResponse?.id || borrowingResponse?.data?.id
       });
 
       setQrCodeData(qrData);
       setCurrentStep(2); // Move to QR code step
-
-      // Submit borrowing request
-      await borrowingRequestAPI.create({
-        kitId: selectedKit.id,
-        accountID: user.id,
-        reason: rentalData.reason,
-        expectReturnDate: rentalData.expectReturnDate,
-        requestType: rentalData.requestType
-      });
 
       try {
         await notificationAPI.createNotifications([
@@ -311,7 +383,14 @@ function RentalRequestPage() {
       message.success('Rental request submitted successfully! QR code generated.');
     } catch (error) {
       console.error('Submit rental error:', error);
-      message.error(error.message || 'Failed to submit rental request. Please try again.');
+      // Show more specific error messages for class-related issues
+      let errorMessage = error.message || 'Failed to submit rental request. Please try again.';
+      if (errorMessage.includes('inactive class') || errorMessage.includes('not assigned to any class')) {
+        errorMessage = 'Bạn đang ở trong lớp không hoạt động hoặc chưa được gán vào lớp nào. Vui lòng tham gia lớp mới để sử dụng dịch vụ thuê.';
+      } else if (errorMessage.includes('active group') || errorMessage.includes('group has been disabled')) {
+        errorMessage = 'Bạn phải ở trong nhóm đang hoạt động để thuê kit. Nhóm của bạn đã bị vô hiệu hóa vì lớp không hoạt động. Vui lòng tham gia nhóm mới trước.';
+      }
+      message.error(errorMessage);
     }
 
     setLoading(false);
@@ -342,6 +421,17 @@ function RentalRequestPage() {
             animate="visible"
             whileHover="hover"
           >
+            {classStatusError && (
+              <Alert
+                message="Không thể sử dụng dịch vụ thuê"
+                description={classStatusError}
+                type="error"
+                showIcon
+                closable
+                onClose={() => setClassStatusError(null)}
+                style={{ marginBottom: '24px', borderRadius: '8px' }}
+              />
+            )}
             <Card
               title="Kit Information"
               style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)', marginBottom: '24px' }}
@@ -950,6 +1040,7 @@ function RentalRequestPage() {
                     <Button
                       type="primary"
                       onClick={handleNext}
+                      disabled={classStatusError !== null}
                       size="large"
                       icon={<StepForwardOutlined />}
                       style={{
