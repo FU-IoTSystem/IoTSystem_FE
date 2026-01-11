@@ -335,7 +335,7 @@ function RentalRequestPage() {
         return;
       }
 
-      // Submit borrowing request FIRST before generating QR code
+      // Submit borrowing request
       const borrowingResponse = await borrowingRequestAPI.create({
         kitId: selectedKit.id,
         accountID: user.id,
@@ -343,21 +343,6 @@ function RentalRequestPage() {
         expectReturnDate: rentalData.expectReturnDate,
         requestType: rentalData.requestType
       });
-
-      // Only generate QR code after successful API call
-      const qrData = mockGenerateQRCode({
-        kitId: selectedKit.id,
-        kitName: selectedKit.kitName,
-        userId: user.id,
-        userEmail: user.email,
-        startDate: rentalData.startDate,
-        endDate: rentalData.endDate,
-        totalCost: rentalData.totalCost,
-        requestId: borrowingResponse?.id || borrowingResponse?.data?.id
-      });
-
-      setQrCodeData(qrData);
-      setCurrentStep(2); // Move to QR code step
 
       try {
         await notificationAPI.createNotifications([
@@ -380,7 +365,13 @@ function RentalRequestPage() {
       const depositAmount = selectedKit ? (selectedKit.amount || 0) : 0;
       await walletAPI.deduct(depositAmount, `Rental request for ${selectedKit.kitName}`);
 
-      message.success('Rental request submitted successfully! QR code generated.');
+      // Show notification instead of QR code
+      message.info('Checking your rental request to get the QR code');
+
+      // Navigate back to home after a short delay
+      setTimeout(() => {
+        navigate('/');
+      }, 2000);
     } catch (error) {
       console.error('Submit rental error:', error);
       // Show more specific error messages for class-related issues

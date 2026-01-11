@@ -4,7 +4,8 @@ import SockJS from 'sockjs-client';
 // Get API base URL from environment or default to localhost
 const getWebSocketUrl = () => {
   // SockJS uses HTTP/HTTPS URL, not ws:// or wss://
-  const apiBaseUrl = process.env.REACT_APP_API_URL || 'http://localhost:8080';
+  // const apiBaseUrl = process.env.REACT_APP_API_URL || 'http://localhost:8080';
+  const apiBaseUrl = 'https://iot-system-kit.azurewebsites.net';
   return `${apiBaseUrl}/ws`;
 };
 
