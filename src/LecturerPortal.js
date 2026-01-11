@@ -366,6 +366,58 @@ function LecturerPortal({ user, onLogout }) {
               ? allClasses.find(cls => cls.id === group.classId)
               : null;
 
+            // Debug class info
+            console.log(`Group ${group.groupName} (ClassId: ${group.classId}) - ClassInfo:`, classInfo);
+
+            // Debug logging
+            console.log(`Processing Group: ${group.groupName} (ID: ${group.id})`);
+            console.log(`- Group Raw Status: status=${group.status}, isActive=${group.isActive}, active=${group.active}`);
+            console.log(`- Class Info:`, classInfo);
+
+            // Determine initial group status
+            // Check multiple potential properties for status
+            let isGroupActive = true; // Default to true
+
+            if (group.status !== undefined && group.status !== null) {
+              isGroupActive = group.status;
+            } else if (group.isActive !== undefined && group.isActive !== null) {
+              isGroupActive = group.isActive;
+            } else if (group.active !== undefined && group.active !== null) {
+              isGroupActive = group.active;
+            }
+
+            // Convert to boolean if it's a string
+            if (typeof isGroupActive === 'string') {
+              isGroupActive = isGroupActive.toLowerCase() === 'active' || isGroupActive.toLowerCase() === 'true' || isGroupActive === '1';
+            }
+
+            console.log(`- Initial Group Active State: ${isGroupActive}`);
+
+            // If class exists, check class status
+            if (classInfo) {
+              const classStatus = classInfo.status !== undefined ? classInfo.status : classInfo.isActive;
+
+              // Robust check for class active status
+              const isClassActive = classStatus === true ||
+                classStatus === 1 ||
+                (typeof classStatus === 'string' && (
+                  classStatus.toUpperCase() === 'ACTIVE' ||
+                  classStatus === '1' ||
+                  classStatus.toLowerCase() === 'true'
+                ));
+
+              console.log(`- Class Status Check: raw=${classStatus}, isActive=${isClassActive}`);
+
+              // If class is NOT active, force group to be inactive
+              if (!isClassActive && classStatus !== undefined && classStatus !== null) {
+                console.log(`-> OVERRIDE: Class is inactive, setting group to INACTIVE`);
+                isGroupActive = false;
+              }
+            }
+
+            const finalStatus = isGroupActive ? 'active' : 'inactive';
+            console.log(`-> Final Calculated Status: ${finalStatus}`);
+
             return {
               id: group.id,
               name: group.groupName,
@@ -375,7 +427,7 @@ function LecturerPortal({ user, onLogout }) {
               leaderEmail: leaderMember?.email || null,
               leaderId: leaderMember?.id || null,
               members: members,
-              status: group.status ? 'active' : 'inactive',
+              status: finalStatus,
               classId: group.classId,
               className: group.className,
               semester: classInfo?.semester || null,
@@ -2436,7 +2488,9 @@ function LecturerPortal({ user, onLogout }) {
                       </Tag>
                     </Descriptions.Item>
                     <Descriptions.Item label="Group Status">
-                      <Tag color="success">Active</Tag>
+                      <Tag color={getStatusColor(selectedGroup.status)}>
+                        {selectedGroup.status ? selectedGroup.status.charAt(0).toUpperCase() + selectedGroup.status.slice(1) : 'N/A'}
+                      </Tag>
                     </Descriptions.Item>
                     <Descriptions.Item label="Kit Borrow Status" span={2}>
                       {(() => {

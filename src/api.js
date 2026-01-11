@@ -1,3 +1,4 @@
+// const API_BASE_URL = 'https://rental-kit-fvcrenhrbva3e4f2.eastasia-01.azurewebsites.net';
 const API_BASE_URL = 'https://iot-system-kit.azurewebsites.net';
 // const API_BASE_URL = 'http://localhost:8080';
 
@@ -1636,4 +1637,37 @@ export const qrCodeAPI = {
     });
     return response.data;
   },
+};
+
+// Maintenance API
+export const maintenanceAPI = {
+  createPlan: async (planData) => {
+    return apiRequest('/api/maintenance/plans', {
+      method: 'POST',
+      body: JSON.stringify(planData),
+    });
+  },
+
+  getAllPlans: async () => {
+    return apiRequest('/api/maintenance/plans');
+  },
+
+  getPlanById: async (id) => {
+    return apiRequest(`/api/maintenance/plans/${id}`);
+  },
+
+  createIssue: async (issueData) => {
+    return apiRequest('/api/maintenance/issues', {
+      method: 'POST',
+      body: JSON.stringify(issueData),
+    });
+  },
+
+  getAllIssues: async () => {
+    return apiRequest('/api/maintenance/issues');
+  },
+
+  getIssuesByPlan: async (planId) => {
+    return apiRequest(`/api/maintenance/issues/plan/${planId}`);
+  }
 }; 

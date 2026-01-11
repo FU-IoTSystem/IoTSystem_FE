@@ -79,8 +79,11 @@ import {
   LoadingOutlined,
   LeftOutlined,
   RightOutlined,
-  UploadOutlined
+  UploadOutlined,
+
 } from '@ant-design/icons';
+import MaintenanceManagement from './MaintenanceManagement';
+
 import { kitAPI, kitComponentAPI, kitComponentHistoryAPI, borrowingRequestAPI, walletTransactionAPI, userAPI, authAPI, classesAPI, studentGroupAPI, borrowingGroupAPI, penaltyPoliciesAPI, penaltiesAPI, penaltyDetailAPI, damageReportAPI, notificationAPI, excelImportAPI, classAssignmentAPI } from './api';
 import webSocketService from './utils/websocket';
 import './AdminPortalDashboard.css';
@@ -532,7 +535,7 @@ function AdminPortal({ onLogout }) {
       setAvailableStudents(studentUsers);
 
       // Calculate system stats from fetched data (not from state)
-      const availableKitsCount = fetchedKits.filter(kit => kit.status === 'ACTIVE' || kit.status === 'active').length;
+      const availableKitsCount = fetchedKits.filter(kit => kit.status === 'AVAILABLE' || kit.status === 'available').length;
       const pendingRequestsCount = fetchedRentalRequests.filter(req => req.status === 'PENDING' || req.status === 'PENDING_APPROVAL').length;
 
       // Calculate kits in use from approved requests (same API as return checking)
@@ -634,6 +637,15 @@ function AdminPortal({ onLogout }) {
         totalApprovedRequests: fetchedApprovedRequests.length,
         approvedRequestsFromAPI: fetchedApprovedRequests.length
       });
+
+      // Fetch current user profile
+      try {
+        const profileResponse = await authAPI.getProfile();
+        console.log('Current user profile:', profileResponse);
+        setProfile(profileResponse?.data || profileResponse);
+      } catch (profileError) {
+        console.error('Error loading profile:', profileError);
+      }
     } catch (error) {
       console.error('Error loading data:', error);
       message.error('Failed to load data');
@@ -1814,6 +1826,11 @@ function AdminPortal({ onLogout }) {
       label: 'Kit Component Management',
     },
     {
+      key: 'maintenance',
+      icon: <ToolOutlined />,
+      label: 'Maintenance',
+    },
+    {
       key: 'rentals',
       icon: <ShoppingOutlined />,
       label: 'Rental Approvals',
@@ -2156,6 +2173,7 @@ function AdminPortal({ onLogout }) {
                 )}
                 {selectedKey === 'kits' && <KitManagement kits={kits} setKits={setKits} handleExportKits={handleExportKits} handleImportKits={handleImportKits} />}
                 {selectedKey === 'kit-components' && <KitComponentManagement />}
+                {selectedKey === 'maintenance' && <MaintenanceManagement currentUser={profile} />}
                 {selectedKey === 'rentals' && <RentalApprovals rentalRequests={rentalRequests} setRentalRequests={setRentalRequests} setLogHistory={setLogHistory} setTransactions={setTransactions} setRefundRequests={setRefundRequests} onNavigateToRefunds={() => setSelectedKey('refunds')} />}
                 {selectedKey === 'refunds' && <RefundApprovals refundRequests={refundRequests} setRefundRequests={setRefundRequests} openRefundKitInspection={openRefundKitInspection} setLogHistory={setLogHistory} />}
                 {selectedKey === 'kit-component-history' && (
@@ -2573,8 +2591,8 @@ function AdminPortal({ onLogout }) {
               />
             ) : (
               <Alert
-                message="Không có chính sách phạt"
-                description="Hiện tại không có chính sách phạt nào được áp dụng cho lần trả kit này."
+                message="No Penalty Policy"
+                description="There are currently no penalty policies applicable for this kit return."
                 type="info"
                 showIcon
                 icon={<InfoCircleOutlined />}
@@ -2699,13 +2717,13 @@ const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPen
         return `${start.format('DD/MM/YYYY')} - ${end.format('DD/MM/YYYY')}`;
       }
     }
-    return 'toàn bộ thời gian';
+    return 'All time';
   }, [customDateRange]);
 
   const userChartSegments = [
-    { key: 'student', label: 'Sinh viên', color: '#1677ff', count: roleCounts.student },
-    { key: 'lecturer', label: 'Giảng viên', color: '#52c41a', count: roleCounts.lecturer },
-    { key: 'other', label: 'Khác', color: '#faad14', count: roleCounts.other }
+    { key: 'student', label: 'Student', color: '#1677ff', count: roleCounts.student },
+    { key: 'lecturer', label: 'Lecturer', color: '#52c41a', count: roleCounts.lecturer },
+    { key: 'other', label: 'Other', color: '#faad14', count: roleCounts.other }
   ];
 
   // Get date range based on filter
@@ -2959,7 +2977,7 @@ const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPen
         className="user-chart-wrapper"
       >
         <Card
-          title="Thống kê người dùng"
+          title="User Statistics"
           className="user-chart-card"
         >
           <div className="user-chart-grid">
@@ -2992,7 +3010,7 @@ const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPen
           </div>
           <div className="user-chart-summary">
             <Text type="secondary">
-              Tổng {totalFilteredUsers} / {totalUsers} người dùng trong {rangeLabel}
+              Total {totalFilteredUsers} / {totalUsers} users in {rangeLabel}
             </Text>
           </div>
         </Card>
@@ -3005,7 +3023,7 @@ const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPen
         className="request-chart-wrapper"
       >
         <Card
-          title="Thống kê trả kit và tiền phạt theo ngày"
+          title="Return & Fine Statistics by Day"
           className="request-chart-card"
           extra={
             <RangePicker
@@ -3020,11 +3038,11 @@ const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPen
             <div className="request-chart-legend">
               <div className="request-chart-legend-item">
                 <span className="request-chart-legend-dot" style={{ backgroundColor: '#1677ff' }} />
-                <span>Số lượng trả</span>
+                <span>Returned Quantity</span>
               </div>
               <div className="request-chart-legend-item">
                 <span className="request-chart-legend-dot" style={{ backgroundColor: '#ff4d4f' }} />
-                <span>Tiền phạt đã đóng (VND)</span>
+                <span>Paid Fines (VND)</span>
               </div>
             </div>
             <div className="request-bars-timeline">
@@ -4062,11 +4080,28 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
       }
     } catch (error) {
       console.error('Error deleting component:', error);
+
+      // Extract detailed error message from backend response if available
+      let errorMessage = 'Failed to delete component';
+      if (error.response && error.response.data) {
+        // Check if the backend sent a structured error message
+        if (typeof error.response.data === 'string') {
+          errorMessage = error.response.data;
+        } else if (error.response.data.message) {
+          errorMessage = error.response.data.message;
+        } else {
+          errorMessage = JSON.stringify(error.response.data);
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
       notification.error({
         message: 'Error',
-        description: 'Failed to delete component: ' + error.message,
+        description: `Lỗi hệ thống: ${errorMessage}`,
         placement: 'topRight',
-        duration: 4,
+        duration: 10,
+        style: { width: 600 }
       });
     }
   };
