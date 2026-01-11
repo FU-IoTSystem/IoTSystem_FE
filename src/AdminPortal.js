@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   Layout,
   Menu,
@@ -118,6 +118,9 @@ function AdminPortal({ onLogout }) {
   const [fineAmount, setFineAmount] = useState(0);
   const [kitInspectionLoading, setKitInspectionLoading] = useState(false);
   const [selectedPenaltyPolicies, setSelectedPenaltyPolicies] = useState([]);
+  const [returnBorrowerGroupInfo, setReturnBorrowerGroupInfo] = useState(null);
+  const [returnBorrowerClassInfo, setReturnBorrowerClassInfo] = useState(null);
+  const [loadingReturnBorrowerInfo, setLoadingReturnBorrowerInfo] = useState(false);
   const [fines, setFines] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [logHistory, setLogHistory] = useState([]);
@@ -131,6 +134,10 @@ function AdminPortal({ onLogout }) {
   const [kitComponentHistoryLoading, setKitComponentHistoryLoading] = useState(false);
   const [historySelectedKitId, setHistorySelectedKitId] = useState(null);
   const [historySelectedComponentId, setHistorySelectedComponentId] = useState(null);
+
+  // Profile states
+  const [profile, setProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
 
   // Form instances
 
@@ -1202,6 +1209,58 @@ function AdminPortal({ onLogout }) {
     setDamageAssessment(refundRequest.damageAssessment || {});
     setFineAmount(0);
     setSelectedPenaltyPolicies([]);
+    setReturnBorrowerGroupInfo(null);
+    setReturnBorrowerClassInfo(null);
+
+    // Fetch group and class information for student borrowers
+    if (rentalObject?.userEmail) {
+      setLoadingReturnBorrowerInfo(true);
+      // Find user by email to get account ID
+      const user = users.find(u => u.email === rentalObject.userEmail);
+      if (user?.id) {
+        (async () => {
+          try {
+            // Get borrowing groups for this account
+            const borrowingGroups = await borrowingGroupAPI.getByAccountId(user.id);
+            if (borrowingGroups && borrowingGroups.length > 0) {
+              // Get the active group (usually the first one)
+              const activeGroup = borrowingGroups.find(bg => bg.isActive !== false) || borrowingGroups[0];
+              if (activeGroup?.studentGroupId) {
+                // Get student group details
+                const studentGroup = await studentGroupAPI.getById(activeGroup.studentGroupId);
+                if (studentGroup) {
+                  setReturnBorrowerGroupInfo({
+                    groupName: studentGroup.groupName || studentGroup.name || 'N/A',
+                    groupId: studentGroup.id
+                  });
+
+                  // Get class information if classId exists
+                  if (studentGroup.classId) {
+                    const classes = await classesAPI.getAllClasses();
+                    const classData = Array.isArray(classes)
+                      ? classes.find(c => c.id === studentGroup.classId)
+                      : (classes?.data || []).find(c => c.id === studentGroup.classId);
+
+                    if (classData) {
+                      setReturnBorrowerClassInfo({
+                        classCode: classData.classCode || 'N/A',
+                        semester: classData.semester || 'N/A'
+                      });
+                    }
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            console.error('Error loading borrower group/class info:', error);
+          } finally {
+            setLoadingReturnBorrowerInfo(false);
+          }
+        })();
+      } else {
+        setLoadingReturnBorrowerInfo(false);
+      }
+    }
 
     // Open modal after setting all states
     setTimeout(() => {
@@ -1729,6 +1788,8 @@ function AdminPortal({ onLogout }) {
     setDamageAssessment({});
     setFineAmount(0);
     setSelectedPenaltyPolicies([]);
+    setReturnBorrowerGroupInfo(null);
+    setReturnBorrowerClassInfo(null);
     setKitInspectionLoading(false);
   };
 
@@ -1796,6 +1857,11 @@ function AdminPortal({ onLogout }) {
       key: 'penalty-policies',
       icon: <SafetyCertificateOutlined />,
       label: 'Penalty Policies',
+    },
+    {
+      key: 'profile',
+      icon: <UserOutlined />,
+      label: 'Profile',
     },
   ];
 
@@ -2109,6 +2175,7 @@ function AdminPortal({ onLogout }) {
                 {selectedKey === 'groups' && <GroupManagement groups={groups} setGroups={setGroups} adjustGroupMembers={adjustGroupMembers} availableStudents={availableStudents} onGroupsUpdated={() => { }} />}
                 {selectedKey === 'users' && <UserManagement users={users} setUsers={setUsers} />}
                 {selectedKey === 'penalty-policies' && <PenaltyPoliciesManagement penaltyPolicies={penaltyPolicies} setPenaltyPolicies={setPenaltyPolicies} />}
+                {selectedKey === 'profile' && <ProfileManagement profile={profile} setProfile={setProfile} loading={profileLoading} setLoading={setProfileLoading} />}
               </motion.div>
             </AnimatePresence>
           </Spin>
@@ -2208,6 +2275,8 @@ function AdminPortal({ onLogout }) {
           setDamageAssessment({});
           setFineAmount(0);
           setSelectedPenaltyPolicies([]);
+          setReturnBorrowerGroupInfo(null);
+          setReturnBorrowerClassInfo(null);
         }}
         onOk={submitKitInspection}
         width={800}
@@ -2237,6 +2306,33 @@ function AdminPortal({ onLogout }) {
               </Descriptions.Item>
               <Descriptions.Item label="Kit">{selectedKit.kitName || selectedKit.name}</Descriptions.Item>
               <Descriptions.Item label="Rental ID">#{selectedRental.id}</Descriptions.Item>
+
+              {/* Group and Class Information (for Students) */}
+              {(returnBorrowerGroupInfo || returnBorrowerClassInfo) && (
+                <>
+                  {returnBorrowerGroupInfo && (
+                    <Descriptions.Item label="Group Name">
+                      <Spin spinning={loadingReturnBorrowerInfo}>
+                        {returnBorrowerGroupInfo.groupName}
+                      </Spin>
+                    </Descriptions.Item>
+                  )}
+                  {returnBorrowerClassInfo && (
+                    <>
+                      <Descriptions.Item label="Class Code">
+                        <Spin spinning={loadingReturnBorrowerInfo}>
+                          {returnBorrowerClassInfo.classCode}
+                        </Spin>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Semester">
+                        <Spin spinning={loadingReturnBorrowerInfo}>
+                          {returnBorrowerClassInfo.semester}
+                        </Spin>
+                      </Descriptions.Item>
+                    </>
+                  )}
+                </>
+              )}
               {selectedRental.depositAmount && (
                 <Descriptions.Item label="Deposit Amount">
                   {selectedRental.depositAmount.toLocaleString()} VND
@@ -3811,7 +3907,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
       componentType: component.componentType || component.type,
       description: component.description,
       quantityTotal: component.quantityTotal,
-      quantityAvailable: component.quantityAvailable,
+      // quantityAvailable is managed by backend and not editable in this modal
       pricePerCom: component.pricePerCom,
       status: component.status,
       imageUrl: component.imageUrl,
@@ -3825,7 +3921,6 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
       componentType: mappedComponent.componentType,
       description: mappedComponent.description,
       quantityTotal: mappedComponent.quantityTotal,
-      quantityAvailable: mappedComponent.quantityAvailable,
       pricePerCom: mappedComponent.pricePerCom,
       status: mappedComponent.status,
       imageUrl: mappedComponent.imageUrl,
@@ -3846,7 +3941,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           componentType: values.componentType,
           description: values.description || '',
           quantityTotal: values.quantityTotal,
-          quantityAvailable: values.quantityAvailable,
+          // quantityAvailable is not editable here; keep current value in backend
           pricePerCom: values.pricePerCom || 0,
           status: values.status,
           imageUrl: values.imageUrl || '',
@@ -3888,7 +3983,8 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           componentType: values.componentType,
           description: values.description || '',
           quantityTotal: values.quantityTotal,
-          quantityAvailable: values.quantityAvailable,
+          // For new components, start with all items available
+          quantityAvailable: values.quantityTotal,
           pricePerCom: values.pricePerCom || 0,
           status: values.status,
           imageUrl: values.imageUrl || '',
@@ -3929,6 +4025,25 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
 
   const deleteComponent = async (componentId) => {
     try {
+      // Find component in the list to check if it's borrowed
+      const component = components.find(c => c.id === componentId);
+
+      // Check if component is borrowed (quantityAvailable < quantityTotal)
+      if (component) {
+        const quantityTotal = component.quantityTotal || 0;
+        const quantityAvailable = component.quantityAvailable || 0;
+
+        if (quantityAvailable < quantityTotal) {
+          notification.warning({
+            message: 'Cannot Delete Component',
+            description: `This component cannot be deleted because it is currently borrowed. ${quantityTotal - quantityAvailable} out of ${quantityTotal} items are in use.`,
+            placement: 'topRight',
+            duration: 5,
+          });
+          return;
+        }
+      }
+
       const response = await kitComponentAPI.deleteComponent(componentId);
       console.log('Delete component response:', response);
 
@@ -3966,6 +4081,25 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
   };
 
   const handleDeleteKit = async (kitId) => {
+    // Find kit in the list to check if it's borrowed
+    const kit = kits.find(k => k.id === kitId);
+
+    // Check if kit is borrowed (quantityAvailable < quantityTotal)
+    if (kit) {
+      const quantityTotal = kit.quantityTotal || 0;
+      const quantityAvailable = kit.quantityAvailable || 0;
+
+      if (quantityAvailable < quantityTotal) {
+        notification.warning({
+          message: 'Cannot Delete Kit',
+          description: `This kit cannot be deleted because it is currently borrowed. ${quantityTotal - quantityAvailable} out of ${quantityTotal} kits are in use.`,
+          placement: 'topRight',
+          duration: 5,
+        });
+        return;
+      }
+    }
+
     Modal.confirm({
       title: 'Delete Kit',
       content: 'Are you sure you want to delete this kit? This action cannot be undone and will also delete all associated components.',
@@ -4631,7 +4765,6 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
               ) : '-'
             },
             { title: 'Total Quantity', dataIndex: 'quantityTotal', key: 'quantityTotal' },
-            { title: 'Available Quantity', dataIndex: 'quantityAvailable', key: 'quantityAvailable' },
             {
               title: 'Price (VND)',
               dataIndex: 'pricePerCom',
@@ -4727,13 +4860,6 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
               rules={[{ required: true, message: 'Please enter total quantity' }]}
             >
               <InputNumber min={1} style={{ width: '100%' }} />
-            </Form.Item>
-            <Form.Item
-              name="quantityAvailable"
-              label="Available Quantity"
-              rules={[{ required: true, message: 'Please enter available quantity' }]}
-            >
-              <InputNumber min={0} style={{ width: '100%' }} />
             </Form.Item>
             <Form.Item
               name="pricePerCom"
@@ -4957,6 +5083,25 @@ const KitComponentManagement = () => {
 
   const handleDelete = async (id) => {
     try {
+      // Find component in the list to check if it's borrowed
+      const component = components.find(c => c.id === id);
+
+      // Check if component is borrowed (quantityAvailable < quantityTotal)
+      if (component) {
+        const quantityTotal = component.quantityTotal || 0;
+        const quantityAvailable = component.quantityAvailable || 0;
+
+        if (quantityAvailable < quantityTotal) {
+          notification.warning({
+            message: 'Cannot Delete Component',
+            description: `This component cannot be deleted because it is currently borrowed. ${quantityTotal - quantityAvailable} out of ${quantityTotal} items are in use.`,
+            placement: 'topRight',
+            duration: 5,
+          });
+          return;
+        }
+      }
+
       await kitComponentAPI.deleteComponent(id);
       notification.success({
         message: 'Success',
@@ -5277,13 +5422,15 @@ const KitComponentManagement = () => {
                 <div style={{ maxWidth: 320 }}>
                   <Text strong>Import Components Guide</Text>
                   <div style={{ marginTop: 8 }}>
-                    <div>Excel file should contain the following columns (header names):</div>
+                    <div>Excel file should contain the following columns (header names, in this exact order):</div>
                     <ul style={{ paddingLeft: 20, marginBottom: 0 }}>
-                      <li><b>name</b>: component name</li>
-                      <li><b>link</b>: optional URL for the component</li>
-                      <li><b>quantity</b>: total quantity</li>
-                      <li><b>priceperComp</b>: price per component (number)</li>
-                      <li><b>image_url</b>: optional image URL</li>
+                      <li><b>name</b>: component name (required)</li>
+                      <li><b>type</b>: component type (optional) - allowed values: <b>Box</b>, <b>Set</b>, <b>Unit</b></li>
+                      <li><b>quantity</b>: total quantity (required, integer &gt; 0)</li>
+                      <li><b>pricePerComp</b>: price per component (optional, number &gt;= 0)</li>
+                      <li><b>description</b>: short description of the component (optional)</li>
+                      <li><b>image_url</b>: optional image URL (must be a valid URL if provided)</li>
+                      <li><b>link</b>: optional reference URL for the component (must be a valid URL if provided)</li>
                     </ul>
                     <div style={{ marginTop: 8 }}>
                       Components imported from this tab will have <b>kitId = null</b> and are not linked to any specific kit.
@@ -5321,10 +5468,21 @@ const KitComponentManagement = () => {
                 const templateData = [
                   {
                     name: 'Resistor 220Ω',
-                    link: 'https://example.com/resistor-220',
+                    type: 'Unit',
                     quantity: 100,
-                    priceperComp: 1000,
+                    pricePerComp: 1000,
+                    description: 'Standard 1/4W resistor 220 ohm',
                     image_url: 'https://example.com/resistor-220.png',
+                    link: 'https://example.com/resistor-220',
+                  },
+                  {
+                    name: 'Arduino Starter Box',
+                    type: 'Box',
+                    quantity: 10,
+                    pricePerComp: 250000,
+                    description: 'Box of mixed Arduino components',
+                    image_url: 'https://example.com/arduino-box.png',
+                    link: 'https://example.com/arduino-box',
                   },
                 ];
 
@@ -5739,6 +5897,9 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
   const [selectedStatuses, setSelectedStatuses] = useState({});
   const [detailsModalVisible, setDetailsModalVisible] = useState(false);
   const [selectedRequestDetails, setSelectedRequestDetails] = useState(null);
+  const [borrowerGroupInfo, setBorrowerGroupInfo] = useState(null);
+  const [borrowerClassInfo, setBorrowerClassInfo] = useState(null);
+  const [loadingBorrowerInfo, setLoadingBorrowerInfo] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const rentalRequestSubscriptionRef = useRef(null);
   const columns = [
@@ -5900,14 +6061,66 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
     }
   ];
 
-  const handleShowDetails = (record) => {
+  const handleShowDetails = async (record) => {
     setSelectedRequestDetails(record);
     setDetailsModalVisible(true);
+    setBorrowerGroupInfo(null);
+    setBorrowerClassInfo(null);
+
+    // Fetch group and class information for student borrowers only
+    if (record.requestedBy?.id) {
+      // Only fetch if user is a student (has studentCode or role is STUDENT)
+      const isStudent = record.requestedBy?.studentCode || record.requestedBy?.role === 'STUDENT';
+      if (!isStudent) {
+        return; // Skip fetching if not a student
+      }
+
+      setLoadingBorrowerInfo(true);
+      try {
+        // Get borrowing groups for this account
+        const borrowingGroups = await borrowingGroupAPI.getByAccountId(record.requestedBy.id);
+        if (borrowingGroups && borrowingGroups.length > 0) {
+          // Get the active group (usually the first one)
+          const activeGroup = borrowingGroups.find(bg => bg.isActive !== false) || borrowingGroups[0];
+          if (activeGroup?.studentGroupId) {
+            // Get student group details
+            const studentGroup = await studentGroupAPI.getById(activeGroup.studentGroupId);
+            if (studentGroup) {
+              setBorrowerGroupInfo({
+                groupName: studentGroup.groupName || studentGroup.name || 'N/A',
+                groupId: studentGroup.id
+              });
+
+              // Get class information if classId exists
+              if (studentGroup.classId) {
+                const classes = await classesAPI.getAllClasses();
+                const classData = Array.isArray(classes)
+                  ? classes.find(c => c.id === studentGroup.classId)
+                  : (classes?.data || []).find(c => c.id === studentGroup.classId);
+
+                if (classData) {
+                  setBorrowerClassInfo({
+                    classCode: classData.classCode || 'N/A',
+                    semester: classData.semester || 'N/A'
+                  });
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error loading borrower group/class info:', error);
+      } finally {
+        setLoadingBorrowerInfo(false);
+      }
+    }
   };
 
   const handleCloseDetails = () => {
     setDetailsModalVisible(false);
     setSelectedRequestDetails(null);
+    setBorrowerGroupInfo(null);
+    setBorrowerClassInfo(null);
   };
 
   const formatDateTime = (dateTimeString) => {
@@ -6072,6 +6285,7 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
           kitName: request.kit?.kitName || 'N/A',
           userEmail: request.requestedBy?.email || 'N/A',
           userName: request.requestedBy?.fullName || 'N/A',
+          requestedBy: request.requestedBy, // Keep full requestedBy object for easier access
           status: 'pending',
           requestDate: request.createdAt || approvedDate,
           approvedDate: approvedDate,
@@ -6192,6 +6406,7 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
               kitName: req.kit?.kitName || 'N/A',
               userEmail: req.requestedBy?.email || 'N/A',
               userName: req.requestedBy?.fullName || 'N/A',
+              requestedBy: req.requestedBy, // Keep full requestedBy object for easier access
               status: 'pending',
               requestDate: req.createdAt || req.approvedDate || null,
               approvedDate: req.approvedDate || null,
@@ -6401,6 +6616,32 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
                 </div>
               </Descriptions.Item>
 
+              {/* Group and Class Information (for Students) */}
+              {(selectedRequestDetails.requestedBy?.studentCode ||
+                selectedRequestDetails.requestedBy?.role === 'STUDENT' ||
+                borrowerGroupInfo ||
+                borrowerClassInfo ||
+                loadingBorrowerInfo) && (
+                  <Descriptions.Item label="Group & Class Information">
+                    <Spin spinning={loadingBorrowerInfo}>
+                      <div>
+                        {borrowerGroupInfo && (
+                          <div><strong>Group Name:</strong> {borrowerGroupInfo.groupName}</div>
+                        )}
+                        {borrowerClassInfo && (
+                          <>
+                            <div><strong>Class Code:</strong> {borrowerClassInfo.classCode}</div>
+                            <div><strong>Semester:</strong> {borrowerClassInfo.semester}</div>
+                          </>
+                        )}
+                        {!borrowerGroupInfo && !borrowerClassInfo && !loadingBorrowerInfo && (
+                          <Text type="secondary">N/A (No group/class assigned)</Text>
+                        )}
+                      </div>
+                    </Spin>
+                  </Descriptions.Item>
+                )}
+
               <Descriptions.Item label="Kit Information">
                 <div>
                   <div><strong>Kit Name:</strong> {selectedRequestDetails.kit?.kitName || 'N/A'}</div>
@@ -6492,6 +6733,12 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
 // Refund Approvals Component
 const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspection, setLogHistory }) => {
   const [selectedStatuses, setSelectedStatuses] = useState({});
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
+  const [selectedRefundDetail, setSelectedRefundDetail] = useState(null);
+  const [refundBorrowerGroupInfo, setRefundBorrowerGroupInfo] = useState(null);
+  const [refundBorrowerClassInfo, setRefundBorrowerClassInfo] = useState(null);
+  const [loadingRefundBorrowerInfo, setLoadingRefundBorrowerInfo] = useState(false);
+  const [isRefundBorrowerStudent, setIsRefundBorrowerStudent] = useState(false);
   const columns = [
     {
       title: 'Email',
@@ -6561,6 +6808,19 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
             whileTap={{ scale: 0.95 }}
           >
             <Button
+              type="default"
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={() => handleShowRefundDetails(record)}
+            >
+              Detail
+            </Button>
+          </motion.div>
+          <motion.div
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <Button
               type="primary"
               size="small"
               icon={<BuildOutlined />}
@@ -6576,6 +6836,142 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
       )
     }
   ];
+
+  const handleShowRefundDetails = async (record) => {
+    setSelectedRefundDetail(record);
+    setDetailModalVisible(true);
+    setRefundBorrowerGroupInfo(null);
+    setRefundBorrowerClassInfo(null);
+    setIsRefundBorrowerStudent(false);
+
+    console.log('handleShowRefundDetails - record:', record);
+
+    // Fetch group and class information for student borrowers
+    // Use requestedBy object if available (from approval), otherwise find by email
+    const userId = record.requestedBy?.id;
+    const userEmail = record.requestedBy?.email || record.userEmail;
+    const userRole = record.requestedBy?.role;
+    const userStudentCode = record.requestedBy?.studentCode;
+
+    console.log('User info from record:', { userId, userEmail, userRole, userStudentCode, requestedBy: record.requestedBy });
+
+    if (userId || userEmail) {
+      setLoadingRefundBorrowerInfo(true);
+      try {
+        let user = record.requestedBy; // Use requestedBy if available
+
+        // If requestedBy doesn't have full info, find user by email
+        if (!user || !user.id) {
+          console.log('Fetching user by email:', userEmail);
+          // Try getUsers first, if not available, try getAllAccounts with large size
+          let usersResponse;
+          try {
+            usersResponse = await userAPI.getUsers();
+          } catch (e) {
+            console.log('getUsers failed, trying getAllAccounts:', e);
+            // Try with large page size to get all users
+            usersResponse = await userAPI.getAllAccounts(0, 1000);
+          }
+          const usersList = Array.isArray(usersResponse) ? usersResponse : (usersResponse?.data || []);
+          console.log('All users list length:', usersList.length);
+          user = usersList.find(u => u.email === userEmail);
+          console.log('Found user:', user);
+
+          // If still not found and we have requestedBy in record, use it
+          if (!user && record.requestedBy) {
+            console.log('Using requestedBy from record:', record.requestedBy);
+            user = record.requestedBy;
+          }
+        }
+
+        // Check if user is a student (has studentCode or role is STUDENT)
+        const isStudent = userStudentCode || userRole === 'STUDENT' || user?.studentCode || user?.role === 'STUDENT';
+        console.log('Is student check:', { userStudentCode, userRole, userStudentCodeFromUser: user?.studentCode, userRoleFromUser: user?.role, isStudent });
+        setIsRefundBorrowerStudent(isStudent);
+
+        // Only fetch if user is a student and we have user ID
+        const accountId = userId || user?.id;
+        console.log('Account ID for fetching groups:', accountId);
+
+        if (accountId && isStudent) {
+          console.log('Fetching borrowing groups for account:', accountId);
+          // Get borrowing groups for this account
+          const borrowingGroups = await borrowingGroupAPI.getByAccountId(accountId);
+          console.log('Borrowing groups response:', borrowingGroups);
+
+          if (borrowingGroups && borrowingGroups.length > 0) {
+            // Get the active group (usually the first one)
+            const activeGroup = borrowingGroups.find(bg => bg.isActive !== false) || borrowingGroups[0];
+            console.log('Active group:', activeGroup);
+
+            if (activeGroup?.studentGroupId) {
+              console.log('Fetching student group:', activeGroup.studentGroupId);
+              // Get student group details
+              const studentGroup = await studentGroupAPI.getById(activeGroup.studentGroupId);
+              console.log('Student group response:', studentGroup);
+
+              if (studentGroup) {
+                setRefundBorrowerGroupInfo({
+                  groupName: studentGroup.groupName || studentGroup.name || 'N/A',
+                  groupId: studentGroup.id
+                });
+
+                // Get class information if classId exists
+                if (studentGroup.classId) {
+                  console.log('Fetching class info for classId:', studentGroup.classId);
+                  const classes = await classesAPI.getAllClasses();
+                  const classData = Array.isArray(classes)
+                    ? classes.find(c => c.id === studentGroup.classId)
+                    : (classes?.data || []).find(c => c.id === studentGroup.classId);
+
+                  console.log('Class data:', classData);
+
+                  if (classData) {
+                    setRefundBorrowerClassInfo({
+                      classCode: classData.classCode || 'N/A',
+                      semester: classData.semester || 'N/A'
+                    });
+                  }
+                }
+              }
+            } else {
+              console.log('No studentGroupId in active group');
+            }
+          } else {
+            console.log('No borrowing groups found for account:', accountId);
+          }
+        } else {
+          console.log('Skipping fetch - accountId:', accountId, 'isStudent:', isStudent);
+        }
+      } catch (error) {
+        console.error('Error loading borrower group/class info:', error);
+      } finally {
+        setLoadingRefundBorrowerInfo(false);
+      }
+    } else {
+      console.log('No userId or userEmail found in record');
+    }
+  };
+
+  const handleCloseRefundDetails = () => {
+    setDetailModalVisible(false);
+    setSelectedRefundDetail(null);
+    setRefundBorrowerGroupInfo(null);
+    setRefundBorrowerClassInfo(null);
+    setIsRefundBorrowerStudent(false);
+  };
+
+  const formatDateTime = (dateTimeString) => {
+    if (!dateTimeString) return 'N/A';
+    return new Date(dateTimeString).toLocaleString('vi-VN');
+  };
+
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'currency',
+      currency: 'VND'
+    }).format(amount || 0);
+  };
 
   // Removed unused handleRefundStatusChange function
   const _handleRefundStatusChange = (id, newStatus) => {
@@ -6778,6 +7174,118 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
           }}
         />
       </Card>
+
+      {/* Refund Request Details Modal */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <InfoCircleOutlined style={{ fontSize: '20px', color: '#667eea' }} />
+            <span>Return Checking Details</span>
+          </div>
+        }
+        open={detailModalVisible}
+        onCancel={handleCloseRefundDetails}
+        footer={[
+          <Button key="close" onClick={handleCloseRefundDetails}>
+            Close
+          </Button>
+        ]}
+        width={800}
+        centered
+        destroyOnClose
+      >
+        {selectedRefundDetail && (
+          <div>
+            <Descriptions bordered column={1} size="small">
+              <Descriptions.Item label="Request ID">
+                <Text code>{selectedRefundDetail.id || 'N/A'}</Text>
+              </Descriptions.Item>
+
+              <Descriptions.Item label="Status">
+                <Tag color="green" style={{ minWidth: 80, textAlign: 'center' }}>
+                  APPROVED
+                </Tag>
+              </Descriptions.Item>
+
+              <Descriptions.Item label="Request Type">
+                <Tag color={selectedRefundDetail.requestType === 'BORROW_COMPONENT' ? 'orange' : 'blue'}>
+                  {selectedRefundDetail.requestType || 'BORROW_KIT'}
+                </Tag>
+              </Descriptions.Item>
+
+              <Descriptions.Item label="User Information">
+                <div>
+                  <div><strong>Name:</strong> {selectedRefundDetail.userName || 'N/A'}</div>
+                  <div><strong>Email:</strong> {selectedRefundDetail.userEmail || 'N/A'}</div>
+                </div>
+              </Descriptions.Item>
+
+              {/* Group and Class Information (for Students) */}
+              {(isRefundBorrowerStudent ||
+                refundBorrowerGroupInfo ||
+                refundBorrowerClassInfo ||
+                loadingRefundBorrowerInfo) && (
+                  <Descriptions.Item label="Group & Class Information">
+                    <Spin spinning={loadingRefundBorrowerInfo}>
+                      <div>
+                        {refundBorrowerGroupInfo && (
+                          <div><strong>Group Name:</strong> {refundBorrowerGroupInfo.groupName}</div>
+                        )}
+                        {refundBorrowerClassInfo && (
+                          <>
+                            <div><strong>Class Code:</strong> {refundBorrowerClassInfo.classCode}</div>
+                            <div><strong>Semester:</strong> {refundBorrowerClassInfo.semester}</div>
+                          </>
+                        )}
+                        {!refundBorrowerGroupInfo && !refundBorrowerClassInfo && !loadingRefundBorrowerInfo && (
+                          <Text type="secondary">N/A (No group/class assigned)</Text>
+                        )}
+                      </div>
+                    </Spin>
+                  </Descriptions.Item>
+                )}
+
+              <Descriptions.Item label="Kit Information">
+                <div>
+                  <div><strong>Kit Name:</strong> {selectedRefundDetail.kitName || 'N/A'}</div>
+                  {selectedRefundDetail.kitId && (
+                    <div><strong>Kit ID:</strong> <Text code>{selectedRefundDetail.kitId}</Text></div>
+                  )}
+                </div>
+              </Descriptions.Item>
+
+              <Descriptions.Item label="Financial Information">
+                <div>
+                  <div><strong>Deposit Amount:</strong> {formatCurrency(selectedRefundDetail.depositAmount || 0)}</div>
+                  {selectedRefundDetail.totalCost && (
+                    <div><strong>Total Cost:</strong> {formatCurrency(selectedRefundDetail.totalCost)}</div>
+                  )}
+                </div>
+              </Descriptions.Item>
+
+              <Descriptions.Item label="Dates">
+                <div>
+                  {selectedRefundDetail.requestDate && (
+                    <div><strong>Request Date:</strong> {formatDateTime(selectedRefundDetail.requestDate)}</div>
+                  )}
+                  {selectedRefundDetail.approvedDate && (
+                    <div><strong>Approved Date:</strong> {formatDateTime(selectedRefundDetail.approvedDate)}</div>
+                  )}
+                  {selectedRefundDetail.expectReturnDate && (
+                    <div><strong>Expected Return Date:</strong> {formatDateTime(selectedRefundDetail.expectReturnDate)}</div>
+                  )}
+                </div>
+              </Descriptions.Item>
+
+              {selectedRefundDetail.reason && (
+                <Descriptions.Item label="Reason">
+                  {selectedRefundDetail.reason}
+                </Descriptions.Item>
+              )}
+            </Descriptions>
+          </div>
+        )}
+      </Modal>
     </motion.div>
   );
 };
@@ -9634,6 +10142,400 @@ const LogHistory = ({ logHistory, setLogHistory }) => {
             </Descriptions>
           </div>
         )}
+      </Modal>
+    </div>
+  );
+};
+
+// Password validation helper
+const validatePassword = (password) => {
+  if (!password || password.length < 8) {
+    return 'Password must be at least 8 characters long';
+  }
+  if (!/[A-Z]/.test(password)) {
+    return 'Password must contain at least one uppercase letter';
+  }
+  if (!/[a-z]/.test(password)) {
+    return 'Password must contain at least one lowercase letter';
+  }
+  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) {
+    return 'Password must contain at least one special character';
+  }
+  return null;
+};
+
+// Profile Management Component
+const ProfileManagement = ({ profile, setProfile, loading, setLoading }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [form] = Form.useForm();
+  const [saving, setSaving] = useState(false);
+  const [changePasswordModalVisible, setChangePasswordModalVisible] = useState(false);
+  const [passwordForm] = Form.useForm();
+  const [changingPassword, setChangingPassword] = useState(false);
+
+  // Define cardVariants locally for ProfileManagement
+  const cardVariants = {
+    hidden: { opacity: 0, y: 20, scale: 0.95 },
+    visible: {
+      opacity: 1,
+      y: 0,
+      scale: 1,
+      transition: {
+        duration: 0.5,
+        ease: "easeOut"
+      }
+    },
+    hover: {
+      y: -5,
+      scale: 1.02,
+      transition: {
+        duration: 0.2,
+        ease: "easeInOut"
+      }
+    }
+  };
+
+  // Define formatDateTime locally for ProfileManagement
+  const formatDateTime = (dateTimeString) => {
+    if (!dateTimeString) return 'N/A';
+    return new Date(dateTimeString).toLocaleString('vi-VN');
+  };
+
+  const loadProfile = useCallback(async () => {
+    try {
+      setLoading(true);
+      const response = await authAPI.getProfile();
+      console.log('Profile response:', response);
+
+      const profileData = response?.data || response;
+      setProfile(profileData);
+
+      // Set form values when profile is loaded
+      if (profileData) {
+        form.setFieldsValue({
+          fullName: profileData.fullName || '',
+          phone: profileData.phone || '',
+          avatarUrl: profileData.avatarUrl || '',
+        });
+      }
+    } catch (error) {
+      console.error('Error loading profile:', error);
+      message.error('Failed to load profile');
+    } finally {
+      setLoading(false);
+    }
+  }, [form, setLoading, setProfile]);
+
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
+
+  const handleEdit = () => {
+    setIsEditing(true);
+    if (profile) {
+      form.setFieldsValue({
+        fullName: profile.fullName || '',
+        phone: profile.phone || '',
+        avatarUrl: profile.avatarUrl || '',
+      });
+    }
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+    form.resetFields();
+  };
+
+  const handleSave = async (values) => {
+    try {
+      setSaving(true);
+      const updateData = {
+        fullName: values.fullName,
+        phone: values.phone,
+        avatarUrl: values.avatarUrl || null,
+      };
+
+      const response = await authAPI.updateProfile(updateData);
+      console.log('Update profile response:', response);
+
+      const updatedProfile = response?.data || response;
+      setProfile(updatedProfile);
+      setIsEditing(false);
+
+      message.success('Profile updated successfully');
+
+      // Reload profile to get latest data
+      await loadProfile();
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      message.error('Failed to update profile: ' + (error.message || 'Unknown error'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleChangePassword = async (values) => {
+    const { oldPassword, newPassword, confirmPassword } = values;
+
+    // Validate new password
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) {
+      message.error(passwordError);
+      return;
+    }
+
+    // Check if passwords match
+    if (newPassword !== confirmPassword) {
+      message.error('New password and confirm password do not match');
+      return;
+    }
+
+    // Check if new password is same as old password
+    if (oldPassword === newPassword) {
+      message.error('New password must be different from old password');
+      return;
+    }
+
+    try {
+      setChangingPassword(true);
+      await authAPI.changePassword(oldPassword, newPassword);
+      message.success('Password changed successfully');
+      setChangePasswordModalVisible(false);
+      passwordForm.resetFields();
+    } catch (error) {
+      console.error('Error changing password:', error);
+      message.error('Failed to change password: ' + (error.message || 'Unknown error'));
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
+  return (
+    <div>
+      <motion.div
+        variants={cardVariants}
+        initial="hidden"
+        animate="visible"
+        whileHover="hover"
+      >
+        <Card
+          title={
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>My Profile</span>
+              {!isEditing ? (
+                <Button
+                  type="primary"
+                  icon={<EditOutlined />}
+                  onClick={handleEdit}
+                >
+                  Edit Profile
+                </Button>
+              ) : (
+                <Space>
+                  <Button onClick={handleCancel}>
+                    Cancel
+                  </Button>
+                  <Button
+                    type="primary"
+                    icon={<CheckCircleOutlined />}
+                    onClick={() => form.submit()}
+                    loading={saving}
+                  >
+                    Save Changes
+                  </Button>
+                </Space>
+              )}
+            </div>
+          }
+          style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+        >
+          <Spin spinning={loading}>
+            {profile ? (
+              <Form
+                form={form}
+                layout="vertical"
+                onFinish={handleSave}
+                initialValues={{
+                  fullName: profile.fullName || '',
+                  phone: profile.phone || '',
+                  avatarUrl: profile.avatarUrl || '',
+                }}
+              >
+                <Row gutter={[24, 24]}>
+                  <Col xs={24} md={8}>
+                    <div style={{ textAlign: 'center', marginBottom: 24 }}>
+                      <Avatar
+                        size={120}
+                        src={profile.avatarUrl || null}
+                        icon={!profile.avatarUrl && <UserOutlined />}
+                        style={{
+                          background: profile.avatarUrl ? 'transparent' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                          border: '4px solid rgba(102, 126, 234, 0.2)',
+                        }}
+                      />
+                      {isEditing && (
+                        <Form.Item
+                          name="avatarUrl"
+                          style={{ marginTop: 16, marginBottom: 0 }}
+                        >
+                          <Input
+                            placeholder="Avatar URL"
+                            prefix={<UploadOutlined />}
+                          />
+                        </Form.Item>
+                      )}
+                    </div>
+                  </Col>
+
+                  <Col xs={24} md={16}>
+                    <Descriptions column={1} bordered>
+                      <Descriptions.Item label="Email">
+                        <Text strong>{profile.email || 'N/A'}</Text>
+                        <Tag color="blue" style={{ marginLeft: 8 }}>Cannot be changed</Tag>
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Full Name">
+                        {isEditing ? (
+                          <Form.Item
+                            name="fullName"
+                            rules={[{ required: true, message: 'Please enter your full name' }]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <Input placeholder="Enter your full name" />
+                          </Form.Item>
+                        ) : (
+                          <Text strong>{profile.fullName || 'N/A'}</Text>
+                        )}
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Phone">
+                        {isEditing ? (
+                          <Form.Item
+                            name="phone"
+                            rules={[
+                              { pattern: /^[0-9]{10,11}$/, message: 'Please enter a valid phone number' }
+                            ]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <Input placeholder="Enter your phone number" />
+                          </Form.Item>
+                        ) : (
+                          <Text>{profile.phone || 'N/A'}</Text>
+                        )}
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Role">
+                        <Tag color="purple">{profile.role || 'N/A'}</Tag>
+                        <Tag color="orange" style={{ marginLeft: 8 }}>Cannot be changed</Tag>
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Account Status">
+                        <Tag color={profile.isActive ? 'success' : 'error'}>
+                          {profile.isActive ? 'Active' : 'Inactive'}
+                        </Tag>
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Created At">
+                        <Text>{profile.createdAt ? formatDateTime(profile.createdAt) : 'N/A'}</Text>
+                      </Descriptions.Item>
+                    </Descriptions>
+
+                    <Divider />
+
+                    <div style={{ marginTop: 16 }}>
+                      <Button
+                        type="default"
+                        icon={<SettingOutlined />}
+                        onClick={() => setChangePasswordModalVisible(true)}
+                        block
+                      >
+                        Change Password
+                      </Button>
+                    </div>
+                  </Col>
+                </Row>
+              </Form>
+            ) : (
+              <Empty description="Failed to load profile" />
+            )}
+          </Spin>
+        </Card>
+      </motion.div>
+
+      {/* Change Password Modal */}
+      <Modal
+        title="Change Password"
+        open={changePasswordModalVisible}
+        onCancel={() => {
+          setChangePasswordModalVisible(false);
+          passwordForm.resetFields();
+        }}
+        footer={null}
+        width={500}
+      >
+        <Form
+          form={passwordForm}
+          layout="vertical"
+          onFinish={handleChangePassword}
+        >
+          <Form.Item
+            name="oldPassword"
+            label="Current Password"
+            rules={[{ required: true, message: 'Please enter your current password' }]}
+          >
+            <Input.Password placeholder="Enter current password" />
+          </Form.Item>
+
+          <Form.Item
+            name="newPassword"
+            label="New Password"
+            rules={[
+              { required: true, message: 'Please enter a new password' },
+              {
+                validator: (_, value) => {
+                  const error = validatePassword(value);
+                  return error ? Promise.reject(new Error(error)) : Promise.resolve();
+                }
+              }
+            ]}
+            help="Password must be at least 8 characters, contain uppercase, lowercase, and special characters"
+          >
+            <Input.Password placeholder="Enter new password" />
+          </Form.Item>
+
+          <Form.Item
+            name="confirmPassword"
+            label="Confirm New Password"
+            dependencies={['newPassword']}
+            rules={[
+              { required: true, message: 'Please confirm your new password' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('newPassword') === value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('Passwords do not match'));
+                },
+              }),
+            ]}
+          >
+            <Input.Password placeholder="Confirm new password" />
+          </Form.Item>
+
+          <Form.Item>
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => {
+                setChangePasswordModalVisible(false);
+                passwordForm.resetFields();
+              }}>
+                Cancel
+              </Button>
+              <Button type="primary" htmlType="submit" loading={changingPassword}>
+                Change Password
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Layout,
   Menu,
@@ -24,7 +24,9 @@ import {
   Empty,
   Spin,
   notification,
-  Popover
+  Popover,
+  Descriptions,
+  Divider
 } from 'antd';
 import dayjs from 'dayjs';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -52,11 +54,14 @@ import {
   UserAddOutlined,
   SearchOutlined,
   SortAscendingOutlined,
-  DownloadOutlined
+  DownloadOutlined,
+  SettingOutlined,
+  CheckCircleOutlined,
+  UploadOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { LoadingOutlined } from '@ant-design/icons';
-import { classesAPI, userAPI, classAssignmentAPI, excelImportAPI, notificationAPI } from './api';
+import { classesAPI, userAPI, classAssignmentAPI, excelImportAPI, notificationAPI, authAPI } from './api';
 
 // Mock data - TODO: Replace with real API calls
 const mockSemesters = [];
@@ -148,6 +153,10 @@ function AcademicAffairsPortal({ user, onLogout }) {
   const [iotSubjects, setIotSubjects] = useState([]);
   const [lecturersList, setLecturersList] = useState([]);
   const [availableClasses, setAvailableClasses] = useState([]); // For ClassCode dropdown in Student form
+
+  // Profile states
+  const [profile, setProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
 
   // Animation variants
   const pageVariants = {
@@ -1022,7 +1031,82 @@ function AcademicAffairsPortal({ user, onLogout }) {
           teacherId: values.lecturerId  // Add teacherId for update
         };
 
+        // Get old lecturer ID before update
+        const oldLecturerId = iotSubjectModal.data.teacherId;
+        const newLecturerId = values.lecturerId;
+
+        // Convert to string for proper comparison
+        const oldLecturerIdStr = oldLecturerId?.toString();
+        const newLecturerIdStr = newLecturerId?.toString();
+
+        console.log('IOT Subject Update - Lecturer Change Check:', {
+          oldLecturerId: oldLecturerIdStr,
+          newLecturerId: newLecturerIdStr,
+          hasChanged: oldLecturerIdStr !== newLecturerIdStr
+        });
+
         await classesAPI.updateClass(iotSubjectModal.data.id, updateData);
+
+        // If lecturer changed or new lecturer is set, update ClassAssignment to sync with StudentEnrollments
+        if (newLecturerId && (oldLecturerIdStr !== newLecturerIdStr || !oldLecturerId)) {
+          try {
+            console.log('Updating ClassAssignment for lecturer change...');
+
+            // Get all class assignments for this class
+            const allAssignments = await classAssignmentAPI.getAll();
+            const assignmentsArray = Array.isArray(allAssignments) ? allAssignments : [];
+
+            console.log('All assignments:', assignmentsArray.length);
+
+            // Find lecturer assignment for this class
+            const lecturerAssignment = assignmentsArray.find(assignment => {
+              const roleName = assignment.roleName || assignment.role || '';
+              const roleUpper = roleName.toUpperCase();
+              const isLecturer = roleUpper === 'LECTURER' ||
+                roleUpper === 'TEACHER' ||
+                roleUpper === 'LECTURER_ROLE';
+
+              const assignmentClassId = assignment.classId?.toString();
+              const recordClassId = iotSubjectModal.data.id?.toString();
+              const matchesClass = assignmentClassId === recordClassId;
+
+              return isLecturer && matchesClass;
+            });
+
+            console.log('Found lecturer assignment:', lecturerAssignment);
+
+            if (lecturerAssignment && lecturerAssignment.id) {
+              // Update existing lecturer assignment using PUT method
+              console.log('Calling PUT /api/class-assignments/' + lecturerAssignment.id, {
+                classId: iotSubjectModal.data.id,
+                accountId: newLecturerId
+              });
+
+              await classAssignmentAPI.update(lecturerAssignment.id, {
+                classId: iotSubjectModal.data.id,
+                accountId: newLecturerId
+              });
+
+              console.log('ClassAssignment updated successfully via PUT');
+            } else {
+              // Create new lecturer assignment if it doesn't exist
+              console.log('Creating new ClassAssignment for lecturer...');
+
+              await classAssignmentAPI.create({
+                classId: iotSubjectModal.data.id,
+                accountId: newLecturerId
+              });
+
+              console.log('ClassAssignment created successfully');
+            }
+          } catch (assignmentError) {
+            console.error('Failed to update ClassAssignment:', assignmentError);
+            // Don't throw error, just log warning - class update was successful
+            message.warning('IOT Subject updated but failed to sync ClassAssignment: ' + (assignmentError.message || 'Unknown error'));
+          }
+        } else {
+          console.log('No lecturer change detected, skipping ClassAssignment update');
+        }
 
         // Refresh data
         await loadData();
@@ -1036,7 +1120,24 @@ function AcademicAffairsPortal({ user, onLogout }) {
           teacherId: values.lecturerId
         };
 
-        await classesAPI.createClass(createData, values.lecturerId);
+        const createdClassResponse = await classesAPI.createClass(createData, values.lecturerId);
+
+        // Extract class ID from response (could be direct or wrapped in data)
+        const createdClass = createdClassResponse?.data || createdClassResponse;
+        const classId = createdClass?.id;
+
+        // Create ClassAssignment for the lecturer to sync with StudentEnrollments
+        if (values.lecturerId && classId) {
+          try {
+            await classAssignmentAPI.create({
+              classId: classId,
+              accountId: values.lecturerId
+            });
+          } catch (assignmentError) {
+            console.warn('Failed to create ClassAssignment:', assignmentError);
+            // Don't throw error, just log warning - class creation was successful
+          }
+        }
 
         // Refresh data
         await loadData();
@@ -1749,6 +1850,7 @@ function AcademicAffairsPortal({ user, onLogout }) {
     { key: 'students', icon: <UserOutlined />, label: 'Students' },
     { key: 'lecturers', icon: <TeamOutlined />, label: 'Lecturers' },
     { key: 'iot-subjects', icon: <ToolOutlined />, label: 'IOT Subjects' },
+    { key: 'profile', icon: <UserOutlined />, label: 'Profile' },
   ];
 
   if (!user) {
@@ -2004,6 +2106,7 @@ function AcademicAffairsPortal({ user, onLogout }) {
                 {selectedKey === 'students' && <StudentManagement students={students} setStudents={setStudents} studentModal={studentModal} setStudentModal={setStudentModal} studentForm={studentForm} handleExportStudents={handleExportStudents} handleImportStudents={handleImportStudents} handleAddStudent={handleAddStudent} handleEditStudent={handleEditStudent} handleDeleteStudent={handleDeleteStudent} showSheetSelectionAndImport={showSheetSelectionAndImport} importFormatModal={importFormatModal} setImportFormatModal={setImportFormatModal} downloadStudentTemplate={downloadStudentTemplate} />}
                 {selectedKey === 'lecturers' && <LecturerManagement lecturers={lecturers} setLecturers={setLecturers} lecturerModal={lecturerModal} setLecturerModal={setLecturerModal} lecturerForm={lecturerForm} handleExportLecturers={handleExportLecturers} handleImportLecturers={handleImportLecturers} handleAddLecturer={handleAddLecturer} handleEditLecturer={handleEditLecturer} handleDeleteLecturer={handleDeleteLecturer} showSheetSelectionAndImport={showSheetSelectionAndImport} importFormatModal={importFormatModal} setImportFormatModal={setImportFormatModal} downloadLecturerTemplate={downloadLecturerTemplate} />}
                 {selectedKey === 'iot-subjects' && <IotSubjectsManagement iotSubjects={iotSubjects} setIotSubjects={setIotSubjects} selectedSemester={selectedSemester} setSelectedSemester={setSelectedSemester} semesters={semesters} handleAddIotSubject={handleAddIotSubject} handleEditIotSubject={handleEditIotSubject} handleViewIotSubjectStudents={handleViewIotSubjectStudents} handleDeleteIotSubject={handleDeleteIotSubject} handleRemoveStudent={handleRemoveStudentFromClass} />}
+                {selectedKey === 'profile' && <ProfileManagement profile={profile} setProfile={setProfile} loading={profileLoading} setLoading={setProfileLoading} />}
               </motion.div>
             </AnimatePresence>
           </Spin>
@@ -2755,6 +2858,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
   const [allStudents, setAllStudents] = useState([]); // All students (for filtering)
   const [classStudents, setClassStudents] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [lecturerLocked, setLecturerLocked] = useState(false); // Control lecturer field editability
 
   // Load data when component mounts
   useEffect(() => {
@@ -2821,7 +2925,10 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
         value: cls.id,
         label: `${cls.classCode} - ${cls.semester}`,
         classCode: cls.classCode,
-        semester: cls.semester
+        semester: cls.semester,
+        teacherId: cls.teacherId,
+        teacherName: cls.teacherName,
+        teacherEmail: cls.teacherEmail
       }));
       setClasses(unassignedClassOptions);
 
@@ -2830,7 +2937,10 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
         value: cls.id,
         label: `${cls.classCode} - ${cls.semester}`,
         classCode: cls.classCode,
-        semester: cls.semester
+        semester: cls.semester,
+        teacherId: cls.teacherId,
+        teacherName: cls.teacherName,
+        teacherEmail: cls.teacherEmail
       }));
       setAllClasses(allClassOptions);
 
@@ -3064,9 +3174,49 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
         if (enrollmentModal.data.id) {
           // Update existing assignment
           await classAssignmentAPI.update(enrollmentModal.data.id, enrollmentData);
+
+          // Also update the class's teacherId to sync with IOT Subject
+          try {
+            // Fetch current class data to preserve existing fields
+            const allClasses = await classesAPI.getAllClasses();
+            const currentClass = allClasses.find(cls => cls.id?.toString() === values.classId?.toString());
+
+            if (currentClass) {
+              const classUpdateData = {
+                classCode: currentClass.classCode,
+                semester: currentClass.semester,
+                status: currentClass.status,
+                teacherId: values.accountId
+              };
+              await classesAPI.updateClass(values.classId, classUpdateData);
+            }
+          } catch (classUpdateError) {
+            console.warn('Failed to update class teacherId:', classUpdateError);
+            // Don't throw error, just log warning - assignment was successful
+          }
         } else {
           // Create new assignment
           await classAssignmentAPI.create(enrollmentData);
+
+          // Also update the class's teacherId to sync with IOT Subject
+          try {
+            // Fetch current class data to preserve existing fields
+            const allClasses = await classesAPI.getAllClasses();
+            const currentClass = allClasses.find(cls => cls.id?.toString() === values.classId?.toString());
+
+            if (currentClass) {
+              const classUpdateData = {
+                classCode: currentClass.classCode,
+                semester: currentClass.semester,
+                status: currentClass.status,
+                teacherId: values.accountId
+              };
+              await classesAPI.updateClass(values.classId, classUpdateData);
+            }
+          } catch (classUpdateError) {
+            console.warn('Failed to update class teacherId:', classUpdateError);
+            // Don't throw error, just log warning - assignment was successful
+          }
         }
       } catch (error) {
         console.error('Error saving assignment:', error);
@@ -3089,6 +3239,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
 
       setEnrollmentModal({ visible: false, data: {} });
       enrollmentForm.resetFields();
+      setLecturerLocked(false);
     } catch (error) {
       console.error('Error saving assignment:', error);
       // Show more specific error messages for class-related issues
@@ -3117,6 +3268,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
 
       // Open modal with record data
       setEnrollmentModal({ visible: true, data: record });
+      setLecturerLocked(false);
     } catch (error) {
       console.error('Error loading enrollment data for edit:', error);
       notification.error({
@@ -3316,6 +3468,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
         onCancel={() => {
           setEnrollmentModal({ visible: false, data: {} });
           enrollmentForm.resetFields();
+          setLecturerLocked(false);
         }}
         width={600}
         okText={enrollmentModal.data.id ? "Update" : "Assign"}
@@ -3336,6 +3489,26 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
                 (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
               }
               options={enrollmentModal.data.id ? allClasses : classes}
+              onChange={(value) => {
+                // When selecting class for new assignment, auto-select lecturer based on class teacher
+                if (!enrollmentModal.data.id) {
+                  // Try to find class info from allClasses (which contains teacherId)
+                  const targetClass = allClasses.find(c => c.value?.toString() === value?.toString());
+
+                  if (targetClass && targetClass.teacherId) {
+                    enrollmentForm.setFieldsValue({
+                      classId: value,
+                      accountId: targetClass.teacherId
+                    });
+                    // Lock lecturer field so staff cannot change it
+                    setLecturerLocked(true);
+                  } else {
+                    // If no teacherId, keep lecturer editable
+                    setLecturerLocked(false);
+                    enrollmentForm.setFieldsValue({ classId: value });
+                  }
+                }
+              }}
               notFoundContent={enrollmentModal.data.id
                 ? (allClasses.length === 0 ? "No active classes available" : null)
                 : (classes.length === 0 ? "No unassigned classes available" : null)}
@@ -3347,6 +3520,7 @@ const StudentEnrollment = ({ semesters, setSemesters, semesterModal, setSemester
             rules={[{ required: true, message: 'Please select a lecturer' }]}
           >
             <Select
+              disabled={lecturerLocked}
               showSearch
               placeholder="Search and select lecturer"
               optionFilterProp="children"
@@ -4292,6 +4466,372 @@ const LecturerManagement = ({ lecturers, setLecturers, lecturerModal, setLecture
             showIcon
           />
         </div>
+      </Modal>
+    </div>
+  );
+};
+
+// Password validation helper
+const validatePassword = (password) => {
+  if (!password || password.length < 8) {
+    return 'Password must be at least 8 characters long';
+  }
+  if (!/[A-Z]/.test(password)) {
+    return 'Password must contain at least one uppercase letter';
+  }
+  if (!/[a-z]/.test(password)) {
+    return 'Password must contain at least one lowercase letter';
+  }
+  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) {
+    return 'Password must contain at least one special character';
+  }
+  return null;
+};
+
+// Profile Management Component
+const ProfileManagement = ({ profile, setProfile, loading, setLoading }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [form] = Form.useForm();
+  const [saving, setSaving] = useState(false);
+  const [changePasswordModalVisible, setChangePasswordModalVisible] = useState(false);
+  const [passwordForm] = Form.useForm();
+  const [changingPassword, setChangingPassword] = useState(false);
+
+  const loadProfile = useCallback(async () => {
+    try {
+      setLoading(true);
+      const response = await authAPI.getProfile();
+      console.log('Profile response:', response);
+
+      const profileData = response?.data || response;
+      setProfile(profileData);
+
+      // Set form values when profile is loaded
+      if (profileData) {
+        form.setFieldsValue({
+          fullName: profileData.fullName || '',
+          phone: profileData.phone || '',
+          avatarUrl: profileData.avatarUrl || '',
+        });
+      }
+    } catch (error) {
+      console.error('Error loading profile:', error);
+      message.error('Failed to load profile');
+    } finally {
+      setLoading(false);
+    }
+  }, [form, setLoading, setProfile]);
+
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
+
+  const handleEdit = () => {
+    setIsEditing(true);
+    if (profile) {
+      form.setFieldsValue({
+        fullName: profile.fullName || '',
+        phone: profile.phone || '',
+        avatarUrl: profile.avatarUrl || '',
+      });
+    }
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+    form.resetFields();
+  };
+
+  const handleSave = async (values) => {
+    try {
+      setSaving(true);
+      const updateData = {
+        fullName: values.fullName,
+        phone: values.phone,
+        avatarUrl: values.avatarUrl || null,
+      };
+
+      const response = await authAPI.updateProfile(updateData);
+      console.log('Update profile response:', response);
+
+      const updatedProfile = response?.data || response;
+      setProfile(updatedProfile);
+      setIsEditing(false);
+
+      message.success('Profile updated successfully');
+
+      // Reload profile to get latest data
+      await loadProfile();
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      message.error('Failed to update profile: ' + (error.message || 'Unknown error'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleChangePassword = async (values) => {
+    const { oldPassword, newPassword, confirmPassword } = values;
+
+    // Validate new password
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) {
+      message.error(passwordError);
+      return;
+    }
+
+    // Check if passwords match
+    if (newPassword !== confirmPassword) {
+      message.error('New password and confirm password do not match');
+      return;
+    }
+
+    // Check if new password is same as old password
+    if (oldPassword === newPassword) {
+      message.error('New password must be different from old password');
+      return;
+    }
+
+    try {
+      setChangingPassword(true);
+      await authAPI.changePassword(oldPassword, newPassword);
+      message.success('Password changed successfully');
+      setChangePasswordModalVisible(false);
+      passwordForm.resetFields();
+    } catch (error) {
+      console.error('Error changing password:', error);
+      message.error('Failed to change password: ' + (error.message || 'Unknown error'));
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
+  return (
+    <div>
+      <motion.div
+        variants={cardVariants}
+        initial="hidden"
+        animate="visible"
+        whileHover="hover"
+      >
+        <Card
+          title={
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>My Profile</span>
+              {!isEditing ? (
+                <Button
+                  type="primary"
+                  icon={<EditOutlined />}
+                  onClick={handleEdit}
+                >
+                  Edit Profile
+                </Button>
+              ) : (
+                <Space>
+                  <Button onClick={handleCancel}>
+                    Cancel
+                  </Button>
+                  <Button
+                    type="primary"
+                    icon={<CheckCircleOutlined />}
+                    onClick={() => form.submit()}
+                    loading={saving}
+                  >
+                    Save Changes
+                  </Button>
+                </Space>
+              )}
+            </div>
+          }
+          style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+        >
+          <Spin spinning={loading}>
+            {profile ? (
+              <Form
+                form={form}
+                layout="vertical"
+                onFinish={handleSave}
+                initialValues={{
+                  fullName: profile.fullName || '',
+                  phone: profile.phone || '',
+                  avatarUrl: profile.avatarUrl || '',
+                }}
+              >
+                <Row gutter={[24, 24]}>
+                  <Col xs={24} md={8}>
+                    <div style={{ textAlign: 'center', marginBottom: 24 }}>
+                      <Avatar
+                        size={120}
+                        src={profile.avatarUrl || null}
+                        icon={!profile.avatarUrl && <UserOutlined />}
+                        style={{
+                          background: profile.avatarUrl ? 'transparent' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                          border: '4px solid rgba(102, 126, 234, 0.2)',
+                        }}
+                      />
+                      {isEditing && (
+                        <Form.Item
+                          name="avatarUrl"
+                          style={{ marginTop: 16, marginBottom: 0 }}
+                        >
+                          <Input
+                            placeholder="Avatar URL"
+                            prefix={<UploadOutlined />}
+                          />
+                        </Form.Item>
+                      )}
+                    </div>
+                  </Col>
+
+                  <Col xs={24} md={16}>
+                    <Descriptions column={1} bordered>
+                      <Descriptions.Item label="Email">
+                        <Text strong>{profile.email || 'N/A'}</Text>
+                        <Tag color="blue" style={{ marginLeft: 8 }}>Cannot be changed</Tag>
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Full Name">
+                        {isEditing ? (
+                          <Form.Item
+                            name="fullName"
+                            rules={[{ required: true, message: 'Please enter your full name' }]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <Input placeholder="Enter your full name" />
+                          </Form.Item>
+                        ) : (
+                          <Text strong>{profile.fullName || 'N/A'}</Text>
+                        )}
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Phone">
+                        {isEditing ? (
+                          <Form.Item
+                            name="phone"
+                            rules={[
+                              { pattern: /^[0-9]{10,11}$/, message: 'Please enter a valid phone number' }
+                            ]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <Input placeholder="Enter your phone number" />
+                          </Form.Item>
+                        ) : (
+                          <Text>{profile.phone || 'N/A'}</Text>
+                        )}
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Role">
+                        <Tag color="purple">{profile.role || 'N/A'}</Tag>
+                        <Tag color="orange" style={{ marginLeft: 8 }}>Cannot be changed</Tag>
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Account Status">
+                        <Tag color={profile.isActive ? 'success' : 'error'}>
+                          {profile.isActive ? 'Active' : 'Inactive'}
+                        </Tag>
+                      </Descriptions.Item>
+
+                      <Descriptions.Item label="Created At">
+                        <Text>{profile.createdAt ? formatDateTimeDisplay(profile.createdAt) : 'N/A'}</Text>
+                      </Descriptions.Item>
+                    </Descriptions>
+
+                    <Divider />
+
+                    <div style={{ marginTop: 16 }}>
+                      <Button
+                        type="default"
+                        icon={<SettingOutlined />}
+                        onClick={() => setChangePasswordModalVisible(true)}
+                        block
+                      >
+                        Change Password
+                      </Button>
+                    </div>
+                  </Col>
+                </Row>
+              </Form>
+            ) : (
+              <Empty description="Failed to load profile" />
+            )}
+          </Spin>
+        </Card>
+      </motion.div>
+
+      {/* Change Password Modal */}
+      <Modal
+        title="Change Password"
+        open={changePasswordModalVisible}
+        onCancel={() => {
+          setChangePasswordModalVisible(false);
+          passwordForm.resetFields();
+        }}
+        footer={null}
+        width={500}
+      >
+        <Form
+          form={passwordForm}
+          layout="vertical"
+          onFinish={handleChangePassword}
+        >
+          <Form.Item
+            name="oldPassword"
+            label="Current Password"
+            rules={[{ required: true, message: 'Please enter your current password' }]}
+          >
+            <Input.Password placeholder="Enter current password" />
+          </Form.Item>
+
+          <Form.Item
+            name="newPassword"
+            label="New Password"
+            rules={[
+              { required: true, message: 'Please enter a new password' },
+              {
+                validator: (_, value) => {
+                  const error = validatePassword(value);
+                  return error ? Promise.reject(new Error(error)) : Promise.resolve();
+                }
+              }
+            ]}
+            help="Password must be at least 8 characters, contain uppercase, lowercase, and special characters"
+          >
+            <Input.Password placeholder="Enter new password" />
+          </Form.Item>
+
+          <Form.Item
+            name="confirmPassword"
+            label="Confirm New Password"
+            dependencies={['newPassword']}
+            rules={[
+              { required: true, message: 'Please confirm your new password' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('newPassword') === value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('Passwords do not match'));
+                },
+              }),
+            ]}
+          >
+            <Input.Password placeholder="Confirm new password" />
+          </Form.Item>
+
+          <Form.Item>
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => {
+                setChangePasswordModalVisible(false);
+                passwordForm.resetFields();
+              }}>
+                Cancel
+              </Button>
+              <Button type="primary" htmlType="submit" loading={changingPassword}>
+                Change Password
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   );

@@ -1,4 +1,3 @@
-// const API_BASE_URL = 'https://rental-kit-fvcrenhrbva3e4f2.eastasia-01.azurewebsites.net';
 const API_BASE_URL = 'https://iot-system-kit.azurewebsites.net';
 // const API_BASE_URL = 'http://localhost:8080';
 
