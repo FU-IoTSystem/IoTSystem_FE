@@ -51,7 +51,9 @@ import {
   ShoppingOutlined,
   InfoCircleOutlined,
   RollbackOutlined,
-  EyeOutlined
+  EyeOutlined,
+  SettingOutlined,
+  LockOutlined
 } from '@ant-design/icons';
 import {
   authAPI,
@@ -2669,11 +2671,31 @@ const WalletManagement = ({ wallet, setWallet, loadData }) => {
 
 
 
+// Password validation helper function
+const validatePassword = (password) => {
+  if (!password || password.length < 8) {
+    return 'Password must be at least 8 characters long';
+  }
+  if (!/[A-Z]/.test(password)) {
+    return 'Password must contain at least one uppercase letter';
+  }
+  if (!/[a-z]/.test(password)) {
+    return 'Password must contain at least one lowercase letter';
+  }
+  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) {
+    return 'Password must contain at least one special character';
+  }
+  return null;
+};
+
 // Profile Management Component
 const ProfileManagement = ({ profile, setProfile, loading, setLoading, user }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
+  const [changePasswordModalVisible, setChangePasswordModalVisible] = useState(false);
+  const [passwordForm] = Form.useForm();
+  const [changingPassword, setChangingPassword] = useState(false);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -2746,6 +2768,42 @@ const ProfileManagement = ({ profile, setProfile, loading, setLoading, user }) =
       message.error('Failed to update profile: ' + (error.message || 'Unknown error'));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleChangePassword = async (values) => {
+    const { oldPassword, newPassword, confirmPassword } = values;
+
+    // Validate new password
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) {
+      message.error(passwordError);
+      return;
+    }
+
+    // Check if passwords match
+    if (newPassword !== confirmPassword) {
+      message.error('New password and confirm password do not match');
+      return;
+    }
+
+    // Check if new password is same as old password
+    if (oldPassword === newPassword) {
+      message.error('New password must be different from old password');
+      return;
+    }
+
+    try {
+      setChangingPassword(true);
+      await authAPI.changePassword(oldPassword, newPassword);
+      message.success('Password changed successfully');
+      setChangePasswordModalVisible(false);
+      passwordForm.resetFields();
+    } catch (error) {
+      console.error('Error changing password:', error);
+      message.error('Failed to change password: ' + (error.message || 'Unknown error'));
+    } finally {
+      setChangingPassword(false);
     }
   };
 
@@ -2883,6 +2941,18 @@ const ProfileManagement = ({ profile, setProfile, loading, setLoading, user }) =
                         <Text>{profile.createdAt ? formatDateTimeDisplay(profile.createdAt) : 'N/A'}</Text>
                       </Descriptions.Item>
                     </Descriptions>
+
+                    {/* Change Password Button */}
+                    <div style={{ marginTop: '24px', textAlign: 'center' }}>
+                      <Button
+                        type="default"
+                        icon={<LockOutlined />}
+                        onClick={() => setChangePasswordModalVisible(true)}
+                        block
+                      >
+                        Change Password
+                      </Button>
+                    </div>
                   </Col>
                 </Row>
               </Form>
@@ -2892,11 +2962,87 @@ const ProfileManagement = ({ profile, setProfile, loading, setLoading, user }) =
           </Spin>
         </Card>
       </motion.div>
+
+      {/* Change Password Modal */}
+      <Modal
+        title="Change Password"
+        open={changePasswordModalVisible}
+        onCancel={() => {
+          setChangePasswordModalVisible(false);
+          passwordForm.resetFields();
+        }}
+        footer={null}
+        width={500}
+      >
+        <Form
+          form={passwordForm}
+          layout="vertical"
+          onFinish={handleChangePassword}
+        >
+          <Form.Item
+            name="oldPassword"
+            label="Current Password"
+            rules={[{ required: true, message: 'Please enter your current password' }]}
+          >
+            <Input.Password placeholder="Enter current password" />
+          </Form.Item>
+
+          <Form.Item
+            name="newPassword"
+            label="New Password"
+            rules={[
+              { required: true, message: 'Please enter a new password' },
+              {
+                validator: (_, value) => {
+                  const error = validatePassword(value);
+                  return error ? Promise.reject(new Error(error)) : Promise.resolve();
+                }
+              }
+            ]}
+            help="Password must be at least 8 characters, contain uppercase, lowercase, and special characters"
+          >
+            <Input.Password placeholder="Enter new password" />
+          </Form.Item>
+
+          <Form.Item
+            name="confirmPassword"
+            label="Confirm New Password"
+            dependencies={['newPassword']}
+            rules={[
+              { required: true, message: 'Please confirm your new password' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('newPassword') === value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('Passwords do not match'));
+                },
+              }),
+            ]}
+          >
+            <Input.Password placeholder="Confirm new password" />
+          </Form.Item>
+
+          <Form.Item>
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => {
+                setChangePasswordModalVisible(false);
+                passwordForm.resetFields();
+              }}>
+                Cancel
+              </Button>
+              <Button type="primary" htmlType="submit" loading={changingPassword}>
+                Change Password
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 };
 
-// Borrow Tracking Component (View Only for Members - Shows Leader's Requests)
+// Borrow Tracking Component (View Only for Members - Shows Leader's Requests or User's Own Requests)
 const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user, group, penalties, penaltyDetails }) => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
@@ -2907,23 +3053,42 @@ const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user, group, 
   const [loadingPenalty, setLoadingPenalty] = useState(false);
   const [leaderPenalties, setLeaderPenalties] = useState([]);
   const [leaderPenaltyDetails, setLeaderPenaltyDetails] = useState({});
+  const [trackingMode, setTrackingMode] = useState('leader'); // 'leader' or 'self'
 
-  const fetchBorrowingRequests = useCallback(async () => {
+  // Fetch borrowing requests based on tracking mode
+  const fetchBorrowingRequests = useCallback(async (mode) => {
     setLoading(true);
     try {
-      // Get leader ID from group
-      const leaderId = group?.leaderId;
+      let targetUserId = null;
 
-      if (!leaderId) {
-        console.warn('No leader found in group');
-        setBorrowingRequests([]);
-        message.warning('No leader found in your group. Please contact admin.');
-        return;
+      if (mode === 'leader') {
+        // Get leader ID from group
+        const leaderId = group?.leaderId;
+
+        if (!leaderId) {
+          console.warn('No leader found in group');
+          setBorrowingRequests([]);
+          message.warning('No leader found in your group. Please contact admin.');
+          return;
+        }
+
+        targetUserId = leaderId;
+        console.log('Fetching borrowing requests for leader ID:', leaderId);
+      } else {
+        // Get current user ID
+        if (!user?.id) {
+          console.warn('No user ID found');
+          setBorrowingRequests([]);
+          message.warning('User information not available.');
+          return;
+        }
+
+        targetUserId = user.id;
+        console.log('Fetching borrowing requests for user ID:', user.id);
       }
 
-      console.log('Fetching borrowing requests for leader ID:', leaderId);
-      const requests = await borrowingRequestAPI.getByUser(leaderId);
-      console.log('Borrowing requests for leader:', requests);
+      const requests = await borrowingRequestAPI.getByUser(targetUserId);
+      console.log('Borrowing requests:', requests);
 
       // Sort by createdAt descending (newest first)
       const sortedRequests = (requests || []).sort((a, b) => {
@@ -2940,7 +3105,7 @@ const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user, group, 
     } finally {
       setLoading(false);
     }
-  }, [group, setBorrowingRequests]);
+  }, [group, user, setBorrowingRequests]);
 
   // Load leader's penalties
   const loadLeaderPenalties = useCallback(async () => {
@@ -2962,16 +3127,31 @@ const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user, group, 
     }
   }, [group?.leaderId]);
 
+  // Handle tracking mode change
+  const handleTrackingModeChange = (mode) => {
+    setTrackingMode(mode);
+    fetchBorrowingRequests(mode);
+  };
+
   useEffect(() => {
-    if (group?.leaderId) {
-      fetchBorrowingRequests();
-      loadLeaderPenalties();
+    // Fetch requests based on current tracking mode
+    if (trackingMode === 'leader') {
+      if (group?.leaderId) {
+        fetchBorrowingRequests('leader');
+        loadLeaderPenalties();
+      } else {
+        setBorrowingRequests([]);
+        setLeaderPenalties([]);
+        setLeaderPenaltyDetails({});
+      }
     } else {
-      setBorrowingRequests([]);
-      setLeaderPenalties([]);
-      setLeaderPenaltyDetails({});
+      if (user?.id) {
+        fetchBorrowingRequests('self');
+      } else {
+        setBorrowingRequests([]);
+      }
     }
-  }, [group?.leaderId, fetchBorrowingRequests, loadLeaderPenalties]);
+  }, [trackingMode, group?.leaderId, user?.id, fetchBorrowingRequests, loadLeaderPenalties]);
 
   const showRequestDetails = async (request) => {
     setSelectedRequest(request);
@@ -3171,20 +3351,37 @@ const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user, group, 
         whileHover="hover"
       >
         <Card
-          title="Borrow Tracking (Leader's Requests)"
+          title={`Borrow Tracking (${trackingMode === 'leader' ? "Leader's Requests" : "My Requests"})`}
           extra={
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={fetchBorrowingRequests}
-              loading={loading}
-              disabled={!group?.leaderId}
-            >
-              Refresh
-            </Button>
+            <Space>
+              <Button.Group>
+                <Button
+                  type={trackingMode === 'leader' ? 'primary' : 'default'}
+                  onClick={() => handleTrackingModeChange('leader')}
+                  disabled={!group?.leaderId}
+                >
+                  Leader's Requests
+                </Button>
+                <Button
+                  type={trackingMode === 'self' ? 'primary' : 'default'}
+                  onClick={() => handleTrackingModeChange('self')}
+                >
+                  My Requests
+                </Button>
+              </Button.Group>
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={() => fetchBorrowingRequests(trackingMode)}
+                loading={loading}
+                disabled={trackingMode === 'leader' && !group?.leaderId}
+              >
+                Refresh
+              </Button>
+            </Space>
           }
           style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
         >
-          {!group?.leaderId ? (
+          {(trackingMode === 'leader' && !group?.leaderId) ? (
             <Empty
               description="No leader found in your group"
               image={Empty.PRESENTED_IMAGE_SIMPLE}
