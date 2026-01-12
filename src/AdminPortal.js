@@ -1133,7 +1133,7 @@ function AdminPortal({ onLogout }) {
     const isComponentRental = refundRequest.requestType === 'BORROW_COMPONENT';
 
     // For component rental, we still need to find the parent kit
-    const kit = kits.find(k =>
+    let kit = kits.find(k =>
       k.kitName === refundRequest.kitName ||
       k.name === refundRequest.kitName
     );
@@ -1142,13 +1142,16 @@ function AdminPortal({ onLogout }) {
     console.log('Is component rental:', isComponentRental);
 
     if (!kit) {
-      notification.error({
-        message: 'Kit Not Found',
-        description: `The kit "${refundRequest.kitName}" could not be found. Available kits: ${kits.map(k => k.kitName || k.name).join(', ')}`,
-        placement: 'topRight',
-        duration: 6,
-      });
-      return;
+      console.log('Kit not found, creating virtual kit context for inspection');
+      // Always create virtual kit if not found to allow inspection (removes validation blocking)
+      kit = {
+        id: 'virtual-kit-context',
+        kitName: refundRequest.kitName || 'Individual Components',
+        name: refundRequest.kitName || 'Individual Components',
+        type: 'COMPONENT',
+        components: [],
+        status: 'AVAILABLE'
+      };
     }
 
     // Create a rental-like object for the refund request
@@ -2175,7 +2178,7 @@ function AdminPortal({ onLogout }) {
                 {selectedKey === 'kit-components' && <KitComponentManagement />}
                 {selectedKey === 'maintenance' && <MaintenanceManagement currentUser={profile} />}
                 {selectedKey === 'rentals' && <RentalApprovals rentalRequests={rentalRequests} setRentalRequests={setRentalRequests} setLogHistory={setLogHistory} setTransactions={setTransactions} setRefundRequests={setRefundRequests} onNavigateToRefunds={() => setSelectedKey('refunds')} />}
-                {selectedKey === 'refunds' && <RefundApprovals refundRequests={refundRequests} setRefundRequests={setRefundRequests} openRefundKitInspection={openRefundKitInspection} setLogHistory={setLogHistory} />}
+                {selectedKey === 'refunds' && <RefundApprovals refundRequests={refundRequests} setRefundRequests={setRefundRequests} openRefundKitInspection={openRefundKitInspection} setLogHistory={setLogHistory} onRefresh={loadData} />}
                 {selectedKey === 'kit-component-history' && (
                   <KitComponentHistoryTab
                     kits={kits}
@@ -2434,7 +2437,7 @@ function AdminPortal({ onLogout }) {
                   <Row gutter={16} align="middle">
                     <Col span={12}>
                       <Space direction="vertical" size={4}>
-                        <Text>Quantity: {component.quantity || component.rentedQuantity}</Text>
+                        <Text>Quantity: {component.quantityTotal || component.totalQuantity || component.quantity || component.rentedQuantity}</Text>
                         {component.pricePerCom && (
                           <Text type="secondary" style={{ fontSize: '12px' }}>
                             Price: {Number(component.pricePerCom).toLocaleString()} VND
@@ -4780,7 +4783,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
             </Upload>
           </Space>
           <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginTop: 8 }}>
-            Excel format: index, name, link, quantity
+            Excel format: index, name, link, seri_number, quantity
           </Text>
         </div>
 
@@ -4789,16 +4792,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           columns={[
             { title: 'Component Name', dataIndex: 'componentName', key: 'componentName' },
             { title: 'Type', dataIndex: 'componentType', key: 'componentType' },
-            {
-              title: 'Link',
-              dataIndex: 'link',
-              key: 'link',
-              render: (link) => link ? (
-                <a href={link} target="_blank" rel="noopener noreferrer">
-                  {link.length > 30 ? link.substring(0, 30) + '...' : link}
-                </a>
-              ) : '-'
-            },
+
             { title: 'Total Quantity', dataIndex: 'quantityTotal', key: 'quantityTotal' },
             {
               title: 'Price (VND)',
@@ -4884,9 +4878,9 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
               rules={[{ required: true, message: 'Please select component type' }]}
             >
               <Select>
-                <Option value="RED">Red</Option>
-                <Option value="BLACK">Black</Option>
-                <Option value="WHITE">White</Option>
+                <Option value="BOX">Box</Option>
+                <Option value="SET">Set</Option>
+                <Option value="UNIT">Unit</Option>
               </Select>
             </Form.Item>
             <Form.Item
@@ -4925,6 +4919,13 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
               label="Image URL"
             >
               <Input />
+            </Form.Item>
+            <Form.Item
+              name="seriNumber"
+              label="Serial Number"
+              help="Optional: Add a serial number to the component"
+            >
+              <Input placeholder="Enter serial number" />
             </Form.Item>
             <Form.Item
               name="link"
@@ -5466,6 +5467,7 @@ const KitComponentManagement = () => {
                       <li><b>description</b>: short description of the component (optional)</li>
                       <li><b>image_url</b>: optional image URL (must be a valid URL if provided)</li>
                       <li><b>link</b>: optional reference URL for the component (must be a valid URL if provided)</li>
+                      <li><b>seri_number</b>: optional serial number for the component</li>
                     </ul>
                     <div style={{ marginTop: 8 }}>
                       Components imported from this tab will have <b>kitId = null</b> and are not linked to any specific kit.
@@ -5766,6 +5768,13 @@ const KitComponentManagement = () => {
                                   </Tag>
                                 </div>
                               )}
+                              {component.seriNumber && (
+                                <div style={{ marginTop: 4 }}>
+                                  <Typography.Text type="secondary" style={{ fontSize: '12px' }}>
+                                    Serial: {component.seriNumber}
+                                  </Typography.Text>
+                                </div>
+                              )}
                               {component.link && (
                                 <div style={{ marginTop: 4 }}>
                                   <Button
@@ -5856,9 +5865,9 @@ const KitComponentManagement = () => {
             rules={[{ required: true, message: 'Please select component type' }]}
           >
             <Select>
-              <Option value="RED">Red</Option>
-              <Option value="BLACK">Black</Option>
-              <Option value="WHITE">White</Option>
+              <Option value="BOX">Box</Option>
+              <Option value="SET">Set</Option>
+              <Option value="UNIT">Unit</Option>
             </Select>
           </Form.Item>
           <Form.Item
@@ -5897,6 +5906,13 @@ const KitComponentManagement = () => {
             label="Image URL"
           >
             <Input />
+          </Form.Item>
+          <Form.Item
+            name="seriNumber"
+            label="Serial Number"
+            help="Optional: Add a serial number to the component"
+          >
+            <Input placeholder="Enter serial number" />
           </Form.Item>
           <Form.Item
             name="link"
@@ -6766,7 +6782,7 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
 };
 
 // Refund Approvals Component
-const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspection, setLogHistory }) => {
+const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspection, setLogHistory, onRefresh }) => {
   const [selectedStatuses, setSelectedStatuses] = useState({});
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [selectedRefundDetail, setSelectedRefundDetail] = useState(null);
@@ -7183,6 +7199,16 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
     >
       <Card
         title="Return Checking Management"
+        extra={
+          <Button
+            type="text"
+            icon={<ReloadOutlined />}
+            onClick={onRefresh}
+            style={{ color: '#fff' }}
+          >
+            Refresh
+          </Button>
+        }
         style={{
           borderRadius: '20px',
           background: 'rgba(255, 255, 255, 0.95)',
