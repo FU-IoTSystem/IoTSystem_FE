@@ -28,7 +28,8 @@ import {
   DatePicker,
   Divider,
   Select,
-  Pagination
+  Pagination,
+  Drawer
 } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -2243,8 +2244,15 @@ function LecturerPortal({ user, onLogout }) {
                                             </div>
                                           </>
                                         )}
-                                        {component.link && (
+                                        {component.seriNumber && (
                                           <div style={{ marginTop: 8 }}>
+                                            <Typography.Text type="secondary" style={{ fontSize: '12px' }}>
+                                              Serial: {component.seriNumber}
+                                            </Typography.Text>
+                                          </div>
+                                        )}
+                                        {component.link && (
+                                          <div style={{ marginTop: 4 }}>
                                             <Button
                                               type="link"
                                               size="small"
@@ -2301,84 +2309,144 @@ function LecturerPortal({ user, onLogout }) {
         )}
       </Modal>
 
-      {/* Rental Detail Modal */}
-      <Modal
-        title="Rental Details"
+      {/* Rental Detail Drawer (Refactored to match LeaderPortal) */}
+      <Drawer
+        title="Request Details"
+        placement="right"
+        width={600}
+        onClose={handleCloseDetailModal}
         open={detailModalVisible}
-        onCancel={handleCloseDetailModal}
-        footer={[
-          <Button key="close" onClick={handleCloseDetailModal}>
-            Close
-          </Button>
-        ]}
-        width={700}
       >
         {selectedRentalDetail && (
-          <Descriptions bordered column={2}>
-            <Descriptions.Item label="Kit Name" span={2}>
-              {selectedRentalDetail.kitName}
-            </Descriptions.Item>
-            <Descriptions.Item label="Rental ID">
-              {selectedRentalDetail.rentalId}
-            </Descriptions.Item>
-            <Descriptions.Item label="Status">
-              <Tag color={getStatusColor(selectedRentalDetail.status)}>
-                {selectedRentalDetail.status?.toUpperCase()}
-              </Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="Borrow Date">
-              {formatDate(selectedRentalDetail.borrowDate)}
-            </Descriptions.Item>
-            <Descriptions.Item label="Due Date">
-              {formatDate(selectedRentalDetail.dueDate)}
-            </Descriptions.Item>
-            <Descriptions.Item label="Return Date">
-              {selectedRentalDetail.returnDate
-                ? formatDate(selectedRentalDetail.returnDate)
-                : 'Not returned'}
-            </Descriptions.Item>
-            <Descriptions.Item label="Duration (days)">
-              {(() => {
-                let days = 0;
-                let isLate = false;
+          <div>
+            <Descriptions column={1} bordered>
+              <Descriptions.Item label="Request ID">
+                <Text code>{selectedRentalDetail.id || selectedRentalDetail.rentalId}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Kit Name">
+                <Text strong>{selectedRentalDetail.kitName}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Request Type">
+                <Tag color={selectedRentalDetail.requestType === 'BORROW_KIT' ? 'blue' : 'purple'}>
+                  {selectedRentalDetail.requestType}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="Status">
+                <Tag color={getStatusColor(selectedRentalDetail.status)}>
+                  {selectedRentalDetail.status}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="Reason">
+                {selectedRentalDetail.raw?.reason || user?.reason || 'N/A'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Borrow Date">
+                {formatDate(selectedRentalDetail.borrowDate)}
+              </Descriptions.Item>
+              <Descriptions.Item label="Expected Return Date">
+                {formatDate(selectedRentalDetail.dueDate)}
+              </Descriptions.Item>
+              <Descriptions.Item label="Return Date">
+                {selectedRentalDetail.returnDate ? formatDate(selectedRentalDetail.returnDate) : 'Not returned'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Deposit Amount">
+                {selectedRentalDetail.depositAmount ? `${selectedRentalDetail.depositAmount.toLocaleString()} VND` : '0 VND'}
+              </Descriptions.Item>
+            </Descriptions>
 
-                if (selectedRentalDetail.dueDate) {
-                  const dueDay = dayjs(selectedRentalDetail.dueDate);
-                  const now = dayjs();
-                  const returnDay = selectedRentalDetail.returnDate ? dayjs(selectedRentalDetail.returnDate) : null;
-                  const compareDate = returnDay && returnDay.isValid() ? returnDay : now;
+            {/* Penalty Payment Section - Only show for RETURNED requests */}
+            {selectedRentalDetail.status === 'RETURNED' && (
+              <div style={{ marginTop: '24px' }}>
+                <Divider orientation="left">
+                  <Space>
+                    <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />
+                    <span>Penalty Payment</span>
+                  </Space>
+                </Divider>
+                {(() => {
+                  // Try to find related penalty in the penalties state
+                  const relatedPenalty = penalties.find(p =>
+                    (p.borrowRequestId && p.borrowRequestId === selectedRentalDetail.id) ||
+                    (p.requestId && p.requestId === selectedRentalDetail.id)
+                  );
 
-                  if (dueDay.isValid() && compareDate.isValid()) {
-                    days = Math.max(0, compareDate.diff(dueDay, 'day'));
-                    isLate = compareDate.isAfter(dueDay);
+                  // If found, get details from penaltyDetails state
+                  const relatedDetails = relatedPenalty ? (penaltyDetails[relatedPenalty.id] || []) : [];
+
+                  if (relatedPenalty) {
+                    return (
+                      <Card
+                        size="small"
+                        style={{
+                          marginTop: '16px',
+                          border: relatedPenalty.resolved ? '1px solid #52c41a' : '1px solid #fa8c16'
+                        }}
+                      >
+                        <Descriptions column={1} size="small">
+                          <Descriptions.Item label="Penalty Status">
+                            <Tag color={relatedPenalty.resolved ? 'success' : 'warning'}>
+                              {relatedPenalty.resolved ? 'Resolved' : 'Unresolved'}
+                            </Tag>
+                          </Descriptions.Item>
+                          <Descriptions.Item label="Penalty Amount">
+                            <Text strong style={{ color: '#ff4d4f', fontSize: '16px' }}>
+                              {relatedPenalty.totalAmount ? relatedPenalty.totalAmount.toLocaleString() : 0} VND
+                            </Text>
+                          </Descriptions.Item>
+                          <Descriptions.Item label="Penalty Note">
+                            {relatedPenalty.note || 'N/A'}
+                          </Descriptions.Item>
+                          {relatedPenalty.takeEffectDate && (
+                            <Descriptions.Item label="Take Effect Date">
+                              {new Date(relatedPenalty.takeEffectDate).toLocaleString('vi-VN')}
+                            </Descriptions.Item>
+                          )}
+                          {relatedDetails && relatedDetails.length > 0 && (
+                            <Descriptions.Item label="Penalty Details">
+                              <List
+                                size="small"
+                                dataSource={relatedDetails}
+                                renderItem={(detail, idx) => (
+                                  <List.Item>
+                                    <Text type="secondary" style={{ fontSize: '12px' }}>
+                                      • {detail.description || 'N/A'}: {detail.amount ? detail.amount.toLocaleString() : 0} VND
+                                    </Text>
+                                  </List.Item>
+                                )}
+                              />
+                            </Descriptions.Item>
+                          )}
+                        </Descriptions>
+                      </Card>
+                    );
+                  } else {
+                    return (
+                      <Card size="small" style={{ marginTop: '16px' }}>
+                        <Empty
+                          description="No penalty found for this request"
+                          image={Empty.PRESENTED_IMAGE_SIMPLE}
+                          style={{ padding: '20px 0' }}
+                        />
+                      </Card>
+                    );
                   }
-                }
+                })()}
+              </div>
+            )}
 
-                return (
-                  <Text strong style={{ color: isLate ? '#ff4d4f' : '#999' }}>
-                    {days} day{days !== 1 ? 's' : ''}
-                  </Text>
-                );
-              })()}
-            </Descriptions.Item>
-            <Descriptions.Item label="Late">
-              {(() => {
-                if (!selectedRentalDetail.dueDate) return <Tag>N/A</Tag>;
+            {selectedRentalDetail.raw?.qrCode && (
+              <div style={{ marginTop: '24px', textAlign: 'center' }}>
+                <Title level={4}>QR Code</Title>
+                <img
+                  src={`data:image/png;base64,${selectedRentalDetail.raw.qrCode}`}
+                  alt="QR Code"
+                  style={{ maxWidth: '100%', border: '1px solid #d9d9d9', borderRadius: '8px' }}
+                />
+              </div>
+            )}
 
-                const dueDay = dayjs(selectedRentalDetail.dueDate);
-                const now = dayjs();
-                const returnDay = selectedRentalDetail.returnDate ? dayjs(selectedRentalDetail.returnDate) : null;
-                const compareDate = returnDay && returnDay.isValid() ? returnDay : now;
-
-                const isLate = dueDay.isValid() && compareDate.isValid() && compareDate.isAfter(dueDay);
-                return isLate ? <Tag color="error">Yes</Tag> : <Tag color="success">No</Tag>;
-              })()}
-            </Descriptions.Item>
-            <Descriptions.Item label="Group" span={2}>
-              {selectedRentalDetail.groupName}
-            </Descriptions.Item>
             {selectedRentalDetail.requestType === 'BORROW_COMPONENT' && (
-              <Descriptions.Item label="Kit Components" span={2}>
+              <div style={{ marginTop: '24px' }}>
+                <Divider orientation="left">Components</Divider>
                 <Spin spinning={loadingComponents}>
                   {rentalComponents.length > 0 ? (
                     <div style={{ marginTop: 8 }}>
@@ -2414,11 +2482,11 @@ function LecturerPortal({ user, onLogout }) {
                     <Text type="secondary">No components found for this rental</Text>
                   ) : null}
                 </Spin>
-              </Descriptions.Item>
+              </div>
             )}
-          </Descriptions>
+          </div>
         )}
-      </Modal>
+      </Drawer>
 
       {/* Group Detail Modal */}
       <Modal
