@@ -768,18 +768,26 @@ function AdminPortal({ onLogout }) {
       await loadAllKitComponentHistory();
       return;
     }
-    // Validate kitId before API call
-    if (kitId === 'virtual-kit-context' || (typeof kitId === 'string' && kitId.length !== 36)) {
-      console.warn('Skipping history load for invalid or virtual kit ID:', kitId);
-      setKitComponentHistory([]);
-      return;
-    }
 
     setKitComponentHistoryLoading(true);
     setHistorySelectedKitId(kitId);
     setHistorySelectedComponentId(null);
+
     try {
-      const res = await kitComponentHistoryAPI.getByKit(kitId);
+      let res;
+      if (kitId === 'null') {
+        res = await kitComponentHistoryAPI.getGlobal();
+      } else {
+        // Validate kitId before API call
+        if (kitId === 'virtual-kit-context' || (typeof kitId === 'string' && kitId.length !== 36)) {
+          console.warn('Skipping history load for invalid or virtual kit ID:', kitId);
+          setKitComponentHistory([]);
+          setKitComponentHistoryLoading(false);
+          return;
+        }
+        res = await kitComponentHistoryAPI.getByKit(kitId);
+      }
+
       const data = normalizeHistoryResponse(res);
       setKitComponentHistory(data);
     } catch (error) {
@@ -1289,6 +1297,7 @@ function AdminPortal({ onLogout }) {
               componentName: rc.componentName,
               pricePerCom: rc.price || actualComp.pricePerCom
             } : {
+              id: rc.kitComponentsId || rc.componentId, // Ensure ID is mapped from request if not found in kit
               componentName: rc.componentName,
               name: rc.componentName,
               quantity: rc.quantity,
@@ -1566,9 +1575,7 @@ function AdminPortal({ onLogout }) {
                   action: 'DAMAGED',
                   oldStatus: comp.status || 'UNKNOWN',
                   newStatus: 'DAMAGED',
-                  note: assessment.imageUrl
-                    ? `Damage recorded during return inspection.Evidence: ${assessment.imageUrl} `
-                    : 'Damage recorded during return inspection.',
+                  imgUrl: assessment.imageUrl || null,
                   penaltyDetailId: componentPenaltyMap[compName] || null,
                 };
               })
@@ -9423,10 +9430,13 @@ const KitComponentHistoryTab = ({
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [selectedHistory, setSelectedHistory] = useState(null);
 
-  const kitOptions = useMemo(() => (kits || []).map((kit) => ({
-    value: kit.id,
-    label: kit.kitName || kit.name || 'Unknown kit',
-  })), [kits]);
+  const kitOptions = useMemo(() => [
+    { value: 'null', label: 'Components without Kit' },
+    ...(kits || []).map((kit) => ({
+      value: kit.id,
+      label: kit.kitName || kit.name || 'Unknown kit',
+    }))
+  ], [kits]);
 
   const componentOptions = useMemo(() => {
     const allComponents = (kits || []).flatMap((kit) => {
@@ -9491,13 +9501,6 @@ const KitComponentHistoryTab = ({
       },
     },
     {
-      title: 'Note',
-      dataIndex: 'note',
-      key: 'note',
-      ellipsis: true,
-      render: (value) => value || '-',
-    },
-    {
       title: 'Details',
       key: 'details',
       render: (_, record) => (
@@ -9518,6 +9521,17 @@ const KitComponentHistoryTab = ({
     key: item.id || `${item.componentId || 'component'}-${item.createdAt || index}`,
     ...item,
   }));
+
+  const getComponentImage = (historyItem) => {
+    if (!historyItem || !kits) return null;
+    // Find kit by ID (handle potential type mismatch with == or convert to string if needed, but usually IDs match)
+    const kit = kits.find(k => k.id === historyItem.kitId);
+    if (kit) {
+      const component = kit.components?.find(c => c.id === historyItem.componentId);
+      return component?.imageUrl;
+    }
+    return null;
+  };
 
   return (
     <Card title="Kit Component History" className="kit-history-card">
@@ -9576,8 +9590,27 @@ const KitComponentHistoryTab = ({
             <Descriptions.Item label="New Status">
               {selectedHistory?.newStatus || 'N/A'}
             </Descriptions.Item>
-            <Descriptions.Item label="Note">
-              {selectedHistory?.note || 'N/A'}
+            <Descriptions.Item label="Evidence">
+              {(selectedHistory?.imgUrl || selectedHistory?.penaltyDetailImageUrl) ? (
+                <Image
+                  src={selectedHistory.imgUrl || selectedHistory.penaltyDetailImageUrl}
+                  alt="Evidence"
+                  style={{ maxWidth: '200px', maxHeight: '200px', objectFit: 'contain' }}
+                />
+              ) : 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Component Image">
+              {(() => {
+                const imageUrl = getComponentImage(selectedHistory);
+                return imageUrl ? (
+                  <Image
+                    width={100}
+                    src={imageUrl}
+                    alt="Component"
+                    fallback="https://via.placeholder.com/100?text=No+Image"
+                  />
+                ) : <Text type="secondary">N/A</Text>;
+              })()}
             </Descriptions.Item>
             {selectedHistory?.penaltyDetailImageUrl && (
               <Descriptions.Item label="Damage Image">

@@ -680,6 +680,9 @@ export const kitComponentHistoryAPI = {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  },
+  getGlobal: async () => {
+    return apiRequest('/api/kit-component-history/global');
   }
 };
 
