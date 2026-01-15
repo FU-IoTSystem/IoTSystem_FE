@@ -1406,6 +1406,7 @@ function AdminPortal({ onLogout }) {
           // Build penalty details from selected policies
           const penaltyDetailsData = (selectedPenaltyPolicies || []).map(policy => ({
             amount: policy.amount || 0,
+            quantity: 1,
             description: policy.policyName ?
               `${policy.policyName}${policy.type ? ' - ' + policy.type : ''}` :
               'Policy violation',
@@ -1419,6 +1420,7 @@ function AdminPortal({ onLogout }) {
             .map(([componentName, assessment]) => ({
 
               amount: (assessment.value || 0) * (assessment.quantity || 1),
+              quantity: assessment.quantity || 1,
               description: `Damage to ${componentName}`,
               imageUrl: assessment.imageUrl || null,
               policiesId: null, // No policy for component damage

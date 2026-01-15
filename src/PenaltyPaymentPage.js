@@ -787,6 +787,9 @@ function PenaltyPaymentPage({ user, onLogout }) {
                                 <Text strong style={{ fontSize: 14 }}>
                                   {detail.description || 'Penalty Detail'}
                                 </Text>
+                                <Tag color="blue" style={{ marginLeft: 8 }}>
+                                  x{detail.quantity || 1}
+                                </Tag>
                               </div>
                               <div>
                                 <Text>Amount: </Text>
