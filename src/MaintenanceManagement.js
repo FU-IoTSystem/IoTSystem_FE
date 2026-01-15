@@ -98,7 +98,7 @@ const MaintenanceManagement = ({ currentUser }) => {
         form.setFieldsValue({
             ...record,
             scheduledDate: dayjs(record.scheduledDate),
-            targetId: record.targetId
+            // targetId removed
         });
         setModalVisible(true);
     };
@@ -140,28 +140,33 @@ const MaintenanceManagement = ({ currentUser }) => {
             let dataToExport = [];
 
             if (issues.length > 0) {
-                dataToExport = issues.map(issue => ({
-                    'Plan ID': plan.id,
-                    'Scope': plan.scope,
-                    'Target ID': plan.targetId,
-                    'Scheduled Date': dayjs(plan.scheduledDate).format('YYYY-MM-DD'),
-                    'Reason': plan.reason || 'N/A',
-                    'Plan Status': plan.status,
-                    'Created By': plan.createdBy,
-                    'Issue ID': issue.id,
-                    'Issue Type': issue.issueType,
-                    'Issue Quantity': issue.quantity
-                }));
+                dataToExport = issues.map(issue => {
+                    const comp = components.find(c => c.id === issue.componentId);
+                    const componentName = comp ? comp.componentName : (issue.componentId || 'N/A');
+
+                    return {
+                        'Plan ID': plan.id,
+                        'Scope': plan.scope,
+                        'Scheduled Date': dayjs(plan.scheduledDate).format('YYYY-MM-DD'),
+                        'Reason': plan.reason || 'N/A',
+                        'Plan Status': plan.status,
+                        'Created By': plan.createdBy,
+                        'Issue ID': issue.id,
+                        'Component': componentName,
+                        'Issue Type': issue.issueType,
+                        'Issue Quantity': issue.quantity
+                    };
+                });
             } else {
                 dataToExport = [{
                     'Plan ID': plan.id,
                     'Scope': plan.scope,
-                    'Target ID': plan.targetId,
                     'Scheduled Date': dayjs(plan.scheduledDate).format('YYYY-MM-DD'),
                     'Reason': plan.reason || 'N/A',
                     'Plan Status': plan.status,
                     'Created By': plan.createdBy,
                     'Issue ID': 'N/A',
+                    'Component': 'N/A',
                     'Issue Type': 'N/A',
                     'Issue Quantity': 'N/A'
                 }];
@@ -171,7 +176,7 @@ const MaintenanceManagement = ({ currentUser }) => {
             const wb = { Sheets: { 'data': ws }, SheetNames: ['data'] };
             const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
             const dataBlob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=UTF-8' });
-            saveAs(dataBlob, `MaintenancePlan_${plan.targetId}_${dayjs().format('YYYYMMDD')}.xlsx`);
+            saveAs(dataBlob, `MaintenancePlan_${plan.id}_${dayjs().format('YYYYMMDD')}.xlsx`);
             message.success({ content: 'Export successful', key: 'exportLoading' });
         } catch (error) {
             console.error('Error exporting maintenance plan:', error);
@@ -221,17 +226,7 @@ const MaintenanceManagement = ({ currentUser }) => {
             key: 'scope',
             render: (scope) => <Tag color={scope === 'KIT' ? 'blue' : 'purple'}>{scope}</Tag>,
         },
-        {
-            title: 'Target Name',
-            key: 'targetName',
-            render: (_, record) => {
-                if (record.scope === 'COMPONENT') {
-                    const comp = components.find(c => c.id === record.targetId);
-                    return comp ? comp.componentName : record.targetId;
-                }
-                return record.targetId;
-            },
-        },
+        // Target Name column removed
         {
             title: 'Scheduled Date',
             dataIndex: 'scheduledDate',
@@ -277,6 +272,14 @@ const MaintenanceManagement = ({ currentUser }) => {
 
     const issueColumns = [
         {
+            title: 'Component',
+            key: 'component',
+            render: (_, record) => {
+                const comp = components.find(c => c.id === record.componentId);
+                return comp ? comp.componentName : (record.componentId || 'N/A');
+            }
+        },
+        {
             title: 'Issue Type',
             dataIndex: 'issueType',
             key: 'issueType',
@@ -315,15 +318,11 @@ const MaintenanceManagement = ({ currentUser }) => {
                         <Input disabled />
                     </Form.Item>
 
-                    <Form.Item name="targetId" label="Target Component" rules={[{ required: true }]}>
-                        <Select showSearch optionFilterProp="children">
-                            {components.map(comp => (
-                                <Option key={comp.id} value={comp.id}>{comp.componentName}</Option>
-                            ))}
-                        </Select>
-                    </Form.Item>
                     <Form.Item name="scheduledDate" label="Scheduled Date" rules={[{ required: true }]}>
-                        <DatePicker style={{ width: '100%' }} />
+                        <DatePicker
+                            style={{ width: '100%' }}
+                            disabledDate={(current) => current && current < dayjs().startOf('day')}
+                        />
                     </Form.Item>
                     <Form.Item name="reason" label="Reason" rules={[{ required: true, message: 'Please enter a reason' }]}>
                         <Input.TextArea placeholder="Enter maintenance reason" rows={3} />
@@ -346,11 +345,18 @@ const MaintenanceManagement = ({ currentUser }) => {
                 title="Maintenance Issues"
                 visible={issueModalVisible}
                 onCancel={() => setIssueModalVisible(false)}
-                width={800}
+                width={900}
                 footer={null}
             >
                 <Card type="inner" title="Report New Issue">
                     <Form form={issueForm} layout="inline" onFinish={handleIssueCreate}>
+                        <Form.Item name="componentId" rules={[{ required: true, message: 'Please select a component' }]}>
+                            <Select placeholder="Select Component" showSearch optionFilterProp="children" style={{ width: 250 }}>
+                                {components.map(comp => (
+                                    <Option key={comp.id} value={comp.id}>{comp.componentName}</Option>
+                                ))}
+                            </Select>
+                        </Form.Item>
                         <Form.Item name="issueType" rules={[{ required: true }]}>
                             <Select placeholder="Select Issue Type" style={{ width: 150 }}>
                                 <Option value="DAMAGED">DAMAGED</Option>

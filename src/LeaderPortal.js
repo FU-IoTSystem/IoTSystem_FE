@@ -459,6 +459,30 @@ function LeaderPortal({ user, onLogout }) {
     }
   }, [user]);
 
+  useEffect(() => {
+    if (user && user.id) {
+      loadData();
+
+      // Subscribe to system updates for real-time dashboard reload
+      const unsubscribeSystem = webSocketService.subscribeToSystemUpdates((message) => {
+        console.log('LeaderPortal: System update received:', message);
+        // Reload dashboard data
+        loadData();
+
+        notification.info({
+          message: 'Hệ thống cập nhật',
+          description: 'Dữ liệu đã được làm mới tự động.',
+          placement: 'bottomRight',
+          duration: 3
+        });
+      });
+
+      return () => {
+        if (unsubscribeSystem) webSocketService.unsubscribe(unsubscribeSystem);
+      };
+    }
+  }, [user, loadData]);
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const handlePayPalReturn = useCallback(async (paymentId, payerId) => {
     try {
@@ -1569,7 +1593,7 @@ function LeaderPortal({ user, onLogout }) {
                 {selectedKey === 'group' && <GroupManagement group={group} />}
                 {selectedKey === 'kits' && (
                   <KitRental
-                    kits={kits}
+                    kits={kits?.filter(k => k.status?.toUpperCase() === 'AVAILABLE')} // Filter for Available kits
                     onViewKitDetail={(kit) => handleViewKitDetail(kit, 'kit-rental')}
                     onRentKit={handleRentKit}
                     checkingKitId={kitCheckInProgress}
@@ -1577,7 +1601,7 @@ function LeaderPortal({ user, onLogout }) {
                 )}
                 {selectedKey === 'kit-component-rental' && (
                   <KitComponentRental
-                    components={components}
+                    components={components?.filter(c => c.status?.toUpperCase() === 'AVAILABLE')} // Filter for Available components
                     user={user}
                     onRentComponent={handleRentComponent}
                   />
