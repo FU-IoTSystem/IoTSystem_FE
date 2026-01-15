@@ -57,7 +57,8 @@ import {
   CheckCircleOutlined,
   UploadOutlined,
   SearchOutlined,
-  FilterOutlined
+  FilterOutlined,
+  ClockCircleOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { kitAPI, borrowingGroupAPI, studentGroupAPI, walletAPI, walletTransactionAPI, borrowingRequestAPI, penaltiesAPI, penaltyDetailAPI, notificationAPI, authAPI, classAssignmentAPI, paymentAPI, classesAPI, userAPI, kitComponentAPI } from './api';
@@ -306,6 +307,7 @@ function LecturerPortal({ user, onLogout }) {
       }
 
       // Load groups for lecturer
+      let groupsWithMembers = [];
       try {
         const allGroups = await studentGroupAPI.getAll();
         console.log('All groups response:', allGroups);
@@ -343,7 +345,7 @@ function LecturerPortal({ user, onLogout }) {
         }
 
         // Load borrowing groups for each lecturer group
-        const groupsWithMembers = await Promise.all(
+        groupsWithMembers = await Promise.all(
           lecturerGroups.map(async (group) => {
             const borrowingGroups = await borrowingGroupAPI.getByStudentGroupId(group.id);
             const members = (borrowingGroups || []).map(bg => ({
@@ -447,6 +449,52 @@ function LecturerPortal({ user, onLogout }) {
       try {
         const borrowRequests = await borrowingRequestAPI.getByUser(user.id);
         console.log('Borrow requests raw data:', borrowRequests);
+
+        // Fetch ALL active borrowing requests to check group status
+        // We need to know if ANY member of the group has an active rental
+        let allActiveRequests = [];
+        try {
+          // Fetch both PENDING and APPROVED requests
+          allActiveRequests = await borrowingRequestAPI.getByStatuses(['PENDING', 'APPROVED']);
+          console.log('All active requests:', allActiveRequests);
+        } catch (err) {
+          console.error('Error fetching all active requests:', err);
+        }
+
+        // Map borrow status to groups
+        // A group has active rental if ANY of its members has a PENDING or APPROVED request
+        const groupsWithStatus = groupsWithMembers.map(group => {
+          // Find if any member has an active request
+          const activeRequest = allActiveRequests.find(req => {
+            // Check if request belongs to a member of this group
+            // AND request is for a KIT (not component, though component might also count depending on rules, 
+            // but usually "Kit Borrow Status" refers to the main kit rental limit)
+            const isGroupMember = group.members.some(m => m.id === req.requestedBy.id);
+            // Check status just in case API returns others
+            const isActive = ['PENDING', 'APPROVED'].includes(req.status);
+            // Check type - usually limits apply to KIT rental
+            // If we want to show component rental too, remove this check or adjust logic
+            const isKitRental = req.requestType === 'BORROW_KIT';
+
+            return isGroupMember && isActive && isKitRental;
+          });
+
+          return {
+            ...group,
+            hasActiveRental: !!activeRequest,
+            activeRentalInfo: activeRequest ? {
+              status: activeRequest.status,
+              requestedBy: activeRequest.requestedBy.fullName || activeRequest.requestedBy.email,
+              kitName: activeRequest.kit?.kitName || 'Unknown Kit',
+              date: activeRequest.createdAt
+            } : null
+          };
+        });
+
+        // Update lecturerGroups with the new status info
+        setLecturerGroups(groupsWithStatus);
+
+
 
         // Process each request to check for late status and update if needed
         const processedRequests = await Promise.all((Array.isArray(borrowRequests) ? borrowRequests : []).map(async (request) => {
@@ -840,6 +888,22 @@ function LecturerPortal({ user, onLogout }) {
     payPalReturnProcessedRef.current = false;
     if (user) {
       loadData();
+    }
+  }, [user, loadData]);
+
+  // Subscribe to system updates for real-time dashboard reload
+  useEffect(() => {
+    if (user) {
+      const unsubscribeSystem = webSocketService.subscribeToSystemUpdates((msg) => {
+        console.log('System update received:', msg);
+        loadData();
+        // Use ant design message
+        message.success(`Dashboard updated: ${msg.entity} - ${msg.action}`);
+      });
+
+      return () => {
+        if (unsubscribeSystem) webSocketService.unsubscribe(unsubscribeSystem);
+      };
     }
   }, [user, loadData]);
 
@@ -2560,36 +2624,22 @@ function LecturerPortal({ user, onLogout }) {
                         {selectedGroup.status ? selectedGroup.status.charAt(0).toUpperCase() + selectedGroup.status.slice(1) : 'N/A'}
                       </Tag>
                     </Descriptions.Item>
-                    <Descriptions.Item label="Kit Borrow Status" span={2}>
-                      {(() => {
-                        if (!groupBorrowStatus || groupBorrowStatus.loading) {
-                          return <Tag color="default">Checking...</Tag>;
-                        }
-
-                        if (!groupBorrowStatus.hasLeader) {
-                          return <Tag color="default">No leader assigned</Tag>;
-                        }
-
-                        if (groupBorrowStatus.hasBorrowedKit) {
-                          return (
-                            <Space direction="vertical" size={4}>
-                              <Tag color="green">
-                                Kit borrowed by leader
-                              </Tag>
-                              <Text type="secondary">
-                                Kit: <Text strong>{groupBorrowStatus.kitName}</Text> | Status:{' '}
-                                <Text>{groupBorrowStatus.status}</Text>
-                              </Text>
-                            </Space>
-                          );
-                        }
-
-                        return (
-                          <Tag color="red">
-                            No active kit borrowing
+                    <Descriptions.Item label="Rental Status" span={2}>
+                      {selectedGroup.hasActiveRental ? (
+                        <Space direction="vertical" size={2}>
+                          <Tag color="orange" icon={<ClockCircleOutlined />}>
+                            {selectedGroup.activeRentalInfo?.kitName}
                           </Tag>
-                        );
-                      })()}
+                          <Text type="secondary" style={{ fontSize: '12px' }}>
+                            Borrowed by: <Text strong>{selectedGroup.activeRentalInfo?.requestedBy}</Text>
+                          </Text>
+                          <Text type="secondary" style={{ fontSize: '12px' }}>
+                            Date: {selectedGroup.activeRentalInfo?.date ? new Date(selectedGroup.activeRentalInfo.date).toLocaleDateString() : 'N/A'}
+                          </Text>
+                        </Space>
+                      ) : (
+                        <Tag color="success" icon={<CheckCircleOutlined />}>Available</Tag>
+                      )}
                     </Descriptions.Item>
                   </Descriptions>
                 </Card>
@@ -3073,6 +3123,16 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
                               <Text type="secondary">No members yet</Text>
                             )}
                           </div>
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Rental Status">
+                          {group.hasActiveRental ? (
+                            <Tag color="orange" icon={<ClockCircleOutlined />}>
+                              <div>Borrowing: {group.activeRentalInfo?.kitName}</div>
+                              <div style={{ fontSize: '10px' }}>by {group.activeRentalInfo?.requestedBy}</div>
+                            </Tag>
+                          ) : (
+                            <Tag color="success" icon={<CheckCircleOutlined />}>Available</Tag>
+                          )}
                         </Descriptions.Item>
                       </Descriptions>
                     </Card>

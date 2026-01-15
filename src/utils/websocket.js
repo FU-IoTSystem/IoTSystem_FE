@@ -161,6 +161,10 @@ class WebSocketService {
   subscribeToUserGroups(userId, callback) {
     return this.subscribe(`/queue/groups/${userId}`, callback, `user-groups-${userId}`);
   }
+
+  subscribeToSystemUpdates(callback) {
+    return this.subscribe('/topic/system-updates', callback, 'system-updates');
+  }
 }
 
 // Export singleton instance
