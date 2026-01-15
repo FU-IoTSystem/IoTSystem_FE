@@ -450,7 +450,8 @@ function AdminPortal({ onLogout }) {
               requestType: request.requestType, // Add request type to distinguish kit vs component
               duration: duration,
               isLate: isLate,
-              raw: request
+              raw: request,
+              requestedBy: request.requestedBy
             };
           });
 
@@ -1284,13 +1285,14 @@ function AdminPortal({ onLogout }) {
     }, 100);
   };
 
-  const handleComponentDamage = (componentName, isDamaged, damageValue = 0) => {
+  const handleComponentDamage = (componentName, isDamaged, damageValue = 0, quantity = 1) => {
     setDamageAssessment(prev => {
       const newAssessment = {
         ...prev,
         [componentName]: {
           damaged: isDamaged,
           value: damageValue,
+          quantity: quantity,
           imageUrl: prev[componentName]?.imageUrl || null // Preserve existing image if any
         }
       };
@@ -1306,7 +1308,7 @@ function AdminPortal({ onLogout }) {
       // Calculate fine from component damage using the new assessment
       Object.values(newAssessment).forEach(component => {
         if (component && component.damaged) {
-          totalFine += component.value || 0;
+          totalFine += (component.value || 0) * (component.quantity || 1);
         }
       });
 
@@ -1351,7 +1353,7 @@ function AdminPortal({ onLogout }) {
     // Calculate fine from component damage
     Object.values(damageAssessment).forEach(component => {
       if (component && component.damaged) {
-        totalFine += component.value || 0;
+        totalFine += (component.value || 0) * (component.quantity || 1);
       }
     });
 
@@ -1415,7 +1417,8 @@ function AdminPortal({ onLogout }) {
           const damagedComponentsDetails = Object.entries(damageAssessment || {})
             .filter(([_, assessment]) => assessment && assessment.damaged)
             .map(([componentName, assessment]) => ({
-              amount: assessment.value || 0,
+
+              amount: (assessment.value || 0) * (assessment.quantity || 1),
               description: `Damage to ${componentName}`,
               imageUrl: assessment.imageUrl || null,
               policiesId: null, // No policy for component damage
@@ -2459,10 +2462,24 @@ function AdminPortal({ onLogout }) {
                           </Checkbox>
                           {damageAssessment[component.componentName || component.name]?.damaged && (
                             <Text type="secondary" style={{ fontSize: '12px', marginLeft: 8 }}>
-                              Fine: {Number(damageAssessment[component.componentName || component.name]?.value || component.pricePerCom || 0).toLocaleString()} VND
+                              Fine: {Number(damageAssessment[component.componentName || component.name]?.value || component.pricePerCom || 0).toLocaleString()} VND x {damageAssessment[component.componentName || component.name]?.quantity || 1} = {((damageAssessment[component.componentName || component.name]?.value || component.pricePerCom || 0) * (damageAssessment[component.componentName || component.name]?.quantity || 1)).toLocaleString()} VND
                             </Text>
                           )}
                         </Space>
+                        {damageAssessment[component.componentName || component.name]?.damaged && (
+                          <div style={{ marginTop: 8 }}>
+                            <Text style={{ marginRight: 8 }}>Damaged Quantity:</Text>
+                            <InputNumber
+                              min={1}
+                              max={component.quantityTotal || component.totalQuantity || component.quantity || component.rentedQuantity || 1}
+                              value={damageAssessment[component.componentName || component.name]?.quantity || 1}
+                              onChange={(value) => {
+                                const componentPrice = component.pricePerCom || 0;
+                                handleComponentDamage(component.componentName || component.name, true, componentPrice, value);
+                              }}
+                            />
+                          </div>
+                        )}
                         {damageAssessment[component.componentName || component.name]?.damaged && (
                           <Space direction="vertical" size="small" style={{ width: '100%' }}>
                             <Upload
@@ -4070,9 +4087,24 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
 
       // The backend returns "Your KitComponent is Delete successfully" string
       if (response !== undefined && response !== null) {
-        console.log('Delete component: Success, calling loadComponents()');
-        // Refresh components from backend to get the latest data
-        await loadComponents();
+        console.log('Delete component: Success, updating local state');
+
+        // Update local state immediately to reflect change in UI
+        setComponents((prev) => prev.filter((item) => item.id !== componentId));
+
+        // Also update editingKit
+        setEditingKit((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            components: (prev.components || []).filter((item) => item.id !== componentId)
+          };
+        });
+
+        // Refresh components from backend - Commented out to prevent stale data race condition
+        // If backend read replica is slow, fetching immediately might return the deleted item
+        // rely on local state update for immediate UI feedback
+        // await loadComponents();
 
         notification.success({
           message: 'Success',
@@ -6790,7 +6822,17 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
   const [refundBorrowerClassInfo, setRefundBorrowerClassInfo] = useState(null);
   const [loadingRefundBorrowerInfo, setLoadingRefundBorrowerInfo] = useState(false);
   const [isRefundBorrowerStudent, setIsRefundBorrowerStudent] = useState(false);
+  const [searchText, setSearchText] = useState('');
   const columns = [
+    {
+      title: 'User Code',
+      key: 'userCode',
+      render: (_, record) => (
+        <Text strong>
+          {record.requestedBy?.studentCode || record.requestedBy?.lecturerCode || 'N/A'}
+        </Text>
+      )
+    },
     {
       title: 'Email',
       dataIndex: 'userEmail',
@@ -7224,9 +7266,29 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
           borderRadius: '20px 20px 0 0'
         }}
       >
+        <div style={{ marginBottom: 16 }}>
+          <Input
+            placeholder="Search by User Code, Name, or Email..."
+            prefix={<SearchOutlined />}
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            allowClear
+            style={{ width: 300 }}
+          />
+        </div>
         <Table
           columns={columns}
-          dataSource={refundRequests}
+          dataSource={refundRequests.filter(req => {
+            if (!searchText) return true;
+            const lowerSearch = searchText.toLowerCase();
+            const userCode = (req.requestedBy?.studentCode || req.requestedBy?.lecturerCode || '').toLowerCase();
+            const email = (req.userEmail || '').toLowerCase();
+            const name = (req.userName || '').toLowerCase();
+
+            return userCode.includes(lowerSearch) ||
+              email.includes(lowerSearch) ||
+              name.includes(lowerSearch);
+          })}
           rowKey="id"
           pagination={{
             showSizeChanger: true,
@@ -7347,7 +7409,7 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
           </div>
         )}
       </Modal>
-    </motion.div>
+    </motion.div >
   );
 };
 
