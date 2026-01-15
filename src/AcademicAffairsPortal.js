@@ -62,6 +62,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { LoadingOutlined } from '@ant-design/icons';
 import { classesAPI, userAPI, classAssignmentAPI, excelImportAPI, notificationAPI, authAPI } from './api';
+import webSocketService from './utils/websocket';
 
 // Mock data - TODO: Replace with real API calls
 const mockSemesters = [];
@@ -180,6 +181,22 @@ function AcademicAffairsPortal({ user, onLogout }) {
   useEffect(() => {
     if (user && user.id) {
       loadNotifications();
+    }
+  }, [user]);
+
+  // Subscribe to system updates for real-time dashboard reload
+  useEffect(() => {
+    if (user && user.id) {
+      const unsubscribeSystem = webSocketService.subscribeToSystemUpdates((messageData) => {
+        console.log('System update received:', messageData);
+        loadData();
+        // Use ant design message
+        message.success(`Dashboard updated: ${messageData.entity} - ${messageData.action}`);
+      });
+
+      return () => {
+        if (unsubscribeSystem) webSocketService.unsubscribe(unsubscribeSystem);
+      };
     }
   }, [user]);
 
@@ -2552,17 +2569,11 @@ const DashboardContent = ({ semesters, students, lecturers, iotSubjects }) => {
   const activeSemesters = semesters.filter(s => s.status === 'Active').length;
   const totalStudents = students.length;
   const totalLecturers = lecturers.length;
-  const activeIotSubjects = iotSubjects.filter(s => s.status === 'Active').length;
+  const activeIotSubjects = iotSubjects.filter(s => s.status === 'Active' || s.status === 'ACTIVE' || s.status === true).length;
+  const unassignedStudents = students.filter(s => s.studentClass === 'N/A' || !s.studentClass).length;
 
   // Quick stats for charts
-  const enrollmentTrend = [
-    { month: 'Jan', count: 45 },
-    { month: 'Feb', count: 52 },
-    { month: 'Mar', count: 38 },
-    { month: 'Apr', count: 61 },
-    { month: 'May', count: 55 },
-    { month: 'Jun', count: 48 }
-  ];
+
 
   return (
     <div>
@@ -2612,13 +2623,13 @@ const DashboardContent = ({ semesters, students, lecturers, iotSubjects }) => {
               <div style={{ color: 'white' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{activeSemesters}</div>
-                    <div style={{ fontSize: '14px', opacity: 0.8 }}>Active Semesters</div>
+                    <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{activeIotSubjects}</div>
+                    <div style={{ fontSize: '14px', opacity: 0.8 }}>Active Class/Semester</div>
                   </div>
                   <ReadOutlined style={{ fontSize: '32px', opacity: 0.8 }} />
                 </div>
                 <div style={{ marginTop: '16px', fontSize: '12px', opacity: 0.7 }}>
-                  {semesters.length} total semesters
+                  {activeSemesters} active semesters
                 </div>
               </div>
             </Card>
@@ -2677,58 +2688,35 @@ const DashboardContent = ({ semesters, students, lecturers, iotSubjects }) => {
           </motion.div>
         </Col>
 
-      </Row>
-
-      {/* Charts and Analytics Section */}
-      <Row gutter={[24, 24]} style={{ marginTop: '24px' }}>
-        <Col xs={24} lg={16}>
+        <Col xs={24} sm={12} lg={6}>
           <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
             <Card
-              title={
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <BarChartOutlined style={{ color: '#667eea' }} />
-                  <span>Enrollment Trends</span>
-                </div>
-              }
-              style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+              style={{
+                borderRadius: '16px',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+                background: 'linear-gradient(135deg, #fa8c16 0%, #d46b08 100%)',
+                border: 'none'
+              }}
             >
-              <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <div style={{ textAlign: 'center', color: '#666' }}>
-                  <BarChartOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
-                  <div>Enrollment trend visualization</div>
-                  <div style={{ fontSize: '12px', marginTop: '8px' }}>
-                    {enrollmentTrend.map(item => `${item.month}: ${item.count}`).join(' | ')}
+              <div style={{ color: 'white' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{unassignedStudents}</div>
+                    <div style={{ fontSize: '14px', opacity: 0.8 }}>Unassigned Students</div>
                   </div>
+                  <UserAddOutlined style={{ fontSize: '32px', opacity: 0.8 }} />
+                </div>
+                <div style={{ marginTop: '16px', fontSize: '12px', opacity: 0.7 }}>
+                  Students without class
                 </div>
               </div>
             </Card>
           </motion.div>
         </Col>
 
-        <Col xs={24} lg={8}>
-          <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-            <Card
-              title={
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <PieChartOutlined style={{ color: '#f093fb' }} />
-                  <span>System Overview</span>
-                </div>
-              }
-              style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
-            >
-              <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <div style={{ textAlign: 'center', color: '#666' }}>
-                  <PieChartOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
-                  <div>System distribution chart</div>
-                  <div style={{ fontSize: '12px', marginTop: '8px' }}>
-                    Students: {totalStudents} | Lecturers: {totalLecturers}
-                  </div>
-                </div>
-              </div>
-            </Card>
-          </motion.div>
-        </Col>
       </Row>
+
+
 
       {/* Quick Actions */}
       <Row gutter={[24, 24]} style={{ marginTop: '24px' }}>
@@ -2782,63 +2770,7 @@ const DashboardContent = ({ semesters, students, lecturers, iotSubjects }) => {
       </Row>
 
       {/* System Status and Performance */}
-      <Row gutter={[24, 24]} style={{ marginTop: '24px' }}>
-        <Col xs={24}>
-          <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
-            <Card
-              title={
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <DashboardOutlined style={{ color: '#722ed1' }} />
-                  <span>System Performance</span>
-                </div>
-              }
-              style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
-            >
-              <Row gutter={[24, 24]}>
-                <Col xs={24} sm={8}>
-                  <div style={{ textAlign: 'center' }}>
-                    <Progress
-                      type="circle"
-                      percent={85}
-                      format={() => '85%'}
-                      strokeColor="#667eea"
-                      size={80}
-                    />
-                    <div style={{ marginTop: '16px', fontWeight: 'bold' }}>System Health</div>
-                    <div style={{ fontSize: '12px', color: '#666' }}>All systems operational</div>
-                  </div>
-                </Col>
-                <Col xs={24} sm={8}>
-                  <div style={{ textAlign: 'center' }}>
-                    <Progress
-                      type="circle"
-                      percent={92}
-                      format={() => '92%'}
-                      strokeColor="#52c41a"
-                      size={80}
-                    />
-                    <div style={{ marginTop: '16px', fontWeight: 'bold' }}>Data Accuracy</div>
-                    <div style={{ fontSize: '12px', color: '#666' }}>High quality data</div>
-                  </div>
-                </Col>
-                <Col xs={24} sm={8}>
-                  <div style={{ textAlign: 'center' }}>
-                    <Progress
-                      type="circle"
-                      percent={78}
-                      format={() => '78%'}
-                      strokeColor="#fa8c16"
-                      size={80}
-                    />
-                    <div style={{ marginTop: '16px', fontWeight: 'bold' }}>User Satisfaction</div>
-                    <div style={{ fontSize: '12px', color: '#666' }}>Good feedback</div>
-                  </div>
-                </Col>
-              </Row>
-            </Card>
-          </motion.div>
-        </Col>
-      </Row>
+
     </div>
   );
 };

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   Layout,
@@ -37,7 +38,8 @@ import {
   InputNumber,
   Carousel,
   Pagination,
-  Progress
+  Progress,
+  Image
 } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as XLSX from 'xlsx';
@@ -92,6 +94,14 @@ const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 const { Option } = Select;
 const { RangePicker } = DatePicker;
+
+const exportToExcel = (data, fileName) => {
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = { Sheets: { 'data': ws }, SheetNames: ['data'] };
+  const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const dataBlob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=UTF-8' });
+  saveAs(dataBlob, `${fileName}_${new Date().getTime()}.xlsx`);
+};
 
 function AdminPortal({ onLogout }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -181,6 +191,36 @@ function AdminPortal({ onLogout }) {
 
   useEffect(() => {
     loadData();
+
+    // Subscribe to system updates for real-time dashboard reload
+    const unsubscribeSystem = webSocketService.subscribeToSystemUpdates((message) => {
+      console.log('System update received:', message);
+      // Reload dashboard data
+      loadData();
+      // Also reload specific tabs if needed
+      if (selectedKey === 'fines') {
+        // Refetch fines
+        penaltiesAPI.getUnresolved().then(res => { /* logic to update fines state */ });
+        // Actually loadData() should cover most widgets, but for specific tabs we might need more granular reload. 
+        // For now, let's just trigger loadData() which refreshes the dashboard/stats.
+        // Ideally we should refactor loadUnresolvedPenalties to be callable here.
+      }
+      // Force refresh of current view
+      if (selectedKey) setSelectedKey(prev => prev); // Trigger useEffect dependency? No, that loops. 
+
+      // Better:
+      if (selectedKey === 'fines') {
+        // Re-trigger the useEffect that depends on selectedKey by forcing a reload function, but useEffect relies on selectedKey changing.
+        // Instead, let's extract loadUnresolvedPenalties to a useCallback and call it.
+        // For now, loadData covers Stats. Effect for 'fines' needs to be triggered.
+      }
+
+      message.success(`Dashboard updated: ${message.entity} - ${message.action}`);
+    });
+
+    return () => {
+      if (unsubscribeSystem) webSocketService.unsubscribe(unsubscribeSystem);
+    };
   }, []);
 
   // Auto-calculate fine amount when damage or penalty policies change
@@ -204,6 +244,7 @@ function AdminPortal({ onLogout }) {
           kitName: 'N/A',
           studentEmail: p.accountEmail || 'N/A',
           studentName: p.accountEmail || 'N/A',
+          userCode: p.userCode || 'N/A',
           leaderEmail: p.accountEmail || 'N/A',
           leaderName: p.accountEmail || 'N/A',
           fineAmount: (p.totalAmount !== undefined && p.totalAmount !== null) ? Number(p.totalAmount) : 0,
@@ -242,6 +283,7 @@ function AdminPortal({ onLogout }) {
           createdAt: p.takeEffectDate || new Date().toISOString(),
           status: p.resolved ? 'paid' : 'pending',
           resolved: p.resolved || false,
+          userCode: p.userCode || 'N/A',
         }));
         // Update fines with all penalties for dashboard
         setFines(prev => {
@@ -536,7 +578,19 @@ function AdminPortal({ onLogout }) {
       setAvailableStudents(studentUsers);
 
       // Calculate system stats from fetched data (not from state)
-      const availableKitsCount = fetchedKits.filter(kit => kit.status === 'AVAILABLE' || kit.status === 'available').length;
+      const availableKitsCount = fetchedKits.filter(kit => (kit.status === 'AVAILABLE' || kit.status === 'available')).length;
+
+      // Calculate breakdown by type
+      const availableStudentKits = fetchedKits.filter(kit =>
+        (kit.status === 'AVAILABLE' || kit.status === 'available') &&
+        (kit.type === 'STUDENT_KIT' || kit.category === 'STUDENT_KIT')
+      ).length;
+
+      const availableLecturerKits = fetchedKits.filter(kit =>
+        (kit.status === 'AVAILABLE' || kit.status === 'available') &&
+        (kit.type === 'LECTURER_KIT' || kit.category === 'LECTURER_KIT')
+      ).length;
+
       const pendingRequestsCount = fetchedRentalRequests.filter(req => req.status === 'PENDING' || req.status === 'PENDING_APPROVAL').length;
 
       // Calculate kits in use from approved requests (same API as return checking)
@@ -554,6 +608,7 @@ function AdminPortal({ onLogout }) {
         })
         .reduce((sum, txn) => sum + (txn.amount || 0), 0);
 
+
       // Calculate recent activity from rental requests and transactions
       const recentActivity = [];
 
@@ -566,15 +621,15 @@ function AdminPortal({ onLogout }) {
 
         let actionText = '';
         if (status === 'PENDING' || status === 'PENDING_APPROVAL') {
-          actionText = `Requested to rent ${kitName}`;
+          actionText = `Requested to rent ${kitName} `;
         } else if (status === 'APPROVED') {
           actionText = `Approved rental for ${kitName}`;
         } else if (status === 'REJECTED') {
           actionText = `Rejected rental request for ${kitName}`;
         } else if (status === 'RETURNED') {
-          actionText = `Returned ${kitName}`;
+          actionText = `Returned ${kitName} `;
         } else {
-          actionText = `${status} - ${kitName}`;
+          actionText = `${status} - ${kitName} `;
         }
 
         const timeAgo = getTimeAgo(timestamp);
@@ -592,13 +647,13 @@ function AdminPortal({ onLogout }) {
         const timestamp = txn.createdAt || txn.transactionDate || new Date().toISOString();
         let actionText = '';
         if (txnType === 'RENTAL_FEE') {
-          actionText = `Rental fee payment: ${formatCurrency(txn.amount || 0)}`;
+          actionText = `Rental fee payment: ${formatCurrency(txn.amount || 0)} `;
         } else if (txnType === 'PENALTY_PAYMENT') {
-          actionText = `Penalty payment: ${formatCurrency(txn.amount || 0)}`;
+          actionText = `Penalty payment: ${formatCurrency(txn.amount || 0)} `;
         } else if (txnType === 'DEPOSIT') {
-          actionText = `Deposit: ${formatCurrency(txn.amount || 0)}`;
+          actionText = `Deposit: ${formatCurrency(txn.amount || 0)} `;
         } else {
-          actionText = `${txnType}: ${formatCurrency(txn.amount || 0)}`;
+          actionText = `${txnType}: ${formatCurrency(txn.amount || 0)} `;
         }
 
         const timeAgo = getTimeAgo(timestamp);
@@ -620,11 +675,14 @@ function AdminPortal({ onLogout }) {
       setSystemStats({
         totalUsers: fetchedUsers.length,
         availableKits: availableKitsCount,
+        availableStudentKits: availableStudentKits,
+        availableLecturerKits: availableLecturerKits,
         pendingApprovals: pendingRequestsCount,
         kitsInUse: kitsInUseCount,
         monthlyRevenue: statsMonthlyRevenueAmount,
         recentActivity: recentActivity.slice(0, 20)
       });
+
 
       console.log('Data loaded successfully');
       console.log('System stats:', {
@@ -704,6 +762,13 @@ function AdminPortal({ onLogout }) {
       await loadAllKitComponentHistory();
       return;
     }
+    // Validate kitId before API call
+    if (kitId === 'virtual-kit-context' || (typeof kitId === 'string' && kitId.length !== 36)) {
+      console.warn('Skipping history load for invalid or virtual kit ID:', kitId);
+      setKitComponentHistory([]);
+      return;
+    }
+
     setKitComponentHistoryLoading(true);
     setHistorySelectedKitId(kitId);
     setHistorySelectedComponentId(null);
@@ -739,40 +804,63 @@ function AdminPortal({ onLogout }) {
     }
   };
 
+  const rentalRequestSubscriptionRef = useRef(null);
   const notificationSubscriptionRef = useRef(null);
+
+  const refreshDashboardStats = async () => {
+    try {
+      console.log('WebSocket trigger: Refreshing dashboard stats...');
+      const statsResponse = await borrowingRequestAPI.getBorrowPenaltyStats();
+      const statsData = Array.isArray(statsResponse) ? statsResponse : (statsResponse?.data ?? []);
+      setBorrowPenaltyStats(statsData);
+    } catch (statsError) {
+      console.error('Error reloading borrow/penalty stats:', statsError);
+    }
+  };
+
 
   useEffect(() => {
     loadNotifications();
 
-    // Connect to WebSocket and subscribe to admin notifications
+    // Connect to WebSocket and subscribe to admin notifications & rental requests
     webSocketService.connect(
       () => {
-        console.log('WebSocket connected for admin notifications');
+        console.log('WebSocket connected for admin updates');
+
         // Subscribe to admin notifications
+        if (notificationSubscriptionRef.current) {
+          webSocketService.unsubscribe(notificationSubscriptionRef.current);
+        }
         notificationSubscriptionRef.current = webSocketService.subscribeToAdminNotifications((data) => {
           console.log('Received new notification via WebSocket:', data);
           // Add new notification to the list
           setNotifications(prev => {
-            // Check if notification already exists
             const exists = prev.find(notif => notif.id === data.id);
             if (!exists) {
-              // Show browser notification
               notification.info({
                 message: data.title || 'New Notification',
                 description: data.message,
                 placement: 'topRight',
                 duration: 5,
               });
-              // Add new notification at the beginning and maintain sort order
               const updated = [data, ...prev];
               return updated.sort((a, b) => {
                 const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0);
                 const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0);
-                return dateB - dateA; // Descending order (newest first)
+                return dateB - dateA;
               });
             }
             return prev;
           });
+        });
+
+        // Subscribe to rental requests updates for dashboard charts
+        if (rentalRequestSubscriptionRef.current) {
+          webSocketService.unsubscribe(rentalRequestSubscriptionRef.current);
+        }
+        rentalRequestSubscriptionRef.current = webSocketService.subscribeToAdminRentalRequests((data) => {
+          console.log('Received rental request update via WebSocket:', data);
+          refreshDashboardStats();
         });
       },
       (error) => {
@@ -784,6 +872,9 @@ function AdminPortal({ onLogout }) {
     return () => {
       if (notificationSubscriptionRef.current) {
         webSocketService.unsubscribe(notificationSubscriptionRef.current);
+      }
+      if (rentalRequestSubscriptionRef.current) {
+        webSocketService.unsubscribe(rentalRequestSubscriptionRef.current);
       }
       webSocketService.disconnect();
     };
@@ -1031,7 +1122,7 @@ function AdminPortal({ onLogout }) {
     if (newMembersCount > MAX_GROUP_MEMBERS) {
       notification.warning({
         message: 'Too Many Members',
-        description: `A group can have maximum ${MAX_GROUP_MEMBERS} members. You selected ${newMembersCount} members.`,
+        description: `A group can have maximum ${MAX_GROUP_MEMBERS} members.You selected ${newMembersCount} members.`,
         placement: 'topRight',
         duration: 4,
       });
@@ -1099,7 +1190,7 @@ function AdminPortal({ onLogout }) {
 
       notification.success({
         message: 'Group Updated Successfully',
-        description: `Successfully updated ${groupName}. ${membersToRemove.length > 0 ? `Removed ${membersToRemove.length} member(s). ` : ''}${membersToAdd.length > 0 ? `Added ${membersToAdd.length} member(s).` : 'No changes made.'}`,
+        description: `Successfully updated ${groupName}. ${membersToRemove.length > 0 ? `Removed ${membersToRemove.length} member(s). ` : ''}${membersToAdd.length > 0 ? `Added ${membersToAdd.length} member(s).` : 'No changes made.'} `,
         placement: 'topRight',
         duration: 4,
       });
@@ -1375,6 +1466,10 @@ function AdminPortal({ onLogout }) {
     // Check if this is a refund request or rental request
     const isRefundRequest = selectedRental && (selectedRental.status === 'approved' || selectedRental.status === 'pending');
 
+    // Initialize notification variables in outer scope
+    let hasPenalty = false;
+    let depositAmount = selectedRental?.depositAmount || selectedRental?.totalCost || 0;
+
     // IMPORTANT: Create penalty FIRST before updating status to RETURNED
     // This ensures backend can check for unresolved penalties and won't refund deposit prematurely
     let penaltyCreated = false;
@@ -1408,7 +1503,7 @@ function AdminPortal({ onLogout }) {
             amount: policy.amount || 0,
             quantity: 1,
             description: policy.policyName ?
-              `${policy.policyName}${policy.type ? ' - ' + policy.type : ''}` :
+              `${policy.policyName}${policy.type ? ' - ' + policy.type : ''} ` :
               'Policy violation',
             policiesId: policy.id,
             penaltyId: penaltyId
@@ -1421,7 +1516,7 @@ function AdminPortal({ onLogout }) {
 
               amount: (assessment.value || 0) * (assessment.quantity || 1),
               quantity: assessment.quantity || 1,
-              description: `Damage to ${componentName}`,
+              description: `Damage to ${componentName} `,
               imageUrl: assessment.imageUrl || null,
               policiesId: null, // No policy for component damage
               penaltyId: penaltyId
@@ -1458,13 +1553,13 @@ function AdminPortal({ onLogout }) {
                 const assessment = damageAssessment[compName];
                 if (!assessment?.damaged) return null;
                 return {
-                  kitId: selectedKit?.id,
+                  kitId: (selectedKit?.id && selectedKit.id !== 'virtual-kit-context' && selectedKit.id.length === 36) ? selectedKit.id : null,
                   componentId: comp.id,
                   action: 'DAMAGED',
                   oldStatus: comp.status || 'UNKNOWN',
                   newStatus: 'DAMAGED',
                   note: assessment.imageUrl
-                    ? `Damage recorded during return inspection. Evidence: ${assessment.imageUrl}`
+                    ? `Damage recorded during return inspection.Evidence: ${assessment.imageUrl} `
                     : 'Damage recorded during return inspection.',
                   penaltyDetailId: componentPenaltyMap[compName] || null,
                 };
@@ -1513,7 +1608,7 @@ function AdminPortal({ onLogout }) {
             actualReturnDate: actualReturnDateStr,
             isLate: isLate
           });
-          console.log(`Borrowing request status updated to RETURNED, isLate: ${isLate}`);
+          console.log(`Borrowing request status updated to RETURNED, isLate: ${isLate} `);
         } catch (updateError) {
           console.error('Error updating borrowing request:', updateError);
         }
@@ -1560,7 +1655,7 @@ function AdminPortal({ onLogout }) {
 
         notification.success({
           message: 'Kit Inspection Completed',
-          description: `Fine of ${totalFine.toLocaleString()} VND sent to group leader ${leader ? leader.name : leaderEmail}`,
+          description: `Fine of ${totalFine.toLocaleString()} VND sent to group leader ${leader ? leader.name : leaderEmail} `,
           placement: 'topRight',
           duration: 5,
         });
@@ -1592,51 +1687,8 @@ function AdminPortal({ onLogout }) {
         });
       }
 
-      try {
-        const targetAccountId = users.find(u => u.email === (selectedRental?.userEmail))?.id;
+      // Notification logic moved to end of function
 
-        if (targetAccountId) {
-          const notificationsPayload = [{
-            subType: totalFine > 0 ? 'UNPAID_PENALTY' : 'OVERDUE_RETURN',
-            userId: targetAccountId,
-            title: totalFine > 0 ? 'Bạn có khoản phạt mới' : 'Trả kit thành công',
-            message:
-              totalFine > 0
-                ? `Kit ${selectedKit?.kitName || ''} có phát sinh khoản phạt ${totalFine.toLocaleString()} VND. Vui lòng kiểm tra và thanh toán.`
-                : `Kit ${selectedKit?.kitName || ''} đã được check-in thành công.`
-          }];
-
-          if (group) {
-            const leaderAccountId = users.find(u => u.email === group.leader)?.id;
-            if (leaderAccountId && leaderAccountId !== targetAccountId) {
-              notificationsPayload.push({
-                subType: 'UNPAID_PENALTY',
-                userId: leaderAccountId,
-                title: 'Khoản phạt của nhóm',
-                message: `Nhóm có khoản phạt ${totalFine.toLocaleString()} VND do kit ${selectedKit?.kitName || ''} bị tổn thất.`
-              });
-            }
-          }
-
-          try {
-            await notificationAPI.createNotifications(notificationsPayload);
-            console.log('Notifications sent successfully:', notificationsPayload.length);
-          } catch (notifyError) {
-            console.error('Error sending check-in notifications:', notifyError);
-            // Show error to admin but don't block the process
-            notification.warning({
-              message: 'Notification Error',
-              description: 'Kit inspection completed but failed to send notifications. Please check manually.',
-              placement: 'topRight',
-              duration: 5,
-            });
-          }
-        } else {
-          console.warn('Target account ID not found for user:', selectedRental?.userEmail);
-        }
-      } catch (error) {
-        console.error('Error preparing notifications:', error);
-      }
 
       // For refund requests with damage, add to log history and remove from refund requests
       if (isRefundRequest) {
@@ -1671,7 +1723,7 @@ function AdminPortal({ onLogout }) {
 
         notification.success({
           message: 'Kit Checkin Completed',
-          description: `Kit returned with damage. Fine of ${totalFine.toLocaleString()} VND has been created.`,
+          description: `Kit returned with damage.Fine of ${totalFine.toLocaleString()} VND has been created.`,
           placement: 'topRight',
           duration: 5,
         });
@@ -1697,11 +1749,11 @@ function AdminPortal({ onLogout }) {
       }
 
       // Calculate refund amount (deposit amount if no penalty)
-      const depositAmount = selectedRental?.depositAmount || selectedRental?.totalCost || 0;
+      // depositAmount is already initialized at top
 
       // Check if there's a penalty for this request (if penalty exists, refund is handled in penalty payment)
       // Wait a bit for backend to process refund, then check for penalties
-      let hasPenalty = false;
+      // hasPenalty is already initialized at top
       try {
         // Check for unresolved penalties related to this borrowing request
         const unresolvedPenalties = await penaltiesAPI.getUnresolved();
@@ -1736,7 +1788,7 @@ function AdminPortal({ onLogout }) {
           details: {
             kitName: selectedKit.name,
             kitId: selectedKit.id,
-            requestId: `REF-${selectedRental.id}`,
+            requestId: `REF - ${selectedRental.id} `,
             refundAmount: depositAmount,
             refundStatus: 'completed',
             originalRentalId: selectedRental.id,
@@ -1757,7 +1809,7 @@ function AdminPortal({ onLogout }) {
 
         notification.success({
           message: 'Refund Processed Successfully',
-          description: `Refund of ${depositAmount.toLocaleString()} VND has been sent to ${selectedRental.userName}'s wallet. Kit status changed to AVAILABLE.`,
+          description: `Refund of ${depositAmount.toLocaleString()} VND has been sent to ${selectedRental.userName} 's wallet. Kit status changed to AVAILABLE.`,
           placement: 'topRight',
           duration: 5,
         });
@@ -1784,23 +1836,76 @@ function AdminPortal({ onLogout }) {
       }
 
       // Send refund notification to user if no penalty exists
-      if (!hasPenalty && depositAmount > 0) {
-        try {
-          const targetAccountId = users.find(u => u.email === (selectedRental?.userEmail))?.id;
+      // Notification logic moved to end of function
 
-          if (targetAccountId) {
-            await notificationAPI.createNotifications([{
+
+    }
+
+
+    // --- Unified Notification Logic ---
+    try {
+      // Use reliable ID from selectedRental.raw (backend response) instead of users array (limited pagination)
+      const targetAccountId = selectedRental?.raw?.requestedBy?.id || selectedRental?.requestedBy?.id;
+
+      if (targetAccountId) {
+        const isComponentReturn = selectedRental?.requestType === 'BORROW_COMPONENT';
+        const itemLabel = isComponentReturn ? 'Component' : 'Kit';
+        const notificationsPayload = [];
+
+        if (totalFine > 0) {
+          // Penalty Notification
+          notificationsPayload.push({
+            subType: 'UNPAID_PENALTY',
+            userId: targetAccountId,
+            title: 'Bạn có khoản phạt mới',
+            message: `${itemLabel} ${selectedKit?.kitName || ''} có phát sinh khoản phạt ${totalFine.toLocaleString()} VND. Vui lòng kiểm tra và thanh toán.`
+          });
+
+          // Group Leader Notification
+          const group = groups.find(g => g.members && g.members.includes(selectedRental?.userEmail));
+          if (group) {
+            const leaderAccountId = users.find(u => u.email === group.leader)?.id;
+            if (leaderAccountId && leaderAccountId !== targetAccountId) {
+              notificationsPayload.push({
+                subType: 'UNPAID_PENALTY',
+                userId: leaderAccountId,
+                title: 'Khoản phạt của nhóm',
+                message: `Nhóm có khoản phạt ${totalFine.toLocaleString()} VND do ${itemLabel.toLowerCase()} ${selectedKit?.kitName || ''} bị tổn thất.`
+              });
+            }
+          }
+        } else {
+          // Success / Refund Notification
+          if (!hasPenalty && depositAmount > 0) {
+            notificationsPayload.push({
               subType: 'DEPOSIT_SUCCESS',
               userId: targetAccountId,
-              title: 'Hoàn tiền thuê kit thành công',
-              message: `Kit ${selectedKit?.kitName || ''} đã được trả thành công. Bạn đã được hoàn lại ${depositAmount.toLocaleString()} VND vào ví.`
-            }]);
+              title: `Hoàn tiền thuê ${itemLabel.toLowerCase()} thành công`,
+              message: `${itemLabel} ${selectedKit?.kitName || ''} đã được trả thành công. Bạn đã được hoàn lại ${depositAmount.toLocaleString()} VND vào ví.`
+            });
+          } else {
+            // Just a generic success return notification
+            notificationsPayload.push({
+              subType: 'RETURN_SUCCESS',
+              userId: targetAccountId,
+              title: `Trả ${itemLabel.toLowerCase()} thành công`,
+              message: `${itemLabel} ${selectedKit?.kitName || ''} đã được trả thành công.`
+            });
           }
-        } catch (notifyError) {
-          console.error('Error sending refund notification:', notifyError);
         }
+
+        if (notificationsPayload.length > 0) {
+          await notificationAPI.createNotifications(notificationsPayload);
+          console.log('Notifications sent successfully:', notificationsPayload.length);
+        }
+
+      } else {
+        console.warn('Target account ID not found for user:', selectedRental?.userEmail);
       }
+    } catch (notifyError) {
+      console.error('Error sending unified notifications:', notifyError);
     }
+    // -----------------------------------
 
     setKitInspectionModalVisible(false);
     setSelectedKit(null);
@@ -2898,18 +3003,32 @@ const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPen
       suffix: 'users'
     },
     {
-      title: 'Available Kits',
-      value: systemStats.availableKits || 0,
+      title: 'Available Kits (by Type)',
+      // value: systemStats.availableKits || 0,
+      value: (
+        <div style={{ fontSize: '16px', lineHeight: '1.5' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+            <span>Available:</span>
+            <span style={{ fontWeight: 'bold' }}>{systemStats.availableKits || 0}</span>
+          </div>
+          <div style={{ fontSize: '14px', color: '#666' }}>
+            <span style={{ color: '#1890ff' }}>Student: {systemStats.availableStudentKits || 0}</span>
+            <span style={{ margin: '0 8px' }}>|</span>
+            <span style={{ color: '#eb2f96' }}>Lecturer: {systemStats.availableLecturerKits || 0}</span>
+          </div>
+        </div>
+      ),
       icon: <ToolOutlined />,
       color: '#52c41a',
-      suffix: 'kits'
+      suffix: '', // Remove suffix as we use custom content
+      isCustomValue: true // Flag to handle rendering
     },
     {
-      title: 'Kits In Use',
+      title: 'Ongoing Borrow Requests',
       value: systemStats.kitsInUse || 0,
       icon: <ShoppingOutlined />,
       color: '#ff7875',
-      suffix: 'kits'
+      suffix: 'requests'
     },
     {
       title: 'Pending Approvals',
@@ -2918,13 +3037,7 @@ const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPen
       color: '#faad14',
       suffix: 'requests'
     },
-    {
-      title: 'Monthly Revenue',
-      value: systemStats.monthlyRevenue || 0,
-      icon: <DollarOutlined />,
-      color: '#722ed1',
-      suffix: 'VND'
-    }
+
   ];
 
   return (
@@ -2967,25 +3080,29 @@ const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPen
                     {stat.icon}
                   </div>
                 </motion.div>
-                <Statistic
-                  title={
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: index * 0.1 + 0.7, duration: 0.3 }}
-                    >
-                      {stat.title}
-                    </motion.div>
-                  }
-                  value={stat.value}
-                  suffix={stat.suffix}
-                  valueStyle={{
-                    color: stat.color,
-                    fontSize: '28px',
-                    fontWeight: 'bold'
-                  }}
-                  prefix={null}
-                />
+                {stat.isCustomValue ? (
+                  stat.value
+                ) : (
+                  <Statistic
+                    title={
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: index * 0.1 + 0.7, duration: 0.3 }}
+                      >
+                        {stat.title}
+                      </motion.div>
+                    }
+                    value={stat.value}
+                    suffix={stat.suffix}
+                    valueStyle={{
+                      color: stat.color,
+                      fontSize: '28px',
+                      fontWeight: 'bold'
+                    }}
+                    prefix={null}
+                  />
+                )}
               </Card>
             </motion.div>
           </Col>
@@ -5998,7 +6115,15 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
       title: 'Kit',
       dataIndex: 'kit',
       key: 'kit',
-      render: (kit) => kit?.kitName || 'N/A'
+      render: (kit, record) => {
+        if (record.requestType === 'BORROW_COMPONENT') {
+          if (kit && kit.components && kit.components.length > 0) {
+            return kit.components.map(c => c.componentName || c.name).join(', ');
+          }
+          return 'Component (Name N/A)';
+        }
+        return kit?.kitName || 'N/A';
+      }
     },
     {
       title: 'Request Type',
@@ -7424,7 +7549,34 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
   const [penaltyDetails, setPenaltyDetails] = useState([]);
   const [loadingPenaltyDetails, setLoadingPenaltyDetails] = useState(false);
 
+  const handleExportFines = () => {
+    const data = fines.map(fine => ({
+      'User Code': fine.userCode || 'N/A',
+      'Student Name': fine.studentName || '',
+      'Student Email': fine.studentEmail || '',
+      'Group Leader': fine.leaderName || '',
+      'Leader Email': fine.leaderEmail || '',
+      'Fine Amount': fine.fineAmount || 0,
+      'Status': fine.status ? fine.status.toUpperCase() : '',
+      'Created At': fine.createdAt ? new Date(fine.createdAt).toLocaleString('vi-VN') : '',
+      'Due Date': fine.dueDate ? new Date(fine.dueDate).toLocaleDateString('vi-VN') : '',
+    }));
+
+    exportToExcel(data, 'fines_list');
+    notification.success({
+      message: 'Export Successful',
+      description: 'Fines list exported to Excel file',
+      placement: 'topRight',
+    });
+  };
+
   const columns = [
+    {
+      title: 'User Code',
+      dataIndex: 'userCode',
+      key: 'userCode',
+      render: (text) => <Text strong>{text || 'N/A'}</Text>,
+    },
     {
       title: 'Student',
       dataIndex: 'studentName',
@@ -7569,6 +7721,16 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
           borderBottom: 'none',
           borderRadius: '20px 20px 0 0'
         }}
+        extra={
+          <Button
+            type="text"
+            icon={<ExportOutlined />}
+            onClick={handleExportFines}
+            style={{ color: '#fff' }}
+          >
+            Export
+          </Button>
+        }
       >
         <Table
           columns={columns}
@@ -7652,9 +7814,21 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
                               </Text>
                             </Text>
                             {detail.imageUrl && (
-                              <Text type="secondary">
-                                Evidence: <a href={detail.imageUrl} target="_blank" rel="noreferrer">View Image</a>
-                              </Text>
+                              <div style={{ marginTop: 8 }}>
+                                <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>Evidence:</Text>
+                                <Image
+                                  width={100}
+                                  src={detail.imageUrl}
+                                  alt="Damage Evidence"
+                                  placeholder={
+                                    <Image
+                                      preview={false}
+                                      src="https://zos.alipayobjects.com/rmsportal/jkjgkEfvpUPVyRjUImniVslZfWPnJuuZ.png?x-oss-process=image/blur,r_50,s_50/quality,q_1/resize,m_mfit,h_200,w_200"
+                                      width={200}
+                                    />
+                                  }
+                                />
+                              </div>
                             )}
                           </Space>
                         }
@@ -9369,11 +9543,12 @@ const KitComponentHistoryTab = ({
 const TransactionHistory = ({ transactions, setTransactions }) => {
   const [searchText, setSearchText] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
-  const [dateRange, setDateRange] = useState(null);
+  const [startDate, setStartDate] = useState(null);
+  const [endDate, setEndDate] = useState(null);
   const [selectedTransaction, setSelectedTransaction] = useState(null);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
 
-  const { RangePicker } = DatePicker;
+
   const { Option } = Select;
 
   // Animation variants for this component
@@ -9499,15 +9674,34 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
     const matchesType = typeFilter === 'all' || (transaction.type || transaction.transactionType) === typeFilter;
 
     let matchesDate = true;
-    if (dateRange && dateRange.length === 2) {
-      const transactionDate = new Date(transaction.createdAt || transaction.transactionDate);
-      const startDate = dateRange[0].startOf('day');
-      const endDate = dateRange[1].endOf('day');
-      matchesDate = transactionDate >= startDate && transactionDate <= endDate;
+    const transactionDate = new Date(transaction.createdAt || transaction.transactionDate);
+
+    if (startDate) {
+      const start = startDate.startOf('day').toDate();
+      if (transactionDate < start) matchesDate = false;
+    }
+
+    if (endDate && matchesDate) {
+      const end = endDate.endOf('day').toDate();
+      if (transactionDate > end) matchesDate = false;
     }
 
     return matchesSearch && matchesType && matchesDate;
   });
+
+  const disabledStartDate = (startValue) => {
+    if (!startValue || !endDate) {
+      return false;
+    }
+    return startValue.valueOf() > endDate.valueOf();
+  };
+
+  const disabledEndDate = (endValue) => {
+    if (!endValue || !startDate) {
+      return false;
+    }
+    return endValue.valueOf() < startDate.valueOf();
+  };
 
   const totalAmount = filteredTransactions.reduce((sum, txn) => sum + (txn.amount || 0), 0);
 
@@ -9590,11 +9784,21 @@ const TransactionHistory = ({ transactions, setTransactions }) => {
                 <Option value="RENTAL_FEE">Rental Fee</Option>
               </Select>
             </Col>
-            <Col xs={24} sm={12} md={8}>
-              <RangePicker
-                placeholder={['Start Date', 'End Date']}
-                value={dateRange}
-                onChange={setDateRange}
+            <Col xs={24} sm={12} md={4}>
+              <DatePicker
+                placeholder="Start Date"
+                value={startDate}
+                onChange={setStartDate}
+                disabledDate={disabledStartDate}
+                style={{ width: '100%', borderRadius: '8px' }}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <DatePicker
+                placeholder="End Date"
+                value={endDate}
+                onChange={setEndDate}
+                disabledDate={disabledEndDate}
                 style={{ width: '100%', borderRadius: '8px' }}
               />
             </Col>

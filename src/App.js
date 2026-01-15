@@ -20,6 +20,12 @@ import Box from '@mui/material/Box';
 import Container from '@mui/material/Container';
 import TextField from '@mui/material/TextField';
 import Alert from '@mui/material/Alert';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogContentText from '@mui/material/DialogContentText';
+import DialogTitle from '@mui/material/DialogTitle';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { authAPI, borrowingGroupAPI, studentGroupAPI } from './api';
 
 // Helper function to construct user object from profile (shared between login and restore)
@@ -190,6 +196,24 @@ function Home({ onLogin, user }) {
     }
   };
 
+
+
+  // System Update Popup State
+  const [openUpdatePopup, setOpenUpdatePopup] = useState(false);
+
+  useEffect(() => {
+    // Check if popup has been shown in this session
+    const hasShownPopup = sessionStorage.getItem('hasShownUpdatePopup_v1');
+    if (!hasShownPopup) {
+      setOpenUpdatePopup(true);
+      sessionStorage.setItem('hasShownUpdatePopup_v1', 'true');
+    }
+  }, []);
+
+  const handleCloseUpdatePopup = () => {
+    setOpenUpdatePopup(false);
+  };
+
   return (
     <Box sx={{
       minHeight: '100vh',
@@ -280,6 +304,44 @@ function Home({ onLogin, user }) {
           </Card>
         </motion.div>
       </Container>
+
+      {/* System Update Popup */}
+      {/* Using MUI Dialog if available, otherwise simplified custom modal or assuming Dialog is imported */}
+      {/* Need to ensure Dialog is imported. If not, I'll add imports in next step. For now adding local simpler implementation if needed or assuming imports exist. 
+          Actually App.js has MUI imports. I need to add Dialog imports. 
+          I will do imports in a separate step or combine. 
+          Let's assume I will add imports in next step.
+      */}
+      <Dialog
+        open={openUpdatePopup}
+        onClose={handleCloseUpdatePopup}
+        aria-labelledby="alert-dialog-title"
+        aria-describedby="alert-dialog-description"
+        PaperProps={{
+          sx: { borderRadius: 3, maxWidth: 500 }
+        }}
+      >
+        <DialogTitle id="alert-dialog-title" sx={{ bgcolor: '#fff3cd', color: '#856404', display: 'flex', alignItems: 'center', gap: 1 }}>
+          <WarningAmberIcon /> System Notification / Known Issues
+        </DialogTitle>
+        <DialogContent sx={{ mt: 2 }}>
+          <DialogContentText id="alert-dialog-description" component="div">
+            <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+              Lỗi Component Return Check:
+            </Typography>
+            <Typography variant="body2" paragraph sx={{ whiteSpace: 'pre-line' }}>
+              "Lỗi : khi student/Lecturer mượn 1 component thì đến khi trả(return checking), component đó dc đánh dấu là bị hư , nhưng khi confirm rồi thì , ở Paypenalties của student/Lecturer đó ko hiện phải confirm cho component đó, và ở fine management cũng ko xuất hiện luôn . hệ thống thông báo trả hoàn tất và trả tiền lun trong khi nó bị hỏng Hình ảnh return checking của component.
+              ----------
+              Fine chỉ được gửi đi khi tiền phạt lớn hơn tiền thuê kit."
+            </Typography>
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseUpdatePopup} autoFocus variant="contained">
+            Đã hiểu / Understood
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
