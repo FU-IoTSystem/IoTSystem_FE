@@ -330,9 +330,7 @@ function Home({ onLogin, user }) {
               Lỗi Component Return Check:
             </Typography>
             <Typography variant="body2" paragraph sx={{ whiteSpace: 'pre-line' }}>
-              "Lỗi : khi student/Lecturer mượn 1 component thì đến khi trả(return checking), component đó dc đánh dấu là bị hư , nhưng khi confirm rồi thì , ở Paypenalties của student/Lecturer đó ko hiện phải confirm cho component đó, và ở fine management cũng ko xuất hiện luôn . hệ thống thông báo trả hoàn tất và trả tiền lun trong khi nó bị hỏng Hình ảnh return checking của component.
-              ----------
-              Fine chỉ được gửi đi khi tiền phạt lớn hơn tiền thuê kit."
+              ""
             </Typography>
           </DialogContentText>
         </DialogContent>
