@@ -583,6 +583,30 @@ function LecturerPortal({ user, onLogout }) {
     }
   }, [user]);
 
+  useEffect(() => {
+    if (user && user.id) {
+      loadData();
+
+      // Subscribe to system updates for real-time dashboard reload
+      const unsubscribeSystem = webSocketService.subscribeToSystemUpdates((message) => {
+        console.log('LecturerPortal: System update received:', message);
+        // Reload dashboard data
+        loadData();
+
+        notification.info({
+          message: 'Hệ thống cập nhật',
+          description: 'Dữ liệu đã được làm mới tự động.',
+          placement: 'bottomRight',
+          duration: 3
+        });
+      });
+
+      return () => {
+        if (unsubscribeSystem) webSocketService.unsubscribe(unsubscribeSystem);
+      };
+    }
+  }, [user, loadData]);
+
   const handlePayPalReturn = useCallback(async (paymentId, payerId) => {
     try {
       // Check if this payment has already been processed successfully
@@ -1918,7 +1942,7 @@ function LecturerPortal({ user, onLogout }) {
                 {selectedKey === 'groups' && <GroupsManagement lecturerGroups={lecturerGroups} onViewGroupDetails={handleViewGroupDetails} loadData={loadData} />}
                 {selectedKey === 'kits' && (
                   <KitRental
-                    kits={kits}
+                    kits={kits?.filter(k => k.status?.toUpperCase() === 'AVAILABLE')} // Filter for Available kits
                     user={user}
                     onRent={handleRent}
                     onViewKitDetail={(kit) => handleViewKitDetail(kit, 'kit-rental')}
@@ -1926,7 +1950,7 @@ function LecturerPortal({ user, onLogout }) {
                 )}
                 {selectedKey === 'kit-component-rental' && (
                   <KitComponentRental
-                    components={components}
+                    components={components?.filter(c => c.status?.toUpperCase() === 'AVAILABLE')} // Filter for Available components
                     onRentComponent={handleRentComponent}
                   />
                 )}

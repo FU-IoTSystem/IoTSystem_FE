@@ -18,7 +18,8 @@ import {
   Avatar,
   Modal,
   Empty,
-  Table
+  Table,
+  Image
 } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -811,6 +812,16 @@ function PenaltyPaymentPage({ user, onLogout }) {
                                   </Text>
                                 </div>
                               )}
+                              {detail.imageUrl && (
+                                <div style={{ marginTop: 8 }}>
+                                  <Image
+                                    width={100}
+                                    src={detail.imageUrl}
+                                    alt="Damage Evidence"
+                                    style={{ borderRadius: 8 }}
+                                  />
+                                </div>
+                              )}
                               {detail.policy && (
                                 <div style={{ marginTop: 8, padding: 8, background: '#f5f5f5', borderRadius: 4 }}>
                                   <Text strong style={{ fontSize: 12, color: '#1890ff' }}>Policy Information:</Text>
@@ -1119,8 +1130,8 @@ function PenaltyPaymentPage({ user, onLogout }) {
             </Space>
           </div>
         </div>
-      </Card>
-    </motion.div>
+      </Card >
+    </motion.div >
   );
 
   const renderSuccess = () => (
@@ -1206,6 +1217,18 @@ function PenaltyPaymentPage({ user, onLogout }) {
                 <Col span={12} style={{ textAlign: 'right' }}>
                   <Text strong style={{ fontSize: '16px', color: '#ff4d4f' }}>
                     -{(paymentResult?.amount || 0).toLocaleString()} VND
+                  </Text>
+                </Col>
+              </Row>
+
+              {/* Refund Amount - Rental Amount - Penalty Amount */}
+              <Row gutter={[16, 8]} align="middle">
+                <Col span={12}>
+                  <Text style={{ fontSize: '14px' }}>Refund Amount:</Text>
+                </Col>
+                <Col span={12} style={{ textAlign: 'right' }}>
+                  <Text strong style={{ fontSize: '16px', color: ((paymentResult?.rentalAmount || 0) - (paymentResult?.amount || 0)) >= 0 ? '#52c41a' : '#ff4d4f' }}>
+                    {((paymentResult?.rentalAmount || 0) - (paymentResult?.amount || 0)).toLocaleString()} VND
                   </Text>
                 </Col>
               </Row>

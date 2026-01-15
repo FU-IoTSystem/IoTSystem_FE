@@ -27,7 +27,8 @@ import {
   Select,
   Divider,
   Popover,
-  Drawer
+  Drawer,
+  notification
 } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -70,6 +71,7 @@ import {
   notificationAPI,
   borrowingRequestAPI
 } from './api';
+import webSocketService from './utils/websocket';
 import dayjs from 'dayjs';
 
 // Default wallet structure
@@ -855,6 +857,31 @@ function MemberPortal({ user, onLogout }) {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (user && user.id) {
+      loadData();
+
+      // Subscribe to system updates for real-time dashboard reload
+      const unsubscribeSystem = webSocketService.subscribeToSystemUpdates((message) => {
+        console.log('MemberPortal: System update received:', message);
+        // Reload dashboard data
+        loadData();
+        loadNotifications();
+
+        notification.info({
+          message: 'Hệ thống cập nhật',
+          description: 'Dữ liệu đã được làm mới tự động.',
+          placement: 'bottomRight',
+          duration: 3
+        });
+      });
+
+      return () => {
+        if (unsubscribeSystem) webSocketService.unsubscribe(unsubscribeSystem);
+      };
+    }
+  }, [user]);
 
   const menuItems = [
     { key: 'dashboard', icon: <DashboardOutlined />, label: 'Dashboard' },

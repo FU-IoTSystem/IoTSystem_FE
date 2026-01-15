@@ -195,33 +195,37 @@ function AdminPortal({ onLogout }) {
     // Subscribe to system updates for real-time dashboard reload
     const unsubscribeSystem = webSocketService.subscribeToSystemUpdates((message) => {
       console.log('System update received:', message);
-      // Reload dashboard data
+
+      // Always reload core data
       loadData();
-      // Also reload specific tabs if needed
-      if (selectedKey === 'fines') {
-        // Refetch fines
-        penaltiesAPI.getUnresolved().then(res => { /* logic to update fines state */ });
-        // Actually loadData() should cover most widgets, but for specific tabs we might need more granular reload. 
-        // For now, let's just trigger loadData() which refreshes the dashboard/stats.
-        // Ideally we should refactor loadUnresolvedPenalties to be callable here.
-      }
-      // Force refresh of current view
-      if (selectedKey) setSelectedKey(prev => prev); // Trigger useEffect dependency? No, that loops. 
 
-      // Better:
-      if (selectedKey === 'fines') {
-        // Re-trigger the useEffect that depends on selectedKey by forcing a reload function, but useEffect relies on selectedKey changing.
-        // Instead, let's extract loadUnresolvedPenalties to a useCallback and call it.
-        // For now, loadData covers Stats. Effect for 'fines' needs to be triggered.
+      // Reload specific sections based on entity type
+      if (message.entity === 'HISTORY' || selectedKey === 'kit-component-history') {
+        if (historySelectedKitId) {
+          loadKitComponentHistoryByKit(historySelectedKitId);
+        } else if (historySelectedComponentId) {
+          loadKitComponentHistoryByComponent(historySelectedComponentId);
+        } else {
+          loadAllKitComponentHistory();
+        }
       }
 
-      message.success(`Dashboard updated: ${message.entity} - ${message.action}`);
+      if (message.entity === 'RENTAL' || message.entity === 'PENALTY' || selectedKey === 'fines') {
+        loadUnresolvedPenalties();
+      }
+
+      notification.info({
+        message: 'System Update',
+        description: `Dashboard data refreshed due to ${message.entity} ${message.action}`,
+        placement: 'bottomRight',
+        duration: 3
+      });
     });
 
     return () => {
       if (unsubscribeSystem) webSocketService.unsubscribe(unsubscribeSystem);
     };
-  }, []);
+  }, [selectedKey, historySelectedKitId, historySelectedComponentId]);
 
   // Auto-calculate fine amount when damage or penalty policies change
   useEffect(() => {
@@ -231,80 +235,82 @@ function AdminPortal({ onLogout }) {
   }, [damageAssessment, selectedPenaltyPolicies, kitInspectionModalVisible]);
 
   // Load unresolved penalties for Fine Management tab
+  const loadUnresolvedPenalties = useCallback(async () => {
+    try {
+      const res = await penaltiesAPI.getUnresolved();
+      console.log('Unresolved penalties response:', res);
+      const data = Array.isArray(res) ? res : (res && Array.isArray(res.data) ? res.data : []);
+      const mapped = data.map(p => ({
+        id: p.id,
+        kitId: p.borrowRequestId || 'N/A',
+        borrowRequestId: p.borrowRequestId || p.requestId || null,
+        kitName: 'N/A',
+        studentEmail: p.accountEmail || 'N/A',
+        studentName: p.accountEmail || 'N/A',
+        userCode: p.userCode || 'N/A',
+        leaderEmail: p.accountEmail || 'N/A',
+        leaderName: p.accountEmail || 'N/A',
+        fineAmount: (p.totalAmount !== undefined && p.totalAmount !== null) ? Number(p.totalAmount) : 0,
+        createdAt: p.takeEffectDate || new Date().toISOString(),
+        dueDate: new Date().toISOString(),
+        status: p.resolved ? 'paid' : 'pending',
+        damageAssessment: {},
+      }));
+      // Sort by createdAt descending (newest first)
+      const sorted = mapped.sort((a, b) => {
+        const dateA = new Date(a.createdAt).getTime();
+        const dateB = new Date(b.createdAt).getTime();
+        return dateB - dateA;
+      });
+      setFines(sorted);
+    } catch (e) {
+      console.error('Error loading unresolved penalties:', e);
+    }
+  }, []);
+
   useEffect(() => {
-    const loadUnresolvedPenalties = async () => {
-      try {
-        const res = await penaltiesAPI.getUnresolved();
-        console.log('Unresolved penalties response:', res);
-        const data = Array.isArray(res) ? res : (res && Array.isArray(res.data) ? res.data : []);
-        const mapped = data.map(p => ({
-          id: p.id,
-          kitId: p.borrowRequestId || 'N/A',
-          borrowRequestId: p.borrowRequestId || p.requestId || null,
-          kitName: 'N/A',
-          studentEmail: p.accountEmail || 'N/A',
-          studentName: p.accountEmail || 'N/A',
-          userCode: p.userCode || 'N/A',
-          leaderEmail: p.accountEmail || 'N/A',
-          leaderName: p.accountEmail || 'N/A',
-          fineAmount: (p.totalAmount !== undefined && p.totalAmount !== null) ? Number(p.totalAmount) : 0,
-          createdAt: p.takeEffectDate || new Date().toISOString(),
-          dueDate: new Date().toISOString(),
-          status: p.resolved ? 'paid' : 'pending',
-          damageAssessment: {},
-        }));
-        // Sort by createdAt descending (newest first)
-        const sorted = mapped.sort((a, b) => {
-          const dateA = new Date(a.createdAt).getTime();
-          const dateB = new Date(b.createdAt).getTime();
-          return dateB - dateA;
-        });
-        setFines(sorted);
-      } catch (e) {
-        console.error('Error loading unresolved penalties:', e);
-      }
-    };
     if (selectedKey === 'fines') {
       loadUnresolvedPenalties();
     }
-  }, [selectedKey]);
+  }, [selectedKey, loadUnresolvedPenalties]);
 
   // Load all penalties for dashboard statistics
-  useEffect(() => {
-    const loadAllPenalties = async () => {
-      try {
-        const res = await penaltiesAPI.getAll();
-        console.log('All penalties response:', res);
-        const data = Array.isArray(res) ? res : (res && Array.isArray(res.data) ? res.data : []);
-        const mapped = data.map(p => ({
-          id: p.id,
-          borrowRequestId: p.borrowRequestId || p.requestId || null,
-          fineAmount: (p.totalAmount !== undefined && p.totalAmount !== null) ? Number(p.totalAmount) : 0,
-          createdAt: p.takeEffectDate || new Date().toISOString(),
-          status: p.resolved ? 'paid' : 'pending',
-          resolved: p.resolved || false,
-          userCode: p.userCode || 'N/A',
-        }));
-        // Update fines with all penalties for dashboard
-        setFines(prev => {
-          // Merge with existing fines, avoiding duplicates
-          const existingIds = new Set(prev.map(f => f.id));
-          const newFines = mapped.filter(f => !existingIds.has(f.id));
-          // Update existing fines with resolved status if available
-          const updated = prev.map(f => {
-            const match = mapped.find(m => m.id === f.id);
-            return match ? { ...f, status: match.status, resolved: match.resolved } : f;
-          });
-          return [...updated, ...newFines];
+  const loadAllPenalties = useCallback(async () => {
+    try {
+      const res = await penaltiesAPI.getAll();
+      console.log('All penalties response:', res);
+      const data = Array.isArray(res) ? res : (res && Array.isArray(res.data) ? res.data : []);
+      const mapped = data.map(p => ({
+        id: p.id,
+        borrowRequestId: p.borrowRequestId || p.requestId || null,
+        fineAmount: (p.totalAmount !== undefined && p.totalAmount !== null) ? Number(p.totalAmount) : 0,
+        createdAt: p.takeEffectDate || new Date().toISOString(),
+        status: p.resolved ? 'paid' : 'pending',
+        resolved: p.resolved || false,
+        userCode: p.userCode || 'N/A',
+      }));
+      // Update fines with all penalties for dashboard
+      setFines(prev => {
+        // Merge with existing fines, avoiding duplicates
+        const existingIds = new Set(prev.map(f => f.id));
+        const newFines = mapped.filter(f => !existingIds.has(f.id));
+        // Update existing fines with resolved status if available
+        const updated = prev.map(f => {
+          const match = mapped.find(m => m.id === f.id);
+          return match ? { ...f, status: match.status, resolved: match.resolved } : f;
         });
-      } catch (e) {
-        console.error('Error loading all penalties:', e);
-      }
-    };
+        return [...updated, ...newFines];
+      });
+    } catch (e) {
+      console.error('Error loading all penalties:', e);
+    }
+  }, []);
+
+  useEffect(() => {
     if (selectedKey === 'dashboard') {
       loadAllPenalties();
     }
-  }, [selectedKey]);
+  }, [selectedKey, loadAllPenalties]);
 
   useEffect(() => {
     if (selectedKey === 'kit-component-history') {
@@ -1280,12 +1286,14 @@ function AdminPortal({ onLogout }) {
             return actualComp ? {
               ...actualComp,
               rentedQuantity: rc.quantity,
-              componentName: rc.componentName
+              componentName: rc.componentName,
+              pricePerCom: rc.price || actualComp.pricePerCom
             } : {
               componentName: rc.componentName,
               name: rc.componentName,
               quantity: rc.quantity,
-              rentedQuantity: rc.quantity
+              rentedQuantity: rc.quantity,
+              pricePerCom: rc.price || 0
             };
           });
 
@@ -2435,7 +2443,21 @@ function AdminPortal({ onLogout }) {
                   {selectedRental.requestType === 'BORROW_COMPONENT' ? 'Component Rental' : 'Full Kit Rental'}
                 </Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="Kit">{selectedKit.kitName || selectedKit.name}</Descriptions.Item>
+              <Descriptions.Item label={selectedRental.requestType === 'BORROW_COMPONENT' ? 'Component Information' : 'Kit Information'}>
+                {selectedRental.requestType === 'BORROW_COMPONENT' ? (
+                  <Space direction="vertical">
+                    {selectedKit.components && selectedKit.components.length > 0 ? (
+                      selectedKit.components.map((comp, idx) => (
+                        <Text key={idx}>{comp.componentName || comp.name} (ID: {comp.id})</Text>
+                      ))
+                    ) : (
+                      <Text>Individual Components</Text>
+                    )}
+                  </Space>
+                ) : (
+                  selectedKit.kitName || selectedKit.name
+                )}
+              </Descriptions.Item>
               <Descriptions.Item label="Rental ID">#{selectedRental.id}</Descriptions.Item>
 
               {/* Group and Class Information (for Students) */}
@@ -7066,6 +7088,22 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
 
     console.log('handleShowRefundDetails - record:', record);
 
+    // If component rental, fetch specific component details
+    if (record.requestType === 'BORROW_COMPONENT') {
+      try {
+        const components = await borrowingRequestAPI.getRequestComponents(record.id);
+        console.log('Fetched components for detail view:', components);
+        if (components && components.length > 0) {
+          setSelectedRefundDetail(prev => ({
+            ...prev,
+            components: components
+          }));
+        }
+      } catch (error) {
+        console.error('Error fetching components for detail view:', error);
+      }
+    }
+
     // Fetch group and class information for student borrowers
     // Use requestedBy object if available (from approval), otherwise find by email
     const userId = record.requestedBy?.id;
@@ -7495,13 +7533,35 @@ const RefundApprovals = ({ refundRequests, setRefundRequests, openRefundKitInspe
                   </Descriptions.Item>
                 )}
 
-              <Descriptions.Item label="Kit Information">
-                <div>
-                  <div><strong>Kit Name:</strong> {selectedRefundDetail.kitName || 'N/A'}</div>
-                  {selectedRefundDetail.kitId && (
-                    <div><strong>Kit ID:</strong> <Text code>{selectedRefundDetail.kitId}</Text></div>
-                  )}
-                </div>
+              <Descriptions.Item label={selectedRefundDetail.requestType === 'BORROW_COMPONENT' ? 'Component Information' : 'Kit Information'}>
+                {selectedRefundDetail.requestType === 'BORROW_COMPONENT' ? (
+                  <div>
+                    {selectedRefundDetail.components && selectedRefundDetail.components.length > 0 ? (
+                      <Space direction="vertical" style={{ width: '100%' }}>
+                        {selectedRefundDetail.components.map((comp, index) => (
+                          <div key={index} style={{ borderBottom: index < selectedRefundDetail.components.length - 1 ? '1px solid #f0f0f0' : 'none', paddingBottom: 4, marginBottom: 4 }}>
+                            <div><strong>Component Name:</strong> {comp.componentName || comp.name || 'N/A'}</div>
+                            <div><strong>Component ID:</strong> <Text code>{comp.kitComponentsId || comp.id || 'N/A'}</Text></div>
+                          </div>
+                        ))}
+                      </Space>
+                    ) : (
+                      <div>
+                        <div><strong>Component Name:</strong> {selectedRefundDetail.kitName || 'N/A'}</div>
+                        {selectedRefundDetail.kitId && (
+                          <div><strong>Component ID:</strong> <Text code>{selectedRefundDetail.kitId}</Text></div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <div><strong>Kit Name:</strong> {selectedRefundDetail.kitName || 'N/A'}</div>
+                    {selectedRefundDetail.kitId && (
+                      <div><strong>Kit ID:</strong> <Text code>{selectedRefundDetail.kitId}</Text></div>
+                    )}
+                  </div>
+                )}
               </Descriptions.Item>
 
               <Descriptions.Item label="Financial Information">
