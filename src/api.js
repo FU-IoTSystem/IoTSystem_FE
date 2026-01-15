@@ -1656,6 +1656,19 @@ export const maintenanceAPI = {
     return apiRequest(`/api/maintenance/plans/${id}`);
   },
 
+  updatePlan: async (id, planData) => {
+    return apiRequest(`/api/maintenance/plans/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(planData),
+    });
+  },
+
+  deletePlan: async (id) => {
+    return apiRequest(`/api/maintenance/plans/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
   createIssue: async (issueData) => {
     return apiRequest('/api/maintenance/issues', {
       method: 'POST',
