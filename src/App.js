@@ -196,24 +196,6 @@ function Home({ onLogin, user }) {
     }
   };
 
-
-
-  // System Update Popup State
-  const [openUpdatePopup, setOpenUpdatePopup] = useState(false);
-
-  useEffect(() => {
-    // Check if popup has been shown in this session
-    const hasShownPopup = sessionStorage.getItem('hasShownUpdatePopup_v1');
-    if (!hasShownPopup) {
-      setOpenUpdatePopup(true);
-      sessionStorage.setItem('hasShownUpdatePopup_v1', 'true');
-    }
-  }, []);
-
-  const handleCloseUpdatePopup = () => {
-    setOpenUpdatePopup(false);
-  };
-
   return (
     <Box sx={{
       minHeight: '100vh',
@@ -304,42 +286,6 @@ function Home({ onLogin, user }) {
           </Card>
         </motion.div>
       </Container>
-
-      {/* System Update Popup */}
-      {/* Using MUI Dialog if available, otherwise simplified custom modal or assuming Dialog is imported */}
-      {/* Need to ensure Dialog is imported. If not, I'll add imports in next step. For now adding local simpler implementation if needed or assuming imports exist. 
-          Actually App.js has MUI imports. I need to add Dialog imports. 
-          I will do imports in a separate step or combine. 
-          Let's assume I will add imports in next step.
-      */}
-      <Dialog
-        open={openUpdatePopup}
-        onClose={handleCloseUpdatePopup}
-        aria-labelledby="alert-dialog-title"
-        aria-describedby="alert-dialog-description"
-        PaperProps={{
-          sx: { borderRadius: 3, maxWidth: 500 }
-        }}
-      >
-        <DialogTitle id="alert-dialog-title" sx={{ bgcolor: '#fff3cd', color: '#856404', display: 'flex', alignItems: 'center', gap: 1 }}>
-          <WarningAmberIcon /> System Notification / Known Issues
-        </DialogTitle>
-        <DialogContent sx={{ mt: 2 }}>
-          <DialogContentText id="alert-dialog-description" component="div">
-            <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-              Lỗi Component Return Check:
-            </Typography>
-            <Typography variant="body2" paragraph sx={{ whiteSpace: 'pre-line' }}>
-              ""
-            </Typography>
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleCloseUpdatePopup} autoFocus variant="contained">
-            Đã hiểu / Understood
-          </Button>
-        </DialogActions>
-      </Dialog>
     </Box>
   );
 }
