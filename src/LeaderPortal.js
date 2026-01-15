@@ -857,6 +857,7 @@ function LeaderPortal({ user, onLogout }) {
   const walletTransactionSubscriptionRef = useRef(null);
   const penaltySubscriptionRef = useRef(null);
   const groupSubscriptionRef = useRef(null);
+  const systemUpdateSubscriptionRef = useRef(null);
 
   useEffect(() => {
     if (user && user.id) {
@@ -1047,6 +1048,9 @@ function LeaderPortal({ user, onLogout }) {
       }
       if (groupSubscriptionRef.current) {
         webSocketService.unsubscribe(groupSubscriptionRef.current);
+      }
+      if (systemUpdateSubscriptionRef.current) {
+        webSocketService.unsubscribe(systemUpdateSubscriptionRef.current);
       }
       webSocketService.disconnect();
     };

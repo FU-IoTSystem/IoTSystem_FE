@@ -1,18 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, DatePicker, Select, Tag, Space, Card, message, Tabs, Typography } from 'antd';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined, ExportOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import * as XLSX from 'xlsx';
+import { saveAs } from 'file-saver';
 import { maintenanceAPI, kitAPI, kitComponentAPI } from './api';
 
 const { Option } = Select;
 const { Title } = Typography;
 const { TabPane } = Tabs;
+const { confirm } = Modal;
 
 const MaintenanceManagement = ({ currentUser }) => {
     console.log('MaintenanceManagement currentUser:', currentUser);
     const [plans, setPlans] = useState([]);
     const [loading, setLoading] = useState(false);
     const [modalVisible, setModalVisible] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
+    const [editingPlanId, setEditingPlanId] = useState(null);
     const [form] = Form.useForm();
     const [kits, setKits] = useState([]);
     const [components, setComponents] = useState([]);
@@ -61,20 +66,116 @@ const MaintenanceManagement = ({ currentUser }) => {
         }
     };
 
-    const handleCreate = async (values) => {
+    const handleSubmit = async (values) => {
         try {
             const payload = {
                 ...values,
                 scheduledDate: values.scheduledDate.toISOString(),
             };
-            await maintenanceAPI.createPlan(payload);
-            message.success('Maintenance plan created successfully');
+
+            if (isEditing) {
+                await maintenanceAPI.updatePlan(editingPlanId, payload);
+                message.success('Maintenance plan updated successfully');
+            } else {
+                await maintenanceAPI.createPlan(payload);
+                message.success('Maintenance plan created successfully');
+            }
+
             setModalVisible(false);
+            setIsEditing(false);
+            setEditingPlanId(null);
             form.resetFields();
             loadPlans();
         } catch (error) {
-            console.error('Error creating maintenance plan:', error);
-            message.error('Failed to create maintenance plan');
+            console.error('Error saving maintenance plan:', error);
+            message.error('Failed to save maintenance plan');
+        }
+    };
+
+    const handleEdit = (record) => {
+        setIsEditing(true);
+        setEditingPlanId(record.id);
+        form.setFieldsValue({
+            ...record,
+            scheduledDate: dayjs(record.scheduledDate),
+            targetId: record.targetId
+        });
+        setModalVisible(true);
+    };
+
+    const handleCancel = () => {
+        setModalVisible(false);
+        setIsEditing(false);
+        setEditingPlanId(null);
+        form.resetFields();
+    };
+
+    const handleDelete = (id) => {
+        confirm({
+            title: 'Are you sure you want to delete this maintenance plan?',
+            content: 'This action cannot be undone.',
+            okText: 'Yes',
+            okType: 'danger',
+            cancelText: 'No',
+            onOk: async () => {
+                try {
+                    await maintenanceAPI.deletePlan(id);
+                    message.success('Maintenance plan deleted successfully');
+                    loadPlans();
+                } catch (error) {
+                    console.error('Error deleting maintenance plan:', error);
+                    message.error('Failed to delete maintenance plan');
+                }
+            },
+        });
+    };
+
+    const handleSingleExport = async (plan) => {
+        try {
+            message.loading({ content: 'Preparing export...', key: 'exportLoading' });
+            // Fetch issues for the plan
+            const issuesData = await maintenanceAPI.getIssuesByPlan(plan.id);
+            const issues = Array.isArray(issuesData) ? issuesData : (issuesData?.data || []);
+
+            let dataToExport = [];
+
+            if (issues.length > 0) {
+                dataToExport = issues.map(issue => ({
+                    'Plan ID': plan.id,
+                    'Scope': plan.scope,
+                    'Target ID': plan.targetId,
+                    'Scheduled Date': dayjs(plan.scheduledDate).format('YYYY-MM-DD'),
+                    'Reason': plan.reason || 'N/A',
+                    'Plan Status': plan.status,
+                    'Created By': plan.createdBy,
+                    'Issue ID': issue.id,
+                    'Issue Type': issue.issueType,
+                    'Issue Quantity': issue.quantity
+                }));
+            } else {
+                dataToExport = [{
+                    'Plan ID': plan.id,
+                    'Scope': plan.scope,
+                    'Target ID': plan.targetId,
+                    'Scheduled Date': dayjs(plan.scheduledDate).format('YYYY-MM-DD'),
+                    'Reason': plan.reason || 'N/A',
+                    'Plan Status': plan.status,
+                    'Created By': plan.createdBy,
+                    'Issue ID': 'N/A',
+                    'Issue Type': 'N/A',
+                    'Issue Quantity': 'N/A'
+                }];
+            }
+
+            const ws = XLSX.utils.json_to_sheet(dataToExport);
+            const wb = { Sheets: { 'data': ws }, SheetNames: ['data'] };
+            const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+            const dataBlob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=UTF-8' });
+            saveAs(dataBlob, `MaintenancePlan_${plan.targetId}_${dayjs().format('YYYYMMDD')}.xlsx`);
+            message.success({ content: 'Export successful', key: 'exportLoading' });
+        } catch (error) {
+            console.error('Error exporting maintenance plan:', error);
+            message.error({ content: 'Failed to export maintenance plan', key: 'exportLoading' });
         }
     };
 
@@ -138,6 +239,12 @@ const MaintenanceManagement = ({ currentUser }) => {
             render: (date) => dayjs(date).format('YYYY-MM-DD'),
         },
         {
+            title: 'Reason',
+            dataIndex: 'reason',
+            key: 'reason',
+            render: (text) => text || 'N/A',
+        },
+        {
             title: 'Status',
             dataIndex: 'status',
             key: 'status',
@@ -159,7 +266,10 @@ const MaintenanceManagement = ({ currentUser }) => {
             key: 'actions',
             render: (_, record) => (
                 <Space>
+                    <Button type="primary" icon={<EditOutlined />} size="small" onClick={() => handleEdit(record)} />
+                    <Button type="primary" danger icon={<DeleteOutlined />} size="small" onClick={() => handleDelete(record.id)} />
                     <Button size="small" onClick={() => openIssueModal(record.id)}>Issues</Button>
+                    <Button icon={<ExportOutlined />} size="small" onClick={() => handleSingleExport(record)} />
                 </Space>
             )
         }
@@ -193,14 +303,14 @@ const MaintenanceManagement = ({ currentUser }) => {
                 loading={loading}
             />
 
-            {/* Create Plan Modal */}
+            {/* Create/Edit Plan Modal */}
             <Modal
-                title="Create Maintenance Plan"
+                title={isEditing ? "Edit Maintenance Plan" : "Create Maintenance Plan"}
                 visible={modalVisible}
-                onCancel={() => setModalVisible(false)}
+                onCancel={handleCancel}
                 onOk={() => form.submit()}
             >
-                <Form form={form} layout="vertical" onFinish={handleCreate} initialValues={{ scope: 'COMPONENT', status: 'PLANNED' }}>
+                <Form form={form} layout="vertical" onFinish={handleSubmit} initialValues={{ scope: 'COMPONENT', status: 'PLANNED' }}>
                     <Form.Item name="scope" label="Scope" hidden>
                         <Input disabled />
                     </Form.Item>
@@ -214,6 +324,9 @@ const MaintenanceManagement = ({ currentUser }) => {
                     </Form.Item>
                     <Form.Item name="scheduledDate" label="Scheduled Date" rules={[{ required: true }]}>
                         <DatePicker style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item name="reason" label="Reason" rules={[{ required: true, message: 'Please enter a reason' }]}>
+                        <Input.TextArea placeholder="Enter maintenance reason" rows={3} />
                     </Form.Item>
                     <Form.Item name="status" label="Status" rules={[{ required: true }]}>
                         <Select>
