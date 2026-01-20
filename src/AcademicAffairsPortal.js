@@ -2118,7 +2118,7 @@ function AcademicAffairsPortal({ user, onLogout }) {
                 variants={pageVariants}
                 transition={pageTransition}
               >
-                {selectedKey === 'dashboard' && <DashboardContent semesters={semesters} students={students} lecturers={lecturers} iotSubjects={iotSubjects} />}
+                {selectedKey === 'dashboard' && <DashboardContent semesters={semesters} students={students} lecturers={lecturers} iotSubjects={iotSubjects} onNavigate={setSelectedKey} />}
                 {selectedKey === 'student-enrollment' && <StudentEnrollment semesters={semesters} setSemesters={setSemesters} semesterModal={semesterModal} setSemesterModal={setSemesterModal} semesterForm={semesterForm} onStudentAdded={loadData} />}
                 {selectedKey === 'students' && <StudentManagement students={students} setStudents={setStudents} studentModal={studentModal} setStudentModal={setStudentModal} studentForm={studentForm} handleExportStudents={handleExportStudents} handleImportStudents={handleImportStudents} handleAddStudent={handleAddStudent} handleEditStudent={handleEditStudent} handleDeleteStudent={handleDeleteStudent} showSheetSelectionAndImport={showSheetSelectionAndImport} importFormatModal={importFormatModal} setImportFormatModal={setImportFormatModal} downloadStudentTemplate={downloadStudentTemplate} />}
                 {selectedKey === 'lecturers' && <LecturerManagement lecturers={lecturers} setLecturers={setLecturers} lecturerModal={lecturerModal} setLecturerModal={setLecturerModal} lecturerForm={lecturerForm} handleExportLecturers={handleExportLecturers} handleImportLecturers={handleImportLecturers} handleAddLecturer={handleAddLecturer} handleEditLecturer={handleEditLecturer} handleDeleteLecturer={handleDeleteLecturer} showSheetSelectionAndImport={showSheetSelectionAndImport} importFormatModal={importFormatModal} setImportFormatModal={setImportFormatModal} downloadLecturerTemplate={downloadLecturerTemplate} />}
@@ -2564,7 +2564,7 @@ function AcademicAffairsPortal({ user, onLogout }) {
 }
 
 // Dashboard Component
-const DashboardContent = ({ semesters, students, lecturers, iotSubjects }) => {
+const DashboardContent = ({ semesters, students, lecturers, iotSubjects, onNavigate }) => {
   // Calculate statistics
   const activeSemesters = semesters.filter(s => s.status === 'Active').length;
   const totalStudents = students.length;
@@ -2639,11 +2639,13 @@ const DashboardContent = ({ semesters, students, lecturers, iotSubjects }) => {
         <Col xs={24} sm={12} lg={6}>
           <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
             <Card
+              onClick={() => onNavigate('students')}
               style={{
                 borderRadius: '16px',
                 boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
                 background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
-                border: 'none'
+                border: 'none',
+                cursor: 'pointer'
               }}
             >
               <div style={{ color: 'white' }}>
@@ -2665,11 +2667,13 @@ const DashboardContent = ({ semesters, students, lecturers, iotSubjects }) => {
         <Col xs={24} sm={12} lg={6}>
           <motion.div variants={cardVariants} initial="hidden" animate="visible" whileHover="hover">
             <Card
+              onClick={() => onNavigate('lecturers')}
               style={{
                 borderRadius: '16px',
                 boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
                 background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
-                border: 'none'
+                border: 'none',
+                cursor: 'pointer'
               }}
             >
               <div style={{ color: 'white' }}>
@@ -2737,11 +2741,13 @@ const DashboardContent = ({ semesters, students, lecturers, iotSubjects }) => {
                     type="primary"
                     icon={<UserAddOutlined />}
                     block
+                    onClick={() => onNavigate('students')}
                     style={{
                       height: '80px',
                       borderRadius: '12px',
                       background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                      border: 'none'
+                      border: 'none',
+                      cursor: 'pointer'
                     }}
                   >
                     <div>Add Student</div>
@@ -2752,11 +2758,13 @@ const DashboardContent = ({ semesters, students, lecturers, iotSubjects }) => {
                     type="primary"
                     icon={<TeamOutlined />}
                     block
+                    onClick={() => onNavigate('lecturers')}
                     style={{
                       height: '80px',
                       borderRadius: '12px',
                       background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
-                      border: 'none'
+                      border: 'none',
+                      cursor: 'pointer'
                     }}
                   >
                     <div>Add Lecturer</div>

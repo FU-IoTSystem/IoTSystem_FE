@@ -2997,7 +2997,6 @@ const DashboardContent = ({ lecturerGroups, wallet, kits, penalties, penaltyDeta
 const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
   const [searchText, setSearchText] = useState('');
   const [selectedClassCode, setSelectedClassCode] = useState(null);
-  const [studentCodeSearch, setStudentCodeSearch] = useState('');
 
   // Get unique class codes from groups
   const classCodes = [...new Set(lecturerGroups
@@ -3022,20 +3021,6 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
       }
     }
 
-    // Filter by StudentCode (search)
-    if (studentCodeSearch && studentCodeSearch.trim() !== '') {
-      const searchLower = studentCodeSearch.toLowerCase();
-      const hasStudent = (group.members || []).some(
-        member => {
-          const memberStudentCode = (member.studentCode || '').toLowerCase();
-          return memberStudentCode.includes(searchLower);
-        }
-      );
-      if (!hasStudent) {
-        return false;
-      }
-    }
-
     return true;
   });
 
@@ -3048,7 +3033,7 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
         >
           {/* Filter and Search Section */}
           <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-            <Col xs={24} sm={24} md={8} lg={8}>
+            <Col xs={24} sm={24} md={12} lg={12}>
               <Input
                 placeholder="Search by Group Name"
                 prefix={<SearchOutlined />}
@@ -3058,7 +3043,7 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
                 style={{ width: '100%' }}
               />
             </Col>
-            <Col xs={24} sm={12} md={8} lg={8}>
+            <Col xs={24} sm={24} md={12} lg={12}>
               <Select
                 placeholder="Filter by Class Code"
                 value={selectedClassCode}
@@ -3073,16 +3058,6 @@ const GroupsManagement = ({ lecturerGroups, onViewGroupDetails, loadData }) => {
                   </Select.Option>
                 ))}
               </Select>
-            </Col>
-            <Col xs={24} sm={12} md={8} lg={8}>
-              <Input
-                placeholder="Search by Student Code"
-                prefix={<SearchOutlined />}
-                value={studentCodeSearch}
-                onChange={(e) => setStudentCodeSearch(e.target.value)}
-                allowClear
-                style={{ width: '100%' }}
-              />
             </Col>
           </Row>
 
