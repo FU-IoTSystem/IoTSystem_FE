@@ -1173,7 +1173,7 @@ function LeaderPortal({ user, onLogout }) {
     {
       key: 'group',
       icon: <TeamOutlined />,
-      label: 'Group Management',
+      label: 'My Group',
     },
     {
       key: 'kits',
@@ -1589,7 +1589,7 @@ function LeaderPortal({ user, onLogout }) {
                 variants={pageVariants}
                 transition={pageTransition}
               >
-                {selectedKey === 'dashboard' && <DashboardContent group={group} wallet={wallet} kits={kits} penalties={penalties} penaltyDetails={penaltyDetails} />}
+                {selectedKey === 'dashboard' && <DashboardContent group={group} wallet={wallet} kits={kits} penalties={penalties} penaltyDetails={penaltyDetails} borrowingRequests={borrowingRequests} />}
                 {selectedKey === 'group' && <GroupManagement group={group} />}
                 {selectedKey === 'kits' && (
                   <KitRental
@@ -1842,223 +1842,105 @@ function LeaderPortal({ user, onLogout }) {
 }
 
 // Dashboard Component
-const DashboardContent = ({ group, wallet, kits, penalties, penaltyDetails }) => (
-  <div>
-    <Row gutter={[24, 24]}>
-      {/* Group Stats */}
-      <Col xs={24} sm={12} lg={6}>
-        <motion.div
-          variants={cardVariants}
-          initial="hidden"
-          animate="visible"
-          whileHover="hover"
-        >
-          <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            <Statistic
-              title="Group Members"
-              value={group ? group.members.length + 1 : 0}
-              prefix={<TeamOutlined style={{ color: '#667eea' }} />}
-              valueStyle={{ color: '#667eea', fontWeight: 'bold' }}
-            />
-          </Card>
-        </motion.div>
-      </Col>
+const DashboardContent = ({ group, wallet, kits, penalties, penaltyDetails, borrowingRequests = [] }) => {
+  const requestCount = borrowingRequests?.filter(r => ['PENDING', 'APPROVED'].includes(r.status))?.length || 0;
+  const returnCount = borrowingRequests?.filter(r => ['BORROWED', 'IN_PROGRESS'].includes(r.status))?.length || 0;
+  const unresolvedPenaltyCount = penalties?.filter(p => !p.resolved)?.length || 0;
 
-      <Col xs={24} sm={12} lg={6}>
-        <motion.div
-          variants={cardVariants}
-          initial="hidden"
-          animate="visible"
-          whileHover="hover"
-        >
-          <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            <Statistic
-              title="Wallet Balance"
-              value={wallet.balance || 0}
-              prefix={<DollarOutlined style={{ color: '#52c41a' }} />}
-              suffix="VND"
-              valueStyle={{ color: '#52c41a', fontWeight: 'bold' }}
-            />
-          </Card>
-        </motion.div>
-      </Col>
-
-      <Col xs={24} sm={12} lg={6}>
-        <motion.div
-          variants={cardVariants}
-          initial="hidden"
-          animate="visible"
-          whileHover="hover"
-        >
-          <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            <Statistic
-              title="Available Kits"
-              value={kits.filter(kit => kit.status === 'AVAILABLE').length}
-              prefix={<ToolOutlined style={{ color: '#fa8c16' }} />}
-              valueStyle={{ color: '#fa8c16', fontWeight: 'bold' }}
-            />
-          </Card>
-        </motion.div>
-      </Col>
-
-      <Col xs={24} sm={12} lg={6}>
-        <motion.div
-          variants={cardVariants}
-          initial="hidden"
-          animate="visible"
-          whileHover="hover"
-        >
-          <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            <Statistic
-              title="Active Rentals"
-              value={2}
-              prefix={<ShoppingOutlined style={{ color: '#722ed1' }} />}
-              valueStyle={{ color: '#722ed1', fontWeight: 'bold' }}
-            />
-          </Card>
-        </motion.div>
-      </Col>
-    </Row>
-
-    <Row gutter={[24, 24]} style={{ marginTop: '24px' }}>
-      <Col xs={24} lg={12}>
-        <motion.div
-          variants={cardVariants}
-          initial="hidden"
-          animate="visible"
-          whileHover="hover"
-        >
-          <Card
-            title="Group Information"
-            style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+  return (
+    <div>
+      <Row gutter={[24, 24]}>
+        {/* Active Request/Return - First card */}
+        <Col xs={24} sm={12} lg={6}>
+          <motion.div
+            variants={cardVariants}
+            initial="hidden"
+            animate="visible"
+            whileHover="hover"
           >
-            {group ? (
-              <Descriptions column={1}>
-                <Descriptions.Item label="Group Name">
-                  <Text strong>{group.name}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label="Leader">
-                  <Tag color="gold">{group.leader}</Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="Total Members">
-                  <Badge count={(group.members?.length || 0) + 1} showZero color="#52c41a" />
-                </Descriptions.Item>
-                <Descriptions.Item label="Members">
-                  {group.members && group.members.length > 0 ? (
-                    <div>
-                      {group.members.map((member, index) => {
-                        const memberName = typeof member === 'string' ? member : (member.name || member.email);
-                        return (
-                          <Tag key={index} color="blue" style={{ marginBottom: '4px' }}>
-                            {memberName}
-                          </Tag>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <Text type="secondary">No other members</Text>
-                  )}
-                </Descriptions.Item>
-                {group.lecturer && (
-                  <Descriptions.Item label="Lecturer">
-                    <Tag color="purple">{group.lecturer}</Tag>
-                  </Descriptions.Item>
+            <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
+              <Statistic
+                title="Active Request/Return"
+                value={requestCount}
+                formatter={(value) => (
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <span style={{ color: '#faad14' }}>{value}</span>
+                    <span style={{ margin: '0 8px', color: '#d9d9d9', fontSize: '20px', fontWeight: '300' }}>|</span>
+                    <span style={{ color: '#722ed1' }}>{returnCount}</span>
+                  </div>
                 )}
-                {group.classCode && (
-                  <Descriptions.Item label="Class Code">
-                    <Text code>{group.classCode}</Text>
-                  </Descriptions.Item>
-                )}
-                <Descriptions.Item label="Status">
-                  <Tag color={group.status === 'active' ? 'success' : 'error'}>
-                    {group.status || 'inactive'}
-                  </Tag>
-                </Descriptions.Item>
-              </Descriptions>
-            ) : (
-              <Empty description="No group found for this leader" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-            )}
-          </Card>
-        </motion.div>
-      </Col>
-
-      <Col xs={24} lg={12}>
-        <motion.div
-          variants={cardVariants}
-          initial="hidden"
-          animate="visible"
-          whileHover="hover"
-        >
-          <Card
-            title="Recent Transactions"
-            style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
-          >
-            {wallet?.transactions && wallet.transactions.length > 0 ? (
-              <List
-                size="small"
-                dataSource={wallet.transactions.slice(0, 5)}
-                renderItem={(item) => {
-                  // Determine color based on transaction type
-                  const typeUpper = (item.type || '').toUpperCase();
-                  const isPositiveTransaction =
-                    typeUpper === 'TOP_UP' ||
-                    typeUpper === 'TOPUP' ||
-                    typeUpper === 'REFUND';
-                  const isNegativeTransaction =
-                    typeUpper === 'RENTAL_FEE' ||
-                    typeUpper === 'PENALTY_PAYMENT' ||
-                    typeUpper === 'PENALTY' ||
-                    typeUpper === 'FINE';
-
-                  // Use type-based color if available, otherwise fallback to amount-based
-                  let amountColor = '#595959'; // default gray
-                  if (isPositiveTransaction) {
-                    amountColor = '#52c41a'; // green for top-up and refund
-                  } else if (isNegativeTransaction) {
-                    amountColor = '#ff4d4f'; // red for rental fee and penalty
-                  } else {
-                    // Fallback: use amount sign
-                    amountColor = item.amount > 0 ? '#52c41a' : '#ff4d4f';
-                  }
-
-                  return (
-                    <List.Item>
-                      <List.Item.Meta
-                        avatar={<DollarOutlined style={{ color: amountColor }} />}
-                        title={
-                          <Tag color={
-                            item.type === 'TOP_UP' ? 'success' :
-                              item.type === 'RENTAL_FEE' ? 'processing' :
-                                item.type === 'PENALTY_PAYMENT' ? 'error' :
-                                  item.type === 'REFUND' ? 'purple' : 'default'
-                          }>
-                            {item.type?.replace(/_/g, ' ') || 'Transaction'}
-                          </Tag>
-                        }
-                        description={item.date || item.description}
-                      />
-                      <div style={{
-                        color: amountColor,
-                        fontWeight: 'bold'
-                      }}>
-                        {isPositiveTransaction ? '+' : ''}{item.amount?.toLocaleString() || 0} VND
-                      </div>
-                    </List.Item>
-                  );
-                }}
+                prefix={<ShoppingOutlined style={{ color: '#722ed1' }} />}
+                valueStyle={{ fontWeight: 'bold' }}
               />
-            ) : (
-              <Empty description="No transactions yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-            )}
-          </Card>
-        </motion.div>
-      </Col>
-    </Row>
+              <div style={{ fontSize: '12px', color: '#8c8c8c', marginTop: 4, display: 'flex', gap: '16px' }}>
+                <span style={{ color: '#faad14' }}>Request</span>
+                <span style={{ color: '#722ed1' }}>Return</span>
+              </div>
+            </Card>
+          </motion.div>
+        </Col>
 
-    {/* Penalties Section */}
-    {penalties && penalties.length > 0 && (
+        {/* Unresolved Penalty - Second card */}
+        <Col xs={24} sm={12} lg={6}>
+          <motion.div
+            variants={cardVariants}
+            initial="hidden"
+            animate="visible"
+            whileHover="hover"
+          >
+            <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
+              <Statistic
+                title="Unresolved Penalty"
+                value={unresolvedPenaltyCount}
+                prefix={<ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />}
+                valueStyle={{ color: '#ff4d4f', fontWeight: 'bold' }}
+              />
+            </Card>
+          </motion.div>
+        </Col>
+
+        {/* Available Kits - Third card */}
+        <Col xs={24} sm={12} lg={6}>
+          <motion.div
+            variants={cardVariants}
+            initial="hidden"
+            animate="visible"
+            whileHover="hover"
+          >
+            <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
+              <Statistic
+                title="Available Kits"
+                value={kits.filter(kit => kit.status === 'AVAILABLE').length}
+                prefix={<ToolOutlined style={{ color: '#fa8c16' }} />}
+                valueStyle={{ color: '#fa8c16', fontWeight: 'bold' }}
+              />
+            </Card>
+          </motion.div>
+        </Col>
+
+        {/* Wallet Balance - Fourth card (changed to purple) */}
+        <Col xs={24} sm={12} lg={6}>
+          <motion.div
+            variants={cardVariants}
+            initial="hidden"
+            animate="visible"
+            whileHover="hover"
+          >
+            <Card style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
+              <Statistic
+                title="Wallet Balance"
+                value={wallet.balance || 0}
+                prefix={<DollarOutlined style={{ color: '#722ed1' }} />}
+                suffix="VND"
+                valueStyle={{ color: '#722ed1', fontWeight: 'bold' }}
+              />
+            </Card>
+          </motion.div>
+        </Col>
+      </Row>
+
       <Row gutter={[24, 24]} style={{ marginTop: '24px' }}>
-        <Col xs={24}>
+        <Col xs={24} lg={12}>
           <motion.div
             variants={cardVariants}
             initial="hidden"
@@ -2066,75 +1948,213 @@ const DashboardContent = ({ group, wallet, kits, penalties, penaltyDetails }) =>
             whileHover="hover"
           >
             <Card
-              title={
-                <Space>
-                  <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />
-                  <span>Penalties</span>
-                </Space>
-              }
+              title="Group Information"
               style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
             >
-              <List
-                dataSource={penalties.filter(p => !p.resolved)}
-                renderItem={(penalty) => (
-                  <List.Item>
-                    <List.Item.Meta
-                      avatar={
-                        <Avatar
-                          icon={<ExclamationCircleOutlined />}
-                          style={{ backgroundColor: penalty.resolved ? '#52c41a' : '#fa8c16' }}
+              {group ? (
+                <Descriptions column={1}>
+                  <Descriptions.Item label="Group Name">
+                    <Text strong>{group.name}</Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Leader">
+                    <Tag color="gold">{group.leader}</Tag>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Total Members">
+                    <Badge count={(group.members?.length || 0) + 1} showZero color="#52c41a" />
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Members">
+                    {group.members && group.members.length > 0 ? (
+                      <div>
+                        {group.members.map((member, index) => {
+                          const memberName = typeof member === 'string' ? member : (member.name || member.email);
+                          return (
+                            <Tag key={index} color="blue" style={{ marginBottom: '4px' }}>
+                              {memberName}
+                            </Tag>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <Text type="secondary">No other members</Text>
+                    )}
+                  </Descriptions.Item>
+                  {group.lecturer && (
+                    <Descriptions.Item label="Lecturer">
+                      <Tag color="purple">{group.lecturer}</Tag>
+                    </Descriptions.Item>
+                  )}
+                  {group.classCode && (
+                    <Descriptions.Item label="Class Code">
+                      <Text code>{group.classCode}</Text>
+                    </Descriptions.Item>
+                  )}
+                  <Descriptions.Item label="Status">
+                    <Tag color={group.status === 'active' ? 'success' : 'error'}>
+                      {group.status || 'inactive'}
+                    </Tag>
+                  </Descriptions.Item>
+                </Descriptions>
+              ) : (
+                <Empty description="No group found for this leader" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              )}
+            </Card>
+          </motion.div>
+        </Col>
+
+        <Col xs={24} lg={12}>
+          <motion.div
+            variants={cardVariants}
+            initial="hidden"
+            animate="visible"
+            whileHover="hover"
+          >
+            <Card
+              title="Recent Transactions"
+              style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+            >
+              {wallet?.transactions && wallet.transactions.length > 0 ? (
+                <List
+                  size="small"
+                  dataSource={wallet.transactions.slice(0, 5)}
+                  renderItem={(item) => {
+                    // Determine color based on transaction type
+                    const typeUpper = (item.type || '').toUpperCase();
+                    const isPositiveTransaction =
+                      typeUpper === 'TOP_UP' ||
+                      typeUpper === 'TOPUP' ||
+                      typeUpper === 'REFUND';
+                    const isNegativeTransaction =
+                      typeUpper === 'RENTAL_FEE' ||
+                      typeUpper === 'PENALTY_PAYMENT' ||
+                      typeUpper === 'PENALTY' ||
+                      typeUpper === 'FINE';
+
+                    // Use type-based color if available, otherwise fallback to amount-based
+                    let amountColor = '#595959'; // default gray
+                    if (isPositiveTransaction) {
+                      amountColor = '#52c41a'; // green for top-up and refund
+                    } else if (isNegativeTransaction) {
+                      amountColor = '#ff4d4f'; // red for rental fee and penalty
+                    } else {
+                      // Fallback: use amount sign
+                      amountColor = item.amount > 0 ? '#52c41a' : '#ff4d4f';
+                    }
+
+                    return (
+                      <List.Item>
+                        <List.Item.Meta
+                          avatar={<DollarOutlined style={{ color: amountColor }} />}
+                          title={
+                            <Tag color={
+                              item.type === 'TOP_UP' ? 'success' :
+                                item.type === 'RENTAL_FEE' ? 'processing' :
+                                  item.type === 'PENALTY_PAYMENT' ? 'error' :
+                                    item.type === 'REFUND' ? 'purple' : 'default'
+                            }>
+                              {item.type?.replace(/_/g, ' ') || 'Transaction'}
+                            </Tag>
+                          }
+                          description={item.date || item.description}
                         />
-                      }
-                      title={
-                        <Space>
-                          <Text strong>
-                            {penalty.note || 'Penalty Fee'}
-                          </Text>
-                          {!penalty.resolved && (
-                            <Tag color="error">Unresolved</Tag>
-                          )}
-                          {penalty.resolved && (
-                            <Tag color="success">Resolved</Tag>
-                          )}
-                        </Space>
-                      }
-                      description={
-                        <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                          <Text>
-                            Amount: <Text strong style={{ color: '#ff4d4f' }}>
-                              {penalty.totalAmount ? penalty.totalAmount.toLocaleString() : 0} VND
-                            </Text>
-                          </Text>
-                          {penalty.takeEffectDate && (
-                            <Text type="secondary">
-                              Date: {new Date(penalty.takeEffectDate).toLocaleString('vi-VN')}
-                            </Text>
-                          )}
-                          {penaltyDetails[penalty.id] && penaltyDetails[penalty.id].length > 0 && (
-                            <div style={{ marginTop: 8 }}>
-                              <Text strong style={{ fontSize: 12 }}>Penalty Details:</Text>
-                              {penaltyDetails[penalty.id].map((detail, idx) => (
-                                <div key={idx} style={{ marginLeft: 16, marginTop: 4 }}>
-                                  <Text type="secondary" style={{ fontSize: 12 }}>
-                                    • {detail.description || 'N/A'}: {detail.amount ? detail.amount.toLocaleString() : 0} VND
-                                  </Text>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </Space>
-                      }
-                    />
-                  </List.Item>
-                )}
-              />
+                        <div style={{
+                          color: amountColor,
+                          fontWeight: 'bold'
+                        }}>
+                          {isPositiveTransaction ? '+' : ''}{item.amount?.toLocaleString() || 0} VND
+                        </div>
+                      </List.Item>
+                    );
+                  }}
+                />
+              ) : (
+                <Empty description="No transactions yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              )}
             </Card>
           </motion.div>
         </Col>
       </Row>
-    )}
-  </div>
-);
+
+      {/* Penalties Section */}
+      {penalties && penalties.length > 0 && (
+        <Row gutter={[24, 24]} style={{ marginTop: '24px' }}>
+          <Col xs={24}>
+            <motion.div
+              variants={cardVariants}
+              initial="hidden"
+              animate="visible"
+              whileHover="hover"
+            >
+              <Card
+                title={
+                  <Space>
+                    <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />
+                    <span>Penalties</span>
+                  </Space>
+                }
+                style={{ borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+              >
+                <List
+                  dataSource={penalties.filter(p => !p.resolved)}
+                  renderItem={(penalty) => (
+                    <List.Item>
+                      <List.Item.Meta
+                        avatar={
+                          <Avatar
+                            icon={<ExclamationCircleOutlined />}
+                            style={{ backgroundColor: penalty.resolved ? '#52c41a' : '#fa8c16' }}
+                          />
+                        }
+                        title={
+                          <Space>
+                            <Text strong>
+                              {penalty.note || 'Penalty Fee'}
+                            </Text>
+                            {!penalty.resolved && (
+                              <Tag color="error">Unresolved</Tag>
+                            )}
+                            {penalty.resolved && (
+                              <Tag color="success">Resolved</Tag>
+                            )}
+                          </Space>
+                        }
+                        description={
+                          <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                            <Text>
+                              Amount: <Text strong style={{ color: '#ff4d4f' }}>
+                                {penalty.totalAmount ? penalty.totalAmount.toLocaleString() : 0} VND
+                              </Text>
+                            </Text>
+                            {penalty.takeEffectDate && (
+                              <Text type="secondary">
+                                Date: {new Date(penalty.takeEffectDate).toLocaleString('vi-VN')}
+                              </Text>
+                            )}
+                            {penaltyDetails[penalty.id] && penaltyDetails[penalty.id].length > 0 && (
+                              <div style={{ marginTop: 8 }}>
+                                <Text strong style={{ fontSize: 12 }}>Penalty Details:</Text>
+                                {penaltyDetails[penalty.id].map((detail, idx) => (
+                                  <div key={idx} style={{ marginLeft: 16, marginTop: 4 }}>
+                                    <Text type="secondary" style={{ fontSize: 12 }}>
+                                      • {detail.description || 'N/A'}: {detail.amount ? detail.amount.toLocaleString() : 0} VND
+                                    </Text>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </Space>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+              </Card>
+            </motion.div>
+          </Col>
+        </Row>
+      )}
+    </div>
+  );
+};
 
 // Group Management Component
 const GroupManagement = ({ group }) => {
