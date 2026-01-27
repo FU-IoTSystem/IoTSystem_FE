@@ -1296,9 +1296,12 @@ function LeaderPortal({ user, onLogout }) {
     }
 
     // Check if wallet has enough balance for deposit
-    const depositAmount = (selectedComponent.pricePerCom || 0) * componentQuantity;
+    // Calculate deposit amount (2/3 of total price)
+    const totalPrice = (selectedComponent.pricePerCom || 0) * componentQuantity;
+    const depositAmount = Math.ceil(totalPrice);
+
     if (wallet.balance < depositAmount) {
-      message.error(`Insufficient wallet balance. You need ${depositAmount.toLocaleString()} VND but only have ${wallet.balance.toLocaleString()} VND. Please top up your wallet.`);
+      message.error(`Insufficient wallet balance. You need ${depositAmount.toLocaleString()} VND (2/3 of total price) but only have ${wallet.balance.toLocaleString()} VND. Please top up your wallet.`);
       return;
     }
 
@@ -1712,7 +1715,11 @@ function LeaderPortal({ user, onLogout }) {
                 </Descriptions.Item>
                 <Descriptions.Item label="Amount">
                   <Text strong style={{ color: '#1890ff', fontSize: '16px' }}>
-                    {selectedKitDetail.amount?.toLocaleString() || '0'} VND
+                    {(selectedKitDetail.components?.reduce((sum, comp) => {
+                      const price = Number(comp.pricePerCom) || 0;
+                      const quantity = Number(comp.quantityTotal) || Number(comp.quantity) || 0;
+                      return sum + (price * quantity);
+                    }, 0) || 0).toLocaleString()} VND
                   </Text>
                 </Descriptions.Item>
                 <Descriptions.Item label="Description" span={2}>
@@ -2514,7 +2521,11 @@ const KitRental = ({ kits, onViewKitDetail, onRentKit, checkingKitId }) => {
                               </div>
                               <div style={{ marginTop: 8 }}>
                                 <Text strong style={{ fontSize: '14px', color: '#1890ff' }}>
-                                  {kit.amount ? `${Number(kit.amount).toLocaleString()} VND` : '0 VND'}
+                                  {(kit.components?.reduce((sum, comp) => {
+                                    const price = Number(comp.pricePerCom) || 0;
+                                    const quantity = Number(comp.quantityTotal) || Number(comp.quantity) || 0;
+                                    return sum + (price * quantity);
+                                  }, 0) || 0).toLocaleString()} VND
                                 </Text>
                               </div>
                               {kit.description && (
@@ -3914,7 +3925,7 @@ const BorrowTracking = ({ borrowingRequests, setBorrowingRequests, user, penalti
               <div style={{ marginTop: '24px', textAlign: 'center' }}>
                 <Title level={4}>QR Code</Title>
                 <img
-                  src={`data:image/png;base64,${selectedRequest.qrCode}`}
+                  src={selectedRequest.qrCode.startsWith('data:') ? selectedRequest.qrCode : `data:image/png;base64,${selectedRequest.qrCode}`}
                   alt="QR Code"
                   style={{ maxWidth: '100%', border: '1px solid #d9d9d9', borderRadius: '8px' }}
                 />
