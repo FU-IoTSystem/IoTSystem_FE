@@ -225,8 +225,9 @@ function RentalRequestPage() {
   // Recalculate total cost when selectedKit changes
   useEffect(() => {
     if (selectedKit) {
-      // Calculate total cost as deposit amount (100% of kit amount)
-      const depositAmount = selectedKit.amount || 0;
+      // Calculate total cost as deposit amount (2/3 of kit amount)
+      const kitAmount = selectedKit.amount || 0;
+      const depositAmount = Math.ceil(kitAmount);
       setRentalData(prev => ({ ...prev, totalCost: depositAmount }));
     }
   }, [selectedKit]);
@@ -251,9 +252,10 @@ function RentalRequestPage() {
   };
 
   const calculateTotalCost = () => {
-    // Calculate total cost as deposit amount (100% of kit amount)
-    // This matches backend logic: deposit_amount = kit.getAmount()
-    const depositAmount = selectedKit ? (selectedKit.amount || 0) : 0;
+    // Calculate total cost as deposit amount (2/3 of kit amount)
+    // This matches backend logic: deposit_amount = kit.getAmount() * 2/3
+    const kitAmount = selectedKit ? (selectedKit.amount || 0) : 0;
+    const depositAmount = Math.ceil(kitAmount);
     setRentalData(prev => ({ ...prev, totalCost: depositAmount }));
   };
 
@@ -327,10 +329,12 @@ function RentalRequestPage() {
         }
       }
 
-      // Check if wallet has enough balance for deposit (100% of kit amount)
-      const requiredAmount = selectedKit ? selectedKit.amount : 0;
+      // Check if wallet has enough balance for deposit (2/3 of kit amount)
+      const kitAmount = selectedKit ? selectedKit.amount : 0;
+      const requiredAmount = Math.ceil((kitAmount || 0) * 2 / 3);
+
       if (wallet.balance < requiredAmount) {
-        message.error('Insufficient wallet balance. Please top up your wallet.');
+        message.error(`Insufficient wallet balance. You need ${requiredAmount.toLocaleString()} VND (2/3 of kit price) to rent this kit. Please top up your wallet.`);
         setLoading(false);
         return;
       }
@@ -361,8 +365,9 @@ function RentalRequestPage() {
         console.error('Error sending notifications:', notifyError);
       }
 
-      // Deduct money from wallet (deposit amount = 100% of kit amount)
-      const depositAmount = selectedKit ? (selectedKit.amount || 0) : 0;
+      // Deduct money from wallet (deposit amount = 2/3 of kit amount)
+      const kitAmountVal = selectedKit ? (selectedKit.amount || 0) : 0;
+      const depositAmount = Math.ceil(kitAmountVal * 2 / 3);
       await walletAPI.deduct(depositAmount, `Rental request for ${selectedKit.kitName}`);
 
       // Show notification instead of QR code
@@ -557,7 +562,7 @@ function RentalRequestPage() {
                 <Col xs={24} md={8}>
                   <Statistic
                     title="Required Amount (Deposit)"
-                    value={selectedKit?.amount ? selectedKit.amount : 0}
+                    value={(selectedKit?.amount || 0)}
                     prefix={<DollarOutlined />}
                     suffix="VND"
                     valueStyle={{ color: '#fa8c16' }}
@@ -566,10 +571,10 @@ function RentalRequestPage() {
                 <Col xs={24} md={8}>
                   <Statistic
                     title="Remaining Balance"
-                    value={selectedKit ? wallet.balance - selectedKit.amount : wallet.balance}
+                    value={wallet.balance - Math.ceil((selectedKit?.amount || 0) * 2 / 3)}
                     prefix={<DollarOutlined />}
                     suffix="VND"
-                    valueStyle={{ color: selectedKit && wallet.balance >= selectedKit.amount ? '#52c41a' : '#f5222d' }}
+                    valueStyle={{ color: wallet.balance >= Math.ceil((selectedKit?.amount || 0) * 2 / 3) ? '#52c41a' : '#f5222d' }}
                   />
                 </Col>
               </Row>
@@ -579,16 +584,16 @@ function RentalRequestPage() {
               <Space direction="vertical" style={{ width: '100%' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Text>Balance Status:</Text>
-                  <Tag color={selectedKit && wallet.balance >= selectedKit.amount ? 'success' : 'error'}>
-                    {selectedKit && wallet.balance >= selectedKit.amount ? 'Sufficient' : 'Insufficient'}
+                  <Tag color={wallet.balance >= Math.ceil((selectedKit?.amount || 0) * 2 / 3) ? 'success' : 'error'}>
+                    {wallet.balance >= Math.ceil((selectedKit?.amount || 0) * 2 / 3) ? 'Sufficient' : 'Insufficient'}
                   </Tag>
                 </div>
 
-                {selectedKit && wallet.balance < selectedKit.amount && (
+                {selectedKit && wallet.balance < Math.ceil((selectedKit.amount || 0) * 2 / 3) && (
                   <>
                     <Alert
                       message="Insufficient Balance"
-                      description={`You need ${((selectedKit.amount || 0) - (wallet.balance || 0)).toLocaleString()} VND more to complete this rental.`}
+                      description={`You need ${(Math.ceil((selectedKit.amount || 0) * 2 / 3) - (wallet.balance || 0)).toLocaleString()} VND more to complete this rental.`}
                       type="warning"
                       showIcon
                       style={{ marginBottom: 16 }}
@@ -596,9 +601,10 @@ function RentalRequestPage() {
                     <Button
                       type="primary"
                       onClick={() => {
+                        const required = Math.ceil((selectedKit?.amount || 0) * 2 / 3);
                         const lackAmount = Math.max(
                           0,
-                          (selectedKit?.amount || 0) - (wallet.balance || 0)
+                          required - (wallet.balance || 0)
                         );
                         // Store redirect info so that after top-up we can return to rental request
                         try {
@@ -736,11 +742,6 @@ function RentalRequestPage() {
                             </Descriptions.Item>
                             <Descriptions.Item label="Expected Return Date">
                               <Text>{formatDateTimeForDisplay(rentalData.expectReturnDate)}</Text>
-                            </Descriptions.Item>
-                            <Descriptions.Item label="Total Cost">
-                              <Text strong style={{ color: '#52c41a' }}>
-                                {(rentalData.totalCost || 0).toLocaleString()} VND
-                              </Text>
                             </Descriptions.Item>
                           </Descriptions>
                         </Col>

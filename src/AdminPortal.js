@@ -86,7 +86,7 @@ import {
 } from '@ant-design/icons';
 import MaintenanceManagement from './MaintenanceManagement';
 
-import { kitAPI, kitComponentAPI, kitComponentHistoryAPI, borrowingRequestAPI, walletTransactionAPI, userAPI, authAPI, classesAPI, studentGroupAPI, borrowingGroupAPI, penaltyPoliciesAPI, penaltiesAPI, penaltyDetailAPI, damageReportAPI, notificationAPI, excelImportAPI, classAssignmentAPI } from './api';
+import { kitAPI, kitComponentAPI, kitComponentHistoryAPI, borrowingRequestAPI, walletTransactionAPI, userAPI, authAPI, classesAPI, studentGroupAPI, borrowingGroupAPI, penaltyPoliciesAPI, penaltiesAPI, penaltyDetailAPI, damageReportAPI, notificationAPI, excelImportAPI, classAssignmentAPI, API_BASE_URL } from './api';
 import webSocketService from './utils/websocket';
 import './AdminPortalDashboard.css';
 
@@ -236,10 +236,14 @@ function AdminPortal({ onLogout }) {
 
   // Load unresolved penalties for Fine Management tab
   const loadUnresolvedPenalties = useCallback(async () => {
+    console.log('Loading unresolved penalties...');
     try {
-      const res = await penaltiesAPI.getUnresolved();
+      const res = await penaltiesAPI.getAll();
       console.log('Unresolved penalties response:', res);
-      const data = Array.isArray(res) ? res : (res && Array.isArray(res.data) ? res.data : []);
+      const rawData = Array.isArray(res) ? res : (res && Array.isArray(res.data) ? res.data : []);
+      // Filter for unresolved penalties
+      const data = rawData.filter(p => !p.resolved);
+
       const mapped = data.map(p => ({
         id: p.id,
         kitId: p.borrowRequestId || 'N/A',
@@ -270,6 +274,7 @@ function AdminPortal({ onLogout }) {
 
   useEffect(() => {
     if (selectedKey === 'fines') {
+      console.log('Fines tab selected, loading unresolved penalties...');
       loadUnresolvedPenalties();
     }
   }, [selectedKey, loadUnresolvedPenalties]);
@@ -407,9 +412,22 @@ function AdminPortal({ onLogout }) {
         setUsers([]);
       }
       // Fetch rental requests from API
+      // Fetch all requests including returned ones
+      let allRequests = [];
       try {
         const rentalResponse = await borrowingRequestAPI.getAll();
-        console.log('Raw rental requests response:', rentalResponse);
+        const returnedResponse = await borrowingRequestAPI.getByStatuses(['RETURNED']);
+
+        let requests = [];
+        if (Array.isArray(rentalResponse)) requests = [...requests, ...rentalResponse];
+        else if (rentalResponse?.data && Array.isArray(rentalResponse.data)) requests = [...requests, ...rentalResponse.data];
+
+        if (Array.isArray(returnedResponse)) requests = [...requests, ...returnedResponse];
+        else if (returnedResponse?.data && Array.isArray(returnedResponse.data)) requests = [...requests, ...returnedResponse.data];
+
+        // Remove duplicates by id
+        const uniqueRequests = Array.from(new Map(requests.map(item => [item.id, item])).values());
+        allRequests = uniqueRequests;
 
         // Helper function to sort rental requests by createdAt desc
         const sortRentalRequestsByCreatedAt = (requests) => {
@@ -420,21 +438,11 @@ function AdminPortal({ onLogout }) {
           });
         };
 
-        if (Array.isArray(rentalResponse)) {
-          const sortedRequests = sortRentalRequestsByCreatedAt(rentalResponse);
-          fetchedRentalRequests = sortedRequests;
-          setRentalRequests(sortedRequests);
-          console.log('Rental requests loaded successfully:', sortedRequests.length);
-        } else if (rentalResponse && rentalResponse.data && Array.isArray(rentalResponse.data)) {
-          const sortedRequests = sortRentalRequestsByCreatedAt(rentalResponse.data);
-          fetchedRentalRequests = sortedRequests;
-          setRentalRequests(sortedRequests);
-          console.log('Rental requests loaded successfully:', sortedRequests.length);
-        } else {
-          fetchedRentalRequests = [];
-          setRentalRequests([]);
-          console.log('No rental requests data');
-        }
+        const sortedRequests = sortRentalRequestsByCreatedAt(allRequests);
+        fetchedRentalRequests = sortedRequests;
+        setRentalRequests(sortedRequests);
+        console.log('Rental requests loaded successfully (active + returned):', sortedRequests.length);
+
       } catch (rentalError) {
         console.error('Error loading rental requests:', rentalError);
         fetchedRentalRequests = [];
@@ -557,8 +565,6 @@ function AdminPortal({ onLogout }) {
         setBorrowPenaltyStats([]);
       }
 
-      setFines([]);
-
       // Fetch penalty policies from API
       try {
         const penaltyPoliciesResponse = await penaltyPoliciesAPI.getAll();
@@ -579,9 +585,7 @@ function AdminPortal({ onLogout }) {
         setPenaltyPolicies([]);
       }
 
-      // Load available students for group management
-      const studentUsers = []; // TODO: Replace with real API call to get student users
-      setAvailableStudents(studentUsers);
+
 
       // Calculate system stats from fetched data (not from state)
       const availableKitsCount = fetchedKits.filter(kit => (kit.status === 'AVAILABLE' || kit.status === 'available')).length;
@@ -757,7 +761,7 @@ function AdminPortal({ onLogout }) {
       setKitComponentHistory(data);
     } catch (error) {
       console.error('Error loading all kit component history:', error);
-      message.error('Không tải được lịch sử component');
+      // message.error('Không tải được lịch sử component');
     } finally {
       setKitComponentHistoryLoading(false);
     }
@@ -1105,7 +1109,15 @@ function AdminPortal({ onLogout }) {
         console.log('All students (no classId):', studentsInClass);
       }
 
-      setAvailableStudents(studentsInClass || []);
+      // Filter out students who are already in other groups
+      const otherGroups = groups.filter(g => g.id !== group.id);
+      const studentsInOtherGroups = new Set(otherGroups.flatMap(g => g.members || []));
+
+      const filteredStudents = (studentsInClass || []).filter(student =>
+        !studentsInOtherGroups.has(student.email)
+      );
+
+      setAvailableStudents(filteredStudents);
     } catch (error) {
       console.error('Error loading students for adjust members:', error);
       notification.error({
@@ -1573,9 +1585,10 @@ function AdminPortal({ onLogout }) {
                   kitId: (selectedKit?.id && selectedKit.id !== 'virtual-kit-context' && selectedKit.id.length === 36) ? selectedKit.id : null,
                   componentId: comp.id,
                   action: 'DAMAGED',
-                  oldStatus: comp.status || 'UNKNOWN',
+                  oldStatus: comp.status || 'AVAILABLE',
                   newStatus: 'DAMAGED',
                   imgUrl: assessment.imageUrl || null,
+                  quantity: assessment.quantity || 1,
                   penaltyDetailId: componentPenaltyMap[compName] || null,
                 };
               })
@@ -1976,7 +1989,7 @@ function AdminPortal({ onLogout }) {
     {
       key: 'fines',
       icon: <DollarOutlined />,
-      label: 'Fine Management',
+      label: 'Unpaid Fines',
     },
     {
       key: 'transactions',
@@ -2297,6 +2310,7 @@ function AdminPortal({ onLogout }) {
                     rentalRequests={rentalRequests}
                     fines={fines}
                     borrowPenaltyStats={borrowPenaltyStats}
+                    transactions={transactions}
                   />
                 )}
                 {selectedKey === 'kits' && <KitManagement kits={kits} setKits={setKits} handleExportKits={handleExportKits} handleImportKits={handleImportKits} />}
@@ -2807,7 +2821,7 @@ function AdminPortal({ onLogout }) {
 }
 
 // Dashboard Component
-const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPenaltyStats }) => {
+const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPenaltyStats, transactions }) => {
   const [customDateRange, setCustomDateRange] = useState([]);
   const mapRoleToGroup = (role) => {
     const normalized = (role || '').toLowerCase();
@@ -2884,11 +2898,22 @@ const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPen
 
   // Get date range based on filter
   const getDateRange = useMemo(() => {
-    const statsList = Array.isArray(borrowPenaltyStats) ? borrowPenaltyStats : [];
-    // Collect all available dates from stats
-    const allDates = statsList
-      .map((s) => normalizeDate(s.statDate || s.createdAt))
-      .filter(Boolean)
+    // const statsList = Array.isArray(borrowPenaltyStats) ? borrowPenaltyStats : [];
+    const txnList = Array.isArray(transactions) ? transactions.filter(t => t.type === 'PENALTY_PAYMENT') : [];
+    const returnedList = Array.isArray(rentalRequests) ? rentalRequests.filter(r => r.status === 'RETURNED') : [];
+
+    // Collect dates from returned requests
+    const returnDates = returnedList
+      .map((r) => normalizeDate(r.actualReturnDate || r.updatedAt || r.createdAt))
+      .filter(Boolean);
+
+    // Collect dates from transactions
+    const txnDates = txnList
+      .map((t) => normalizeDate(t.createdAt || t.transactionDate))
+      .filter(Boolean);
+
+    // Merge and unique
+    const allDates = [...returnDates, ...txnDates]
       .map((d) => d.startOf('day'));
 
     const today = dayjs();
@@ -2920,35 +2945,30 @@ const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPen
 
     // Default: show span of available data
     return buildRange(minDate, maxDate);
-  }, [borrowPenaltyStats, customDateRange]);
+  }, [rentalRequests, transactions, customDateRange]);
 
   // Filter and group stats by date from API
   const statsByDate = useMemo(() => {
-    const statsList = Array.isArray(borrowPenaltyStats) ? borrowPenaltyStats : [];
-    const now = dayjs();
+
+    // const statsList = Array.isArray(borrowPenaltyStats) ? borrowPenaltyStats : [];
+    const txnList = Array.isArray(transactions) ? transactions : [];
+    const returnedList = Array.isArray(rentalRequests) ? rentalRequests.filter(r => r.status === 'RETURNED') : [];
     const grouped = {};
 
-    console.log('Processing stats:', statsList.length, 'items');
-    console.log('Date range:', getDateRange);
+    console.log('Processing returned requests:', returnedList.length, 'items');
+    console.log('Processing transactions:', txnList.length, 'items');
 
-    statsList.forEach((stat) => {
-      // Parse statDate - could be string or LocalDate format (YYYY-MM-DD)
-      let statDate = stat.statDate || stat.createdAt;
-      if (!statDate) {
-        console.warn('Stat missing date:', stat);
-        return;
-      }
+    // 1. Process returned requests for returnedCount
+    returnedList.forEach((req) => {
+      let reqDate = req.actualReturnDate || req.updatedAt || req.createdAt;
+      if (!reqDate) return;
 
-      // Handle different date formats - LocalDate comes as "YYYY-MM-DD" string
-      const dateValue = normalizeDate(statDate);
-      if (!dateValue) {
-        console.warn('Invalid date format:', statDate, typeof statDate);
-        return;
-      }
+      const dateValue = normalizeDate(reqDate);
+      if (!dateValue) return;
 
       const dateKey = dateValue.format('YYYY-MM-DD');
 
-      // Apply custom range filter if selected
+      // Apply custom range filter
       if (Array.isArray(customDateRange) && customDateRange.length === 2) {
         const [start, end] = customDateRange;
         if (start && end) {
@@ -2960,20 +2980,46 @@ const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPen
         }
       }
 
-      // Add to grouped data
       if (!grouped[dateKey]) {
         grouped[dateKey] = { returnedCount: 0, penaltyAmount: 0 };
       }
-      // totalBorrow is count of requests, totalPenalty is sum of penalty amounts
-      grouped[dateKey].returnedCount += (Number(stat.totalBorrow) || 0);
-      grouped[dateKey].penaltyAmount += (Number(stat.totalPenalty) || 0);
-      console.log('Added stat to', dateKey, ':', stat.totalBorrow, stat.totalPenalty);
+      grouped[dateKey].returnedCount += 1;
     });
 
-    console.log('Grouped stats:', grouped);
-    console.log('Grouped stats keys:', Object.keys(grouped));
+    // 2. Process transactions for penaltyAmount
+    txnList.forEach((txn) => {
+      // Only count PENALTY_PAYMENT
+      if (txn.type !== 'PENALTY_PAYMENT') return;
+
+      let txnDate = txn.createdAt || txn.transactionDate;
+      if (!txnDate) return;
+
+      const dateValue = normalizeDate(txnDate);
+      if (!dateValue) return;
+
+      const dateKey = dateValue.format('YYYY-MM-DD');
+
+      // Apply custom range filter
+      if (Array.isArray(customDateRange) && customDateRange.length === 2) {
+        const [start, end] = customDateRange;
+        if (start && end) {
+          const startDay = start.startOf('day');
+          const endDay = end.startOf('day');
+          if (dateValue.isBefore(startDay, 'day') || dateValue.isAfter(endDay, 'day')) {
+            return;
+          }
+        }
+      }
+
+      if (!grouped[dateKey]) {
+        grouped[dateKey] = { returnedCount: 0, penaltyAmount: 0 };
+      }
+      // Sum the amounts
+      grouped[dateKey].penaltyAmount += (Number(txn.amount) || 0);
+    });
+
     return grouped;
-  }, [borrowPenaltyStats, getDateRange, customDateRange]);
+  }, [rentalRequests, transactions, getDateRange, customDateRange]);
 
   // Prepare chart data: array of { date, returnedCount, penaltyAmount }
   const chartData = useMemo(() => {
@@ -3227,7 +3273,7 @@ const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPen
                               height: `${Math.min((data.returnedCount / maxReturnedCount) * 100, 100)}%`,
                               backgroundColor: '#1677ff'
                             }}
-                            title={`${data.returnedCount} kit trả`}
+                            title={`${data.returnedCount} yêu cầu đã trả`}
                           />
                         </div>
                         <div className="request-bar-value-label">{data.returnedCount}</div>
@@ -3259,7 +3305,7 @@ const DashboardContent = ({ systemStats, users, rentalRequests, fines, borrowPen
           </div>
           <div className="request-chart-summary">
             <Text type="secondary">
-              Tổng {chartData.reduce((sum, d) => sum + d.returnedCount, 0)} kit đã trả và {
+              Tổng {chartData.reduce((sum, d) => sum + d.returnedCount, 0)} yêu cầu đã trả và {
                 chartData.reduce((sum, d) => sum + d.penaltyAmount, 0).toLocaleString('vi-VN')
               } VND tiền phạt đã đóng trong {rangeLabel}
             </Text>
@@ -3603,6 +3649,12 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
     const kit = kitDetailsModal.kit;
     if (!kit) return null;
 
+    const totalKitAmount = kit.components?.reduce((sum, comp) => {
+      const price = Number(comp.pricePerCom) || 0;
+      const quantity = Number(comp.quantityTotal) || Number(comp.quantity) || 0; // Use quantityTotal or quantity
+      return sum + (price * quantity);
+    }, 0) || 0;
+
     return (
       <div>
         <Descriptions bordered column={2} style={{ marginBottom: 16 }}>
@@ -3611,6 +3663,12 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           </Descriptions.Item>
           <Descriptions.Item label="Kit Name">
             <Text strong style={{ fontSize: '16px' }}>{kit.kitName || kit.name || 'N/A'}</Text>
+          </Descriptions.Item>
+          {/* New Amount Kit Field */}
+          <Descriptions.Item label="Amount Kit">
+            <Text strong style={{ fontSize: '16px', color: '#cf1322' }}>
+              {totalKitAmount.toLocaleString()} VND
+            </Text>
           </Descriptions.Item>
           <Descriptions.Item label="Type">
             <Tag
@@ -3818,6 +3876,11 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
                                       <Text type="secondary" style={{ fontSize: '13px' }}>
                                         <strong>Total:</strong> {component.quantityTotal || component.quantity || 0}
                                       </Text>
+                                      {component.seriNumber && (
+                                        <Text type="secondary" style={{ fontSize: '13px' }}>
+                                          <strong>Serial:</strong> {component.seriNumber}
+                                        </Text>
+                                      )}
                                     </div>
                                     <div style={{ marginTop: 4 }}>
                                       <Text strong style={{ color: '#1890ff', fontSize: '14px' }}>
@@ -4093,11 +4156,12 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
       componentType: component.componentType || component.type,
       description: component.description,
       quantityTotal: component.quantityTotal,
-      // quantityAvailable is managed by backend and not editable in this modal
+      quantityAvailable: component.quantityAvailable,
       pricePerCom: component.pricePerCom,
       status: component.status,
       imageUrl: component.imageUrl,
-      link: component.link
+      link: component.link,
+      seriNumber: component.seriNumber
     };
     setEditingComponent(mappedComponent);
 
@@ -4110,7 +4174,8 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
       pricePerCom: mappedComponent.pricePerCom,
       status: mappedComponent.status,
       imageUrl: mappedComponent.imageUrl,
-      link: mappedComponent.link
+      link: mappedComponent.link,
+      seriNumber: mappedComponent.seriNumber
     });
 
     setComponentFormVisible(true);
@@ -4131,7 +4196,8 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           pricePerCom: values.pricePerCom || 0,
           status: values.status,
           imageUrl: values.imageUrl || '',
-          link: values.link || ''
+          link: values.link || '',
+          seriNumber: values.seriNumber || ''
         };
 
         console.log('Updating component with data:', componentData);
@@ -4142,6 +4208,34 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
         if (response && response.id) {
           // Refresh components from backend to get the latest data
           await loadComponents();
+
+          // Recalculate kit total amount
+          try {
+            // Fetch fresh kit to get all components
+            const freshKitRes = await kitAPI.getKitById(editingKit.id);
+            if (freshKitRes && freshKitRes.data) {
+              const freshKit = freshKitRes.data;
+              const newTotalAmount = (freshKit.components || []).reduce((sum, comp) => {
+                const price = Number(comp.pricePerCom) || 0;
+                const quantity = Number(comp.quantityTotal) || Number(comp.quantity) || 0;
+                return sum + (price * quantity);
+              }, 0);
+
+              // Update kit with new total amount
+              // Only update if amount has changed
+              if (Number(freshKit.amount) !== newTotalAmount) {
+                console.log(`Updating kit amount from ${freshKit.amount} to ${newTotalAmount}`);
+                await kitAPI.updateKit(freshKit.id, {
+                  ...freshKit,
+                  amount: newTotalAmount
+                });
+                console.log('Kit amount updated successfully');
+              }
+            }
+          } catch (amountError) {
+            console.error('Error auto-updating kit amount:', amountError);
+            // Don't block UI flow if this background update fails
+          }
 
           // Close the form modal after successful update
           setComponentFormVisible(false);
@@ -4174,7 +4268,8 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           pricePerCom: values.pricePerCom || 0,
           status: values.status,
           imageUrl: values.imageUrl || '',
-          link: values.link || ''
+          link: values.link || '',
+          seriNumber: values.seriNumber || ''
         };
 
         const response = await kitComponentAPI.createComponent(componentData);
@@ -4184,6 +4279,34 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           console.log('Create component: Success, calling loadComponents()');
           // Refresh components from backend to get the latest data
           await loadComponents();
+
+          // Recalculate kit total amount
+          try {
+            // Fetch fresh kit to get all components
+            const freshKitRes = await kitAPI.getKitById(editingKit.id);
+            if (freshKitRes && freshKitRes.data) {
+              const freshKit = freshKitRes.data;
+              const newTotalAmount = (freshKit.components || []).reduce((sum, comp) => {
+                const price = Number(comp.pricePerCom) || 0;
+                const quantity = Number(comp.quantityTotal) || Number(comp.quantity) || 0;
+                return sum + (price * quantity);
+              }, 0);
+
+              // Update kit with new total amount
+              // Only update if amount has changed
+              if (Number(freshKit.amount) !== newTotalAmount) {
+                console.log(`Updating kit amount from ${freshKit.amount} to ${newTotalAmount}`);
+                await kitAPI.updateKit(freshKit.id, {
+                  ...freshKit,
+                  amount: newTotalAmount
+                });
+                console.log('Kit amount updated successfully');
+              }
+            }
+          } catch (amountError) {
+            console.error('Error auto-updating kit amount:', amountError);
+            // Don't block UI flow if this background update fails
+          }
 
           // Close the form modal after successful creation
           setComponentFormVisible(false);
@@ -4963,7 +5086,7 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
             </Upload>
           </Space>
           <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginTop: 8 }}>
-            Excel format: index, name, link, seri_number, quantity
+            Excel format: index, name, link, seri_number, quantityTotal
           </Text>
         </div>
 
@@ -4972,8 +5095,10 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
           columns={[
             { title: 'Component Name', dataIndex: 'componentName', key: 'componentName' },
             { title: 'Type', dataIndex: 'componentType', key: 'componentType' },
+            { title: 'Serial Number', dataIndex: 'seriNumber', key: 'seriNumber' },
 
             { title: 'Total Quantity', dataIndex: 'quantityTotal', key: 'quantityTotal' },
+            { title: 'Available Quantity', dataIndex: 'quantityAvailable', key: 'quantityAvailable' },
             {
               title: 'Price (VND)',
               dataIndex: 'pricePerCom',
@@ -5069,6 +5194,23 @@ const KitManagement = ({ kits, setKits, handleExportKits, handleImportKits }) =>
               rules={[{ required: true, message: 'Please enter total quantity' }]}
             >
               <InputNumber min={1} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item
+              name="quantityAvailable"
+              label="Available Quantity"
+              rules={[
+                { required: true, message: 'Please enter available quantity' },
+                ({ getFieldValue }) => ({
+                  validator(_, value) {
+                    if (!value || getFieldValue('quantityTotal') >= value) {
+                      return Promise.resolve();
+                    }
+                    return Promise.reject(new Error('Available quantity cannot be greater than Total quantity'));
+                  },
+                }),
+              ]}
+            >
+              <InputNumber min={0} style={{ width: '100%' }} />
             </Form.Item>
             <Form.Item
               name="pricePerCom"
@@ -5291,6 +5433,7 @@ const KitComponentManagement = () => {
       status: component.status,
       imageUrl: component.imageUrl,
       link: component.link,
+      seriNumber: component.seriNumber,
     };
     setEditingComponent(mapped);
     form.setFieldsValue(mapped);
@@ -5343,12 +5486,13 @@ const KitComponentManagement = () => {
         componentName: values.componentName,
         componentType: values.componentType,
         description: values.description || '',
-        quantityTotal: values.quantityAvailable, // use available as total for global components
+        quantityTotal: values.quantityTotal,
         quantityAvailable: values.quantityAvailable,
         pricePerCom: values.pricePerCom || 0,
         status: values.status,
         imageUrl: values.imageUrl || '',
         link: values.link || '',
+        seriNumber: values.seriNumber || '',
       };
 
       if (editingComponent && editingComponent.id) {
@@ -5483,6 +5627,11 @@ const KitComponentManagement = () => {
       title: 'Type',
       dataIndex: 'componentType',
       key: 'componentType',
+    },
+    {
+      title: 'Serial Number',
+      dataIndex: 'seriNumber',
+      key: 'seriNumber',
     },
     {
       title: 'Kit ID',
@@ -5642,7 +5791,8 @@ const KitComponentManagement = () => {
                     <ul style={{ paddingLeft: 20, marginBottom: 0 }}>
                       <li><b>name</b>: component name (required)</li>
                       <li><b>type</b>: component type (optional) - allowed values: <b>Box</b>, <b>Set</b>, <b>Unit</b></li>
-                      <li><b>quantity</b>: total quantity (required, integer &gt; 0)</li>
+                      <li><b>quantityTotal</b>: total quantity (required, integer &gt; 0)</li>
+                      <li><b>quantityAvailable</b>: available quantity (optional, integer &gt;= 0, defaults to total)</li>
                       <li><b>pricePerComp</b>: price per component (optional, number &gt;= 0)</li>
                       <li><b>description</b>: short description of the component (optional)</li>
                       <li><b>image_url</b>: optional image URL (must be a valid URL if provided)</li>
@@ -5686,20 +5836,24 @@ const KitComponentManagement = () => {
                   {
                     name: 'Resistor 220Ω',
                     type: 'Unit',
-                    quantity: 100,
+                    quantityTotal: 100,
+                    quantityAvailable: 100,
                     pricePerComp: 1000,
                     description: 'Standard 1/4W resistor 220 ohm',
                     image_url: 'https://example.com/resistor-220.png',
                     link: 'https://example.com/resistor-220',
+                    seri_number: 'RES-220-001',
                   },
                   {
                     name: 'Arduino Starter Box',
                     type: 'Box',
-                    quantity: 10,
+                    quantityTotal: 10,
+                    quantityAvailable: 10,
                     pricePerComp: 250000,
                     description: 'Box of mixed Arduino components',
                     image_url: 'https://example.com/arduino-box.png',
                     link: 'https://example.com/arduino-box',
+                    seri_number: 'ARD-BOX-001',
                   },
                 ];
 
@@ -6049,6 +6203,13 @@ const KitComponentManagement = () => {
               <Option value="SET">Set</Option>
               <Option value="UNIT">Unit</Option>
             </Select>
+          </Form.Item>
+          <Form.Item
+            name="quantityTotal"
+            label="Total Quantity"
+            rules={[{ required: true, message: 'Please enter total quantity' }]}
+          >
+            <InputNumber min={0} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item
             name="quantityAvailable"
@@ -6786,7 +6947,7 @@ const RentalApprovals = ({ rentalRequests, setRentalRequests, setLogHistory, set
       >
         <Table
           columns={columns}
-          dataSource={rentalRequests}
+          dataSource={rentalRequests.filter(req => req.status === 'PENDING' || req.status === 'PENDING_APPROVAL')}
           rowKey="id"
           pagination={{
             showSizeChanger: true,
@@ -7615,6 +7776,65 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
   const [loadingPolicies, setLoadingPolicies] = useState(false);
   const [penaltyDetails, setPenaltyDetails] = useState([]);
   const [loadingPenaltyDetails, setLoadingPenaltyDetails] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const getAbsoluteImageUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return `${API_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      const response = await penaltiesAPI.getAll();
+      const rawData = Array.isArray(response) ? response : (response?.data || []);
+
+      // Filter for unresolved penalties to match the tab purpose
+      const data = rawData.filter(p => !p.resolved);
+
+      const mapped = data.map(p => ({
+        id: p.id,
+        kitId: p.borrowRequestId || 'N/A',
+        borrowRequestId: p.borrowRequestId || p.requestId || null,
+        kitName: 'N/A',
+        studentEmail: p.accountEmail || 'N/A',
+        studentName: p.accountEmail || 'N/A',
+        userCode: p.userCode || 'N/A',
+        leaderEmail: p.accountEmail || 'N/A',
+        leaderName: p.accountEmail || 'N/A',
+        fineAmount: (p.totalAmount !== undefined && p.totalAmount !== null) ? Number(p.totalAmount) : 0,
+        createdAt: p.takeEffectDate || new Date().toISOString(),
+        dueDate: new Date().toISOString(),
+        status: 'pending',
+        damageAssessment: {},
+      }));
+
+      // Sort by createdAt descending (newest first)
+      const sorted = mapped.sort((a, b) => {
+        const dateA = new Date(a.createdAt).getTime();
+        const dateB = new Date(b.createdAt).getTime();
+        return dateB - dateA;
+      });
+
+      setFines(sorted);
+      notification.success({
+        message: 'Success',
+        description: 'Fines list refreshed successfully',
+        placement: 'topRight',
+        duration: 2,
+      });
+    } catch (error) {
+      console.error('Error refreshing fines:', error);
+      notification.error({
+        message: 'Error',
+        description: 'Failed to refresh fines',
+        placement: 'topRight',
+      });
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const handleExportFines = () => {
     const data = fines.map(fine => ({
@@ -7773,7 +7993,7 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
       transition={{ duration: 0.5 }}
     >
       <Card
-        title="Fine Management"
+        title="Unpaid Fines"
         style={{
           borderRadius: '20px',
           background: 'rgba(255, 255, 255, 0.95)',
@@ -7789,14 +8009,25 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
           borderRadius: '20px 20px 0 0'
         }}
         extra={
-          <Button
-            type="text"
-            icon={<ExportOutlined />}
-            onClick={handleExportFines}
-            style={{ color: '#fff' }}
-          >
-            Export
-          </Button>
+          <Space>
+            <Button
+              type="text"
+              icon={<ReloadOutlined />}
+              onClick={handleRefresh}
+              loading={refreshing}
+              style={{ color: '#fff' }}
+            >
+              Refresh
+            </Button>
+            <Button
+              type="text"
+              icon={<ExportOutlined />}
+              onClick={handleExportFines}
+              style={{ color: '#fff' }}
+            >
+              Export
+            </Button>
+          </Space>
         }
       >
         <Table
@@ -7809,10 +8040,10 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
             showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} items`
           }}
         />
-      </Card>
+      </Card >
 
       {/* Fine Details Modal */}
-      <Modal
+      < Modal
         title="Fine Details"
         open={fineDetailModalVisible}
         onCancel={() => {
@@ -7821,14 +8052,15 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
           setFinePolicies([]);
           setPenaltyDetails([]);
         }}
-        footer={[
-          <Button key="close" onClick={() => {
-            setFineDetailModalVisible(false);
-            setSelectedFine(null);
-          }}>
-            Close
-          </Button>
-        ]}
+        footer={
+          [
+            <Button key="close" onClick={() => {
+              setFineDetailModalVisible(false);
+              setSelectedFine(null);
+            }}>
+              Close
+            </Button>
+          ]}
         width={700}
         centered
       >
@@ -7885,7 +8117,7 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
                                 <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>Evidence:</Text>
                                 <Image
                                   width={100}
-                                  src={detail.imageUrl}
+                                  src={getAbsoluteImageUrl(detail.imageUrl)}
                                   alt="Damage Evidence"
                                   placeholder={
                                     <Image
@@ -7914,8 +8146,8 @@ const FineManagement = ({ fines, setFines, setLogHistory }) => {
             </Spin>
           </div>
         )}
-      </Modal>
-    </motion.div>
+      </Modal >
+    </motion.div >
   );
 };
 
@@ -9429,6 +9661,8 @@ const KitComponentHistoryTab = ({
 }) => {
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [selectedHistory, setSelectedHistory] = useState(null);
+  const [selectedComponentImage, setSelectedComponentImage] = useState(null);
+  const [globalComponents, setGlobalComponents] = useState([]); // Store remote global components
 
   const kitOptions = useMemo(() => [
     { value: 'null', label: 'Components without Kit' },
@@ -9438,22 +9672,50 @@ const KitComponentHistoryTab = ({
     }))
   ], [kits]);
 
+  // Load global components on mount
+  useEffect(() => {
+    const fetchGlobalComponents = async () => {
+      try {
+        const res = await kitComponentAPI.getComponentsWithoutKit();
+        const data = Array.isArray(res) ? res : (res?.data || []);
+        if (Array.isArray(data)) {
+          setGlobalComponents(data);
+        }
+      } catch (err) {
+        console.error('Failed to load global components:', err);
+      }
+    };
+    fetchGlobalComponents();
+  }, []);
+
   const componentOptions = useMemo(() => {
-    const allComponents = (kits || []).flatMap((kit) => {
+    // 1. Get components from loaded kits
+    const componentsFromKits = (kits || []).flatMap((kit) => {
       return (kit.components || []).map((component) => ({
         value: component.id,
         label: component.componentName || component.name || 'Component',
+        fromKit: true
       }));
     });
-    // Remove duplicates by id
+
+    // 2. Map global components (fetched from API)
+    const componentsFromGlobal = globalComponents.map(comp => ({
+      value: comp.id,
+      label: comp.componentName || comp.name || 'Global Component',
+      fromKit: false
+    }));
+
+    // 3. Merge and deduplicate
+    const allComponents = [...componentsFromKits, ...componentsFromGlobal];
     const uniqueMap = new Map();
     allComponents.forEach((comp) => {
       if (comp.value && !uniqueMap.has(comp.value)) {
         uniqueMap.set(comp.value, comp);
       }
     });
+
     return Array.from(uniqueMap.values());
-  }, [kits]);
+  }, [kits, globalComponents]);
 
   const columns = [
     {
@@ -9466,13 +9728,19 @@ const KitComponentHistoryTab = ({
       title: 'Kit',
       dataIndex: 'kitName',
       key: 'kitName',
-      render: (text) => text || 'N/A',
+      render: (text) => text || 'Without Kit',
     },
     {
       title: 'Component',
       dataIndex: 'componentName',
       key: 'componentName',
       render: (text) => text || 'N/A',
+    },
+    {
+      title: 'Serial Number',
+      dataIndex: 'seriNumber',
+      key: 'seriNumber',
+      render: (text) => text || '-',
     },
     {
       title: 'Action',
@@ -9522,16 +9790,78 @@ const KitComponentHistoryTab = ({
     ...item,
   }));
 
-  const getComponentImage = (historyItem) => {
-    if (!historyItem || !kits) return null;
-    // Find kit by ID (handle potential type mismatch with == or convert to string if needed, but usually IDs match)
-    const kit = kits.find(k => k.id === historyItem.kitId);
-    if (kit) {
-      const component = kit.components?.find(c => c.id === historyItem.componentId);
-      return component?.imageUrl;
+  // Helper to find image from loaded kits
+  // Helper to find image from loaded kits OR global components
+  const findImageInLocalData = (historyItem) => {
+    if (!historyItem) return null;
+
+    // 1. Try to find in loaded kits
+    if (kits) {
+      // Specific kit
+      if (historyItem.kitId) {
+        const kit = kits.find(k => k.id === historyItem.kitId);
+        if (kit) {
+          const component = kit.components?.find(c => c.id === historyItem.componentId);
+          if (component?.imageUrl) return component.imageUrl;
+        }
+      }
+      // Scan all kits
+      for (const kit of kits) {
+        const component = kit.components?.find(c => c.id === historyItem.componentId);
+        if (component?.imageUrl) return component.imageUrl;
+      }
     }
+
+    // 2. Try to find in global components state
+    if (globalComponents) {
+      const globalComp = globalComponents.find(c => c.id === historyItem.componentId);
+      if (globalComp?.imageUrl) return globalComp.imageUrl;
+    }
+
     return null;
   };
+
+  // Effect to load component image when modal opens
+  // STRATEGY:
+  // 1. With Kit: Try to find the image in the locally loaded 'kits' array first.
+  //    - If historyItem has a kitId, look in that specific kit.
+  //    - If not found there, search all kits (in case component was moved or is shared).
+  // 2. Without Kit (Global Component): If not found in local kits, it means the component
+  //    is likely a global component (kitId=null) or not currently loaded in the kits list.
+  //    - In this case, fetch the component details directly from the API using componentId.
+  useEffect(() => {
+    if (detailModalVisible && selectedHistory) {
+      // 1. Try to find in loaded kits or global components state first
+      const imageFromLocal = findImageInLocalData(selectedHistory);
+      if (imageFromLocal) {
+        setSelectedComponentImage(imageFromLocal);
+        return;
+      }
+
+      // 2. If not found (e.g. global component not in any kit), fetch from API
+      if (selectedHistory.componentId) {
+        const fetchComponentImage = async () => {
+          try {
+            const response = await kitComponentAPI.getComponentById(selectedHistory.componentId);
+            const componentData = response?.data || response;
+            if (componentData?.imageUrl) {
+              setSelectedComponentImage(componentData.imageUrl);
+            } else {
+              setSelectedComponentImage(null);
+            }
+          } catch (error) {
+            console.error('Error fetching component details for history:', error);
+            setSelectedComponentImage(null);
+          }
+        };
+        fetchComponentImage();
+      } else {
+        setSelectedComponentImage(null);
+      }
+    } else {
+      setSelectedComponentImage(null);
+    }
+  }, [detailModalVisible, selectedHistory, kits, globalComponents]);
 
   return (
     <Card title="Kit Component History" className="kit-history-card">
@@ -9576,10 +9906,13 @@ const KitComponentHistoryTab = ({
               {selectedHistory?.createdAt ? new Date(selectedHistory.createdAt).toLocaleString('vi-VN') : 'N/A'}
             </Descriptions.Item>
             <Descriptions.Item label="Kit">
-              {selectedHistory?.kitName || 'N/A'}
+              {selectedHistory?.kitName || 'Without Kit'}
             </Descriptions.Item>
             <Descriptions.Item label="Component">
               {selectedHistory?.componentName || 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Quantity">
+              {selectedHistory?.quantity || 1}
             </Descriptions.Item>
             <Descriptions.Item label="Action">
               {selectedHistory?.action || 'N/A'}
@@ -9597,20 +9930,17 @@ const KitComponentHistoryTab = ({
                   alt="Evidence"
                   style={{ maxWidth: '200px', maxHeight: '200px', objectFit: 'contain' }}
                 />
-              ) : 'N/A'}
+              ) : 'This component didnot have image evidence.'}
             </Descriptions.Item>
             <Descriptions.Item label="Component Image">
-              {(() => {
-                const imageUrl = getComponentImage(selectedHistory);
-                return imageUrl ? (
-                  <Image
-                    width={100}
-                    src={imageUrl}
-                    alt="Component"
-                    fallback="https://via.placeholder.com/100?text=No+Image"
-                  />
-                ) : <Text type="secondary">N/A</Text>;
-              })()}
+              {selectedComponentImage ? (
+                <Image
+                  width={100}
+                  src={selectedComponentImage}
+                  alt="Component"
+                  fallback="https://via.placeholder.com/100?text=No+Image"
+                />
+              ) : <Text type="secondary">N/A</Text>}
             </Descriptions.Item>
             {selectedHistory?.penaltyDetailImageUrl && (
               <Descriptions.Item label="Damage Image">
