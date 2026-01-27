@@ -1,6 +1,6 @@
 // const API_BASE_URL = 'https://rental-kit-fvcrenhrbva3e4f2.eastasia-01.azurewebsites.net';
-const API_BASE_URL = 'https://iot-system-kit.azurewebsites.net';
-// const API_BASE_URL = 'http://localhost:8080';
+export const API_BASE_URL = 'https://iot-system-kit.azurewebsites.net';
+// export const API_BASE_URL = 'http://localhost:8080';
 
 // Helper function to get JWT token from localStorage
 const getAuthToken = () => {
@@ -614,6 +614,10 @@ export const kitComponentAPI = {
 
   getAllComponents: async () => {
     return apiRequest('/api/kitComponent/all');
+  },
+
+  getComponentsWithoutKit: async () => {
+    return apiRequest('/api/kitComponent/no-kit');
   },
 
   updateComponent: async (id, componentData) => {
